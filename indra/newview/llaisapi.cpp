@@ -1051,6 +1051,20 @@ LLTimer AISUpdate::sBatchTimer;
 // notifyObservers().
 static bool sAISNotifyObserversPending = false;
 
+static void aisScheduleNotifyObservers()
+{
+    if (!sAISNotifyObserversPending)
+    {
+        sAISNotifyObserversPending = true;
+        LLAppViewer::instance()->postToMainCoro(
+            []()
+            {
+                gInventory.notifyObservers();
+                sAISNotifyObserversPending = false;
+            });
+    }
+}
+
 AISUpdate::AISUpdate(const LLSD& update, AISAPI::COMMAND_TYPE type, const LLSD& request_body)
 : mType(type)
 {
@@ -1708,16 +1722,7 @@ void AISUpdate::doUpdate()
         // fetching can receive massive amount of items and folders
         if (gInventory.getChangedIDs().size() > MAX_UPDATE_BACKLOG)
         {
-            if (!sAISNotifyObserversPending)
-            {
-                sAISNotifyObserversPending = true;
-                LLAppViewer::instance()->postToMainCoro(
-                    []()
-                    {
-                        gInventory.notifyObservers();
-                        sAISNotifyObserversPending = false;
-                    });
-            }
+            aisScheduleNotifyObservers();
             checkTimeout();
         }
     }
@@ -1778,16 +1783,7 @@ void AISUpdate::doUpdate()
         // fetching can receive massive amount of items and folders
         if (gInventory.getChangedIDs().size() > MAX_UPDATE_BACKLOG)
         {
-            if (!sAISNotifyObserversPending)
-            {
-                sAISNotifyObserversPending = true;
-                LLAppViewer::instance()->postToMainCoro(
-                    []()
-                    {
-                        gInventory.notifyObservers();
-                        sAISNotifyObserversPending = false;
-                    });
-            }
+            aisScheduleNotifyObservers();
             checkTimeout();
         }
     }
@@ -1864,9 +1860,12 @@ void AISUpdate::doUpdate()
 
     checkTimeout();
 
-    LLAppViewer::instance()->postToMainCoro(
-        []()
-        {
-            gInventory.notifyObservers();
-        });
+    if (!sAISNotifyObserversPending)
+    {
+        LLAppViewer::instance()->postToMainCoro(
+            []()
+            {
+                gInventory.notifyObservers();
+            });
+    }
 }
