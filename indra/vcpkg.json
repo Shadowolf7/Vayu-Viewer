@@ -201,6 +201,19 @@
         "hunspell"
       ]
     },
+    "notecard-editor": {
+      "description": "Build with support for the standalone notecard/script editor tool (Scintilla + Lexilla). Windows only for now -- the upstream vcpkg ports for scintilla/lexilla are Windows-only (MSBuild-based); Linux/macOS need a custom overlay port or direct vendoring, not yet written.",
+      "dependencies": [
+        {
+          "name": "scintilla",
+          "platform": "windows"
+        },
+        {
+          "name": "lexilla",
+          "platform": "windows"
+        }
+      ]
+    },
     "kdu": {
       "description": "Build with support for Kakadu JPEG2000",
       "dependencies": [
