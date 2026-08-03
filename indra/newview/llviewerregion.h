@@ -33,6 +33,7 @@
 #include <boost/signals2.hpp>
 
 #include "llcorehttputil.h"
+#include "llcloud.h"
 #include "llwind.h"
 #include "v3dmath.h"
 #include "llstring.h"
@@ -92,6 +93,7 @@ public:
         PARTITION_WATER,
         PARTITION_TREE,
         PARTITION_PARTICLE,
+        PARTITION_CLOUD,
         PARTITION_GRASS,
         PARTITION_VOLUME,
         PARTITION_BRIDGE,
@@ -473,7 +475,13 @@ protected:
     void initStats();
 
 public:
-    LLWind  mWind;
+    LLWind      mWind;
+    LLCloudLayer mCloudLayer;
+    // Whether the simulator is sending real classic-cloud layer data for
+    // this region (most modern sims don't); if not, generateDensity()
+    // synthesizes a substitute after mFirstWindLayerReceivedTime + 3s.
+    bool        mGotClouds = false;
+    F32         mFirstWindLayerReceivedTime = 0.f;
     LLViewerParcelOverlay   *mParcelOverlay;
 
     F32Bits mBitsReceived;

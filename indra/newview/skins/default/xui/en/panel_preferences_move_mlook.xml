@@ -233,6 +233,17 @@
    tool_tip="Prevents the mouselook view from tilting with a vehicle's roll and pitch while you're seated on it."
    top_pad="15"
    width="330" />
+  <check_box
+   control_name="VayuMouselookEyeHeightOffsetEnabled"
+   follows="left|top"
+   height="20"
+   label="Apply mouselook eye height offset"
+   layout="topleft"
+   left="80"
+   name="vayu_mlook_eye_height_offset_enabled"
+   tool_tip="Lets you switch the eye height offset below off without losing the value you've dialed in."
+   top_pad="10"
+   width="330" />
   <text
    type="string"
    length="1"

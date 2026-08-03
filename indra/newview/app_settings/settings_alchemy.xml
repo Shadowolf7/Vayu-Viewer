@@ -931,6 +931,17 @@
             <key>Value</key>
             <real>0.0</real>
         </map>
+        <key>VayuMouselookEyeHeightOffsetEnabled</key>
+        <map>
+            <key>Comment</key>
+            <string>Apply the mouselook eye-height offset. Lets you switch the offset off without losing the dialed-in value.</string>
+            <key>Persist</key>
+            <integer>1</integer>
+            <key>Type</key>
+            <string>Boolean</string>
+            <key>Value</key>
+            <integer>1</integer>
+        </map>
         <key>AlchemyMouselookIFF</key>
         <map>
             <key>Comment</key>
@@ -3060,6 +3071,72 @@
             <string>Boolean</string>
             <key>Value</key>
             <integer>0</integer>
+        </map>
+        <key>SkyUseClassicClouds</key>
+        <map>
+            <key>Comment</key>
+            <string>Draw classic 3D wind-driven cloud puffs, layered on top of the regular sky-dome clouds</string>
+            <key>Persist</key>
+            <integer>1</integer>
+            <key>Type</key>
+            <string>Boolean</string>
+            <key>Value</key>
+            <integer>0</integer>
+        </map>
+        <key>ClassicCloudsAvgAlt</key>
+        <map>
+            <key>Comment</key>
+            <string>Altitude of the classic cloud layer in meters: positive is an absolute height, zero or negative is that many meters below the camera</string>
+            <key>Persist</key>
+            <integer>1</integer>
+            <key>Type</key>
+            <string>S32</string>
+            <key>Value</key>
+            <integer>0</integer>
+        </map>
+        <key>ClassicCloudsMaxAlt</key>
+        <map>
+            <key>Comment</key>
+            <string>Maximum altitude in meters the classic cloud layer is allowed to reach</string>
+            <key>Persist</key>
+            <integer>1</integer>
+            <key>Type</key>
+            <string>U32</string>
+            <key>Value</key>
+            <integer>1000</integer>
+        </map>
+        <key>SparseClassicClouds</key>
+        <map>
+            <key>Comment</key>
+            <string>Throttle classic cloud density updates to at most once per second per region</string>
+            <key>Persist</key>
+            <integer>1</integer>
+            <key>Type</key>
+            <string>Boolean</string>
+            <key>Value</key>
+            <integer>0</integer>
+        </map>
+        <key>CloudsMinAmbientThreshold</key>
+        <map>
+            <key>Comment</key>
+            <string>Ambient light brightness below which classic cloud puffs fall back to sun/moon diffuse lighting, to avoid rendering pitch-black under some published EE sky presets</string>
+            <key>Persist</key>
+            <integer>1</integer>
+            <key>Type</key>
+            <string>F32</string>
+            <key>Value</key>
+            <real>0.25</real>
+        </map>
+        <key>CloudsDiffuseLightAdjustment</key>
+        <map>
+            <key>Comment</key>
+            <string>Brightness multiplier applied to classic cloud puffs when the CloudsMinAmbientThreshold fallback is active</string>
+            <key>Persist</key>
+            <integer>1</integer>
+            <key>Type</key>
+            <string>F32</string>
+            <key>Value</key>
+            <real>1.5</real>
         </map>
     </map>
 </llsd>

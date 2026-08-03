@@ -3,7 +3,7 @@
  class="quick_settings"
  layout="topleft"
  width="300"
- height="349"
+ height="461"
  name="quick_settings">
   <text
    follows="left|top"
@@ -304,4 +304,134 @@
    tool_tip="While seated on a vehicle, don't change sky/water/day environment when crossing into a new parcel or region -- keeps whatever was active until you dismount."
    width="280"
    name="driver_mode_lock_environment_check" />
+  <text
+   follows="left|top"
+   height="15"
+   left="10"
+   top_pad="6"
+   width="280"
+   layout="topleft"
+   value="Clouds"
+   name="clouds_label" />
+  <check_box
+   control_name="SkyUseClassicClouds"
+   follows="left|top"
+   height="16"
+   label="Classic 3D Clouds"
+   layout="topleft"
+   left="10"
+   top_pad="4"
+   width="280"
+   name="classic_clouds_check" />
+  <text
+   follows="left|top"
+   height="15"
+   left="10"
+   top_pad="3"
+   width="120"
+   layout="topleft"
+   value="Cloud Altitude:"
+   name="clouds_altitude_label" />
+  <slider_bar
+   top_pad="-16"
+   height="20"
+   increment="10"
+   follows="left|top|right"
+   layout="topleft"
+   max_val="1000"
+   min_val="-500"
+   left="93"
+   right="-68"
+   name="clouds_altitude_slider_bar"
+   control_name="ClassicCloudsAvgAlt"/>
+  <spinner
+   top_pad="-21"
+   height="20"
+   label=""
+   label_width="0"
+   right="-8"
+   decimal_digits="0"
+   follows="top|right"
+   layout="topleft"
+   max_val="1000"
+   min_val="-500"
+   width="55"
+   increment="10"
+   name="clouds_altitude_spinner"
+   control_name="ClassicCloudsAvgAlt"/>
+  <text
+   follows="left|top"
+   height="15"
+   left="10"
+   top_pad="6"
+   width="280"
+   layout="topleft"
+   value="Mouselook"
+   name="mouselook_label" />
+  <check_box
+   control_name="AlchemyRealisticMouselook"
+   follows="left|top"
+   height="16"
+   label="Realistic Mouselook"
+   layout="topleft"
+   left="10"
+   top_pad="4"
+   width="280"
+   name="realistic_mouselook_check" />
+  <check_box
+   control_name="VayuMouselookDecoupleVehicleTilt"
+   follows="left|top"
+   height="16"
+   label="Decouple Vehicle Tilt"
+   layout="topleft"
+   left="10"
+   top_pad="4"
+   width="280"
+   name="mouselook_decouple_vehicle_tilt_check" />
+  <check_box
+   control_name="VayuMouselookEyeHeightOffsetEnabled"
+   follows="left|top"
+   height="16"
+   label="Apply Eye Height Offset"
+   layout="topleft"
+   left="10"
+   top_pad="4"
+   width="280"
+   name="mouselook_eye_height_offset_enabled_check" />
+  <text
+   follows="left|top"
+   height="15"
+   left="10"
+   top_pad="3"
+   width="120"
+   layout="topleft"
+   value="Eye Height:"
+   name="mouselook_eye_height_label" />
+  <slider_bar
+   top_pad="-16"
+   height="20"
+   increment="0.01"
+   follows="left|top|right"
+   layout="topleft"
+   max_val="0.3"
+   min_val="-0.3"
+   left="93"
+   right="-68"
+   name="mouselook_eye_height_slider_bar"
+   control_name="VayuMouselookEyeHeightOffset"/>
+  <spinner
+   top_pad="-21"
+   height="20"
+   label=""
+   label_width="0"
+   right="-8"
+   decimal_digits="2"
+   follows="top|right"
+   layout="topleft"
+   max_val="0.3"
+   min_val="-0.3"
+   width="55"
+   increment="0.01"
+   name="mouselook_eye_height_spinner"
+   control_name="VayuMouselookEyeHeightOffset"/>
 </panel>
