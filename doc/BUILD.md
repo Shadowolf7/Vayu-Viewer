@@ -71,7 +71,7 @@ Install system packages for your distro:
 
 ```
 sudo pacman -Syu automake autoconf autoconf-archive base-devel cmake fontconfig git glib2-devel \
-    gstreamer gst-plugins-base-libs ninja libglvnd libtool libvlc libx11 pkgconf python \
+    gstreamer gst-plugins-base-libs libdecor ninja libglvnd libtool libvlc libx11 pkgconf python \
     wayland dotnet-sdk rustup zip nasm
 ```
 
@@ -121,7 +121,7 @@ sudo apt install \
 ```
 sudo dnf group install "Development Tools"
 sudo dnf install cmake fontconfig-devel git glib2-devel gstreamer1-devel \
-    gstreamer1-plugins-base-devel libX11-devel mesa-libOSMesa-devel libglvnd-devel \
+    gstreamer1-plugins-base-devel libdecor-devel libX11-devel mesa-libOSMesa-devel libglvnd-devel \
     ninja-build python3 vlc-devel wayland-devel dotnet-sdk-10.0 rustup
 ```
 
@@ -131,7 +131,7 @@ You may need to enable EPEL first: `sudo dnf install epel-release`
 
 ```
 sudo dnf install @development-tools @c-development cmake fontconfig-devel git glib-devel \
-    gstreamer1-devel gstreamer1-plugins-base-devel libX11-devel \
+    gstreamer1-devel gstreamer1-plugins-base-devel libdecor-devel libX11-devel \
     mesa-compat-libOSMesa-devel libglvnd-devel ninja-build python3 vlc-devel \
     wayland-devel dotnet-sdk-10.0 rustup perl-IPC-Cmd perl-FindBin perl-Time-Piece \
     autoconf-archive perl-open libXcursor-devel wayland-protocols-devel dbus-devel \
@@ -150,7 +150,7 @@ To build with Clang instead of GCC, also install: `sudo dnf install clang lld`
 ```
 sudo zypper in -t pattern devel_basis devel_C_C++
 sudo zypper install cmake fontconfig-devel git glib2-devel gstreamer-devel \
-    gstreamer-plugins-base-devel libglvnd-devel libX11-devel ninja Mesa-libGL-devel \
+    gstreamer-plugins-base-devel libdecor-devel libglvnd-devel libX11-devel ninja Mesa-libGL-devel \
     python3 vlc-devel wayland-devel
 ```
 
