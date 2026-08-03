@@ -2606,15 +2606,15 @@ bool LLAppViewer::initConfiguration()
         if (gDirUtilp->fileExists(settings_file_list))
         {
             LL_ERRS() << "Cannot load default configuration file settings_files.xml. "
-                << "Please reinstall viewer from https://www.alchemyviewer.org/downloads "
-                << "and contact the Alchemy Viewer team if the issue persists after reinstall."
+                << "Please reinstall viewer from https://github.com/Shadowolf7/Vayu-Viewer/releases "
+                << "and contact the Vayu team if the issue persists after reinstall."
                 << LL_ENDL;
         }
         else
         {
             LL_ERRS() << "Default configuration file settings_files.xml not found. "
-                << "Please reinstall viewer from https://www.alchemyviewer.org/downloads "
-                << "and contact the Alchemy Viewer team if issue persists after reinstall."
+                << "Please reinstall viewer from https://github.com/Shadowolf7/Vayu-Viewer/releases "
+                << "and contact the Vayu team if issue persists after reinstall."
                 << LL_ENDL;
         }
     }
@@ -4008,7 +4008,7 @@ bool LLAppViewer::getMarkerData(const std::string& marker_name, std::string& dat
 void LLAppViewer::processMarkerFiles()
 {
     //We've got 4 things to test for here
-    // - Other Process Running (Alchemy.exec_marker present, locked)
+    // - Other Process Running (Vayu.exec_marker present, locked)
     // - Freeze (SecondLife.exec_marker present, not locked)
     // - LLError Crash (SecondLife.llerror_marker present)
     // - Other Crash (SecondLife.error_marker present)

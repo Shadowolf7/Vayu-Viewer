@@ -158,10 +158,10 @@ LLControlVariable::LLControlVariable(const std::string& name, eControlType type,
     if ((persist != PERSIST_NO) && mComment.empty())
     {
         std::string error_string =
-            "Alchemy Viewer failed to initialize settings. Setting " + mName + " is invalid. "
+            "Vayu failed to initialize settings. Setting " + mName + " is invalid. "
             "Either settings' files were supplied incorrectly or default files were corrupted."
-            "\n\nPlease reinstall viewer from https://www.alchemyviewer.org/downloads/ and "
-            "contact the Alchemy Viewer team if the issue persists after reinstall.";
+            "\n\nPlease reinstall viewer from https://github.com/Shadowolf7/Vayu-Viewer/releases and "
+            "contact the Vayu team if the issue persists after reinstall.";
         LLError::LLUserWarningMsg::show(error_string);
         LL_ERRS() << "Must supply a comment for control " << mName << LL_ENDL;
     }

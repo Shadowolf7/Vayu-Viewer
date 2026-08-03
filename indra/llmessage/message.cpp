@@ -531,7 +531,7 @@ bool LLMessageSystem::checkMessages(LockMessageChecker&, S64 frame_count,
             mLastReceivingIF = mPacketRing.getLastReceivingInterface(); //don't really give two tits about the interface, just leave it
         }
 
-        // If you want to dump all received packets into Alchemy.log, uncomment this
+        // If you want to dump all received packets into Vayu.log, uncomment this
         //dumpPacketToLog();
 
         if(mTrueReceiveSize && receive_size >= (S32) LL_MINIMUM_VALID_PACKET_SIZE && !faked_message)

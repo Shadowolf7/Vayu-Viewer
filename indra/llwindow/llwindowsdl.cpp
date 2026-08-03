@@ -155,7 +155,7 @@ LLWindowSDL::LLWindowSDL(LLWindowCallbacks* callbacks,
     mFSAASamples = fsaa_samples;
 
     if (title.empty())
-        mWindowTitle = "Alchemy";
+        mWindowTitle = "Vayu";
     else
         mWindowTitle = title;
 
@@ -524,10 +524,10 @@ bool LLWindowSDL::createContext(int x, int y, int width, int height, int bits, b
     if (colorBits < 32)
     {
         setupFailure(
-                "Alchemy Viewer requires True Color (32-bit) to run in a window.\n"
+                "Vayu requires True Color (32-bit) to run in a window.\n"
                 "Please go to Control Panels -> Display -> Settings and\n"
                 "set the screen to 32-bit color.\n"
-                "Alternately, if you choose to run fullscreen, Alchemy Viewer\n"
+                "Alternately, if you choose to run fullscreen, Vayu\n"
                 "will automatically adjust the screen each time it runs.",
                 "Error",
                 OSMB_OK);
@@ -2862,7 +2862,7 @@ SDL_AppResult LLWindowSDL::handleEvent(const SDL_Event& event)
             OSMessageBoxSDL(
                 "The graphics driver reported an OpenGL device "
                 + std::string(kind)
-                + ". Alchemy can't continue rendering and will now exit.\n\n"
+                + ". Vayu can't continue rendering and will now exit.\n\n"
                   "This usually follows display sleep/wake, a GPU driver "
                   "restart, or a virtual-terminal switch. Please relaunch "
                   "the viewer to resume.",
@@ -3574,7 +3574,7 @@ namespace
     constexpr int   SPLASH_ICON     = 80;
     constexpr int   SPLASH_ICON_X   = 20;
     constexpr int   SPLASH_ICON_Y   = (SPLASH_H - SPLASH_ICON) / 2;
-    const char*     SPLASH_ICON_PNG = "alchemy_logo.png";
+    const char*     SPLASH_ICON_PNG = "vayu_logo.png";
     // Status text is centered in the area to the right of the icon.
     constexpr int   SPLASH_TEXT_X0  = SPLASH_ICON_X + SPLASH_ICON + 16;
     constexpr int   SPLASH_TEXT_X1  = SPLASH_W - 16;
@@ -3620,7 +3620,7 @@ void LLSplashScreenSDL::showImpl()
     }
 
     SDL_PropertiesID props = SDL_CreateProperties();
-    SDL_SetStringProperty(props, SDL_PROP_WINDOW_CREATE_TITLE_STRING, "Alchemy");
+    SDL_SetStringProperty(props, SDL_PROP_WINDOW_CREATE_TITLE_STRING, "Vayu");
     SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_X_NUMBER, SDL_WINDOWPOS_CENTERED);
     SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_Y_NUMBER, SDL_WINDOWPOS_CENTERED);
     SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_WIDTH_NUMBER, SPLASH_W);
@@ -3729,7 +3729,7 @@ void LLSplashScreenSDL::render()
     {
         TTF_Font* font = (TTF_Font*)mFont;
         const SDL_Color fg = { 235, 235, 240, 255 };
-        const std::string& text = mMessage.empty() ? std::string("Loading Alchemy...") : mMessage;
+        const std::string& text = mMessage.empty() ? std::string("Loading Vayu...") : mMessage;
         SDL_Surface* surf = TTF_RenderText_Blended(font, text.c_str(), text.length(), fg);
         if (surf)
         {
