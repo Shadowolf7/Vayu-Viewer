@@ -1,6 +1,6 @@
-# Building Vayu Viewer
+# Building Vayu
 
-Everything you need to build Vayu Viewer from source: platform setup, presets, options, tests, packaging, and troubleshooting.
+Everything you need to build Vayu from source: platform setup, presets, options, tests, packaging, and troubleshooting.
 
 - [Prerequisites](#prerequisites)
 - [Platform setup](#platform-setup) — Windows, macOS, Linux
@@ -164,7 +164,7 @@ rustup default stable
 
 ## Clone and bootstrap
 
-Vayu Viewer vendors the [Dullahan](https://github.com/AlchemyViewer/dullahan) CEF wrapper — used by the in-world web media plugin — as a git submodule under `indra/dullahan`. It builds from source as part of the tree, so the submodule must be present before you configure. Clone with `--recurse-submodules`, then set up the Python venv and .NET tools:
+Vayu vendors the [Dullahan](https://github.com/AlchemyViewer/dullahan) CEF wrapper — used by the in-world web media plugin — as a git submodule under `indra/dullahan`. It builds from source as part of the tree, so the submodule must be present before you configure. Clone with `--recurse-submodules`, then set up the Python venv and .NET tools:
 
 ```
 git clone --recurse-submodules https://github.com/Shadowolf7/Vayu-Viewer.git vayu-viewer
@@ -413,7 +413,7 @@ If the run produces no output for a very long time it usually isn't hung — che
 
 ### CMake is too old
 
-Vayu Viewer requires CMake 3.27+. If your distro ships something older, install a newer version via pip inside your venv:
+Vayu requires CMake 3.27+. If your distro ships something older, install a newer version via pip inside your venv:
 
 ```
 pip install --upgrade cmake ninja

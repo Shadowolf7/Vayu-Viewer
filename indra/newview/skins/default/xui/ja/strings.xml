@@ -11,10 +11,10 @@ that are returned from one component and may appear in many places
 		Second Life
 	</string>
 	<string name="APP_NAME">
-		Alchemy
+		Vayu
 	</string>
 	<string name="CAPITALIZED_APP_NAME">
-		ALCHEMY
+		VAYU
 	</string>
 	<string name="SECOND_LIFE_GRID">
 		Second Lifeグリッド
@@ -690,7 +690,7 @@ Second Lifeのサポートまでお問い合わせください。
 	</string>
 	<!-- Always mark translate="false" for strings that are nothing but URLs, as they don't need translation. -->
 	<string name="RELEASE_NOTES_BASE_URL" translate="false">
-		https://github.com/AlchemyViewer/Alchemy/releases/tag/
+		https://github.com/Shadowolf7/Vayu-Viewer/releases/tag/
 	</string>
 	<!-- Indicates something is being loaded. Maybe should be merged with RetrievingData -->
 	<string name="LoadingData">
@@ -3212,7 +3212,7 @@ https://www.alchemyviewer.org から最新バージョンをダウンロード�
 	<string name="MBMissingFile">
 		[APP_NAME]は、実行に必要なファイルの一部にアクセスできないか、ファイルが見つからなかったため閉じられます。
 
-https://alchemyviewer.org/downloads からビューアを再インストールてください。再インストール後も問題が解決しない場合はAlchemy Viewerチームに連絡してください。
+https://github.com/Shadowolf7/Vayu-Viewer/releases からビューアを再インストールてください。再インストール後も問題が解決しない場合はVayuチームに連絡してください。
 	</string>
 	<!-- Avatar Shape Information -->
 	<string name="5 O'Clock Shadow">

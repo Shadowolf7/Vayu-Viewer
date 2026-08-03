@@ -196,6 +196,6 @@ void LLWinDebug::generateMinidump(struct _EXCEPTION_POINTERS *exception_infop)
         ExInfo.ThreadId = ::GetCurrentThreadId();
         ExInfo.ExceptionPointers = exception_infop;
         ExInfo.ClientPointers = NULL;
-        writeDumpToFile((MINIDUMP_TYPE)(MiniDumpWithDataSegs | MiniDumpWithIndirectlyReferencedMemory), &ExInfo, "Alchemy.dmp");
+        writeDumpToFile((MINIDUMP_TYPE)(MiniDumpWithDataSegs | MiniDumpWithIndirectlyReferencedMemory), &ExInfo, "Vayu.dmp");
     }
 }

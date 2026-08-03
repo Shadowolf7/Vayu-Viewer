@@ -278,7 +278,7 @@ void ll_nvapi_init(NvDRSSessionHandle hSession)
     }
 
     NvAPI_UnicodeString profile_name;
-    std::wstring w_app_name = TEXT("Vayu Viewer");
+    std::wstring w_app_name = TEXT("Vayu");
     wsprintf(reinterpret_cast<wchar_t*>(profile_name), L"%s", w_app_name.c_str());
     NvDRSProfileHandle hProfile = 0;
     // (3) Check if we already have an application profile for the viewer
@@ -291,7 +291,7 @@ void ll_nvapi_init(NvDRSSessionHandle hSession)
     else if (status == NVAPI_PROFILE_NOT_FOUND)
     {
         // Don't have an application profile yet - create one
-        LL_INFOS() << "Creating Vayu Viewer profile for NVIDIA driver" << LL_ENDL;
+        LL_INFOS() << "Creating Vayu profile for NVIDIA driver" << LL_ENDL;
 
         NVDRS_PROFILE profileInfo;
         profileInfo.version = NVDRS_PROFILE_VER;

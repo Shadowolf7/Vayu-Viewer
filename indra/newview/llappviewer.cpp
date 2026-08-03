@@ -385,11 +385,11 @@ WorkQueue gMainloopWork("mainloop", 1024*1024);
 // Internal globals... that should be removed.
 static std::string gArgs;
 const int MAX_MARKER_LENGTH = 1024;
-const std::string MARKER_FILE_NAME("Alchemy.exec_marker");
-const std::string START_MARKER_FILE_NAME("Alchemy.start_marker");
-const std::string ERROR_MARKER_FILE_NAME("Alchemy.error_marker");
-const std::string LOGOUT_MARKER_FILE_NAME("Alchemy.logout_marker");
-const std::string WATCHDOG_MARKER_FILE_NAME("Alchemy.watchdog_marker");
+const std::string MARKER_FILE_NAME("Vayu.exec_marker");
+const std::string START_MARKER_FILE_NAME("Vayu.start_marker");
+const std::string ERROR_MARKER_FILE_NAME("Vayu.error_marker");
+const std::string LOGOUT_MARKER_FILE_NAME("Vayu.logout_marker");
+const std::string WATCHDOG_MARKER_FILE_NAME("Vayu.watchdog_marker");
 static std::string gLaunchFileOnQuit;
 
 //----------------------------------------------------------------------------
@@ -668,7 +668,7 @@ LLAppViewer::LLAppViewer()
 
     // Need to do this initialization before we do anything else, since anything
     // that touches files should really go through the lldir API
-    gDirUtilp->initAppDirs("AlchemyNext");
+    gDirUtilp->initAppDirs("Vayu");
     //
     // IMPORTANT! Do NOT put anything that will write
     // into the log files during normal startup until AFTER
@@ -2367,12 +2367,12 @@ void LLAppViewer::initLoggingAndGetLastDuration()
     {
         // Remove the last ".old" log file.
         std::string old_log_file = gDirUtilp->getExpandedFilename(LL_PATH_LOGS,
-            "Alchemy.old");
+            "Vayu.old");
         LLFile::remove(old_log_file);
 
         // Get name of the log file
         std::string log_file = gDirUtilp->getExpandedFilename(LL_PATH_LOGS,
-            "Alchemy.log");
+            "Vayu.log");
         /*
         * Before touching any log files, compute the duration of the last run
         * by comparing the ctime of the previous start marker file with the ctime
@@ -2420,7 +2420,7 @@ void LLAppViewer::initLoggingAndGetLastDuration()
         // Rename current log file to ".old"
         LLFile::rename(log_file, old_log_file);
 
-        // Set the log file to Alchemy.log
+        // Set the log file to Vayu.log
         LLError::logToFile(log_file);
         LL_INFOS() << "Started logging to " << log_file << LL_ENDL;
         if (!duration_log_msg.empty())
@@ -3735,14 +3735,14 @@ void LLAppViewer::writeSystemInfo()
 
 #if LL_DARWIN
     // crash processing in CrashMetadataSingleton reads SLLog
-    gDebugInfo["SLLog"] = gDirUtilp->getExpandedFilename(LL_PATH_LOGS,"Alchemy.crash");
+    gDebugInfo["SLLog"] = gDirUtilp->getExpandedFilename(LL_PATH_LOGS,"Vayu.crash");
 #elif LL_WINDOWS && !LL_BUGSPLAT
-    gDebugInfo["SLLog"] = gDirUtilp->getExpandedFilename(LL_PATH_DUMP,"Alchemy.log");
+    gDebugInfo["SLLog"] = gDirUtilp->getExpandedFilename(LL_PATH_DUMP,"Vayu.log");
 #else
     // Far from ideal, especially when multiple instances get involved.
     // Note that attachmentsForBugSplat expects .old extendion.
     // Todo: improve.
-    gDebugInfo["SLLog"] = gDirUtilp->getExpandedFilename(LL_PATH_LOGS,"Alchemy.old");  //LLError::logFileName();
+    gDebugInfo["SLLog"] = gDirUtilp->getExpandedFilename(LL_PATH_LOGS,"Vayu.old");  //LLError::logFileName();
 #endif
 
     gDebugInfo["ClientInfo"]["Name"] = LLVersionInfo::instance().getChannel();
@@ -4191,9 +4191,9 @@ void LLAppViewer::processMarkerFiles()
         // may take a while to trigger crash report so it has a special file.
         // Remove .crash file if exists
         std::string old_log_file = gDirUtilp->getExpandedFilename(LL_PATH_LOGS,
-            "Alchemy.old");
+            "Vayu.old");
         std::string crash_log_file = gDirUtilp->getExpandedFilename(LL_PATH_LOGS,
-            "Alchemy.crash");
+            "Vayu.crash");
         LLFile::remove(crash_log_file);
         // Rename ".old" log file to ".crash"
         LLFile::rename(old_log_file, crash_log_file);

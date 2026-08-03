@@ -3349,12 +3349,12 @@
 	</notification>
 	<notification name="MeshUploadErrorDetails">
 		Не удалось передать [LABEL]: [MESSAGE] 
-[DETAILS]см. Alchemy.log для получения более подробной информации
+[DETAILS]см. Vayu.log для получения более подробной информации
 	</notification>
 	<notification name="MeshUploadError">
 		Не удалось передать [LABEL]: [MESSAGE] 
 
-см. Alchemy.log для получения более подробной информации
+см. Vayu.log для получения более подробной информации
 	</notification>
 	<notification name="MeshUploadPermError">
 		Ошибка при запросе разрешений на передачу меша.

@@ -24,7 +24,7 @@ function install_desktop_entry()
 
     local desktop_entry="\
 [Desktop Entry]\n\
-Name=Second Life SLURL handler for Vayu Viewer\n\
+Name=Second Life SLURL handler for Vayu\n\
 Path=${installation_prefix}\n\
 Exec=${HANDLER} %u\n\
 Icon=${installation_prefix}/vayu_icon.png\n\

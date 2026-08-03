@@ -4017,7 +4017,7 @@ We&apos;re having trouble connecting. There may be a problem with your Internet 
 You can either check your Internet connection and try again in a few minutes, click Help to view the [SUPPORT_SITE], or click Teleport to attempt to teleport home.
     <url option="1" name="url">
 
-			https://github.com/AlchemyViewer/Alchemy/issues
+			https://github.com/Shadowolf7/Vayu-Viewer/issues
     </url>
     <form name="form">
       <button
@@ -4045,7 +4045,7 @@ We&apos;re having trouble connecting. There may be a problem with your Internet 
 
 You can either check your Internet connection and try again in a few minutes or click Help to view the [SUPPORT_SITE].
     <url option="1" name="url">
-			https://github.com/AlchemyViewer/Alchemy/issues
+			https://github.com/Shadowolf7/Vayu-Viewer/issues
     </url>
     <form name="form">
       <button
@@ -9459,7 +9459,7 @@ Select residents to share with.
     icon="alert.tga"
     type="alert">
       [LABEL] failed to upload: [MESSAGE]
-[DETAILS]See Alchemy.log for details
+[DETAILS]See Vayu.log for details
   </notification>
 
   <notification
@@ -9468,7 +9468,7 @@ Select residents to share with.
     type="alert">
       [LABEL] failed to upload: [MESSAGE]
 
-See Alchemy.log for details
+See Vayu.log for details
   </notification>
    
   <notification

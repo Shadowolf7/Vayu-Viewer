@@ -914,7 +914,7 @@ static void on_first_run(void* p_user_data, const char* app_version)
             app_data_path.pop_back();
         }
 
-        std::string user_settings_path = app_data_path + "\\AlchemyNext\\user_settings\\settings.xml";
+        std::string user_settings_path = app_data_path + "\\Vayu\\user_settings\\settings.xml";
         LLControlGroup settings("global");
         if (settings.loadFromFile(user_settings_path))
         {

@@ -108,9 +108,9 @@
    fit_panel="false"
    layout="topleft"
    name="alchemy_credits_tab"
-   title="Alchemy">
+   title="Vayu">
     <panel
-     border="false" 
+     border="false"
      follows="all"
      left="10"
      name="alchemy_credits_panel"
@@ -126,7 +126,7 @@
           top="0"
           width="435"
           wrap="true">
-Alchemy is brought to you by the Alchemy Development Group:
+Vayu is built on Alchemy Viewer, brought to you by the Alchemy Development Group:
       </text>
       <text_editor
        enabled="false" 

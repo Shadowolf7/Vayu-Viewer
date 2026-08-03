@@ -57,8 +57,8 @@ function install_desktop_entries()
     # terminal.
     local main_entry="\
 [Desktop Entry]\n\
-Name=Vayu Viewer\n\
-GenericName=Vayu Viewer\n\
+Name=Vayu\n\
+GenericName=Vayu\n\
 Comment=Client for the On-line Virtual World, Second Life\n\
 Exec=${installation_prefix}/vayu\n\
 Path=${installation_prefix}\n\

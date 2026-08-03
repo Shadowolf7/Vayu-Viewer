@@ -2084,10 +2084,10 @@ elseif(DARWIN)
   set(MACOSX_BUNDLE_ICON_FILE "vayu.icns")
   set(MACOSX_BUNDLE_GUI_IDENTIFIER "org.vayuviewer.viewer")
   set(MACOSX_BUNDLE_LONG_VERSION_STRING "${VIEWER_CHANNEL} ${VIEWER_SHORT_VERSION}.${VIEWER_VERSION_REVISION}")
-  set(MACOSX_BUNDLE_BUNDLE_NAME "Vayu Viewer")
+  set(MACOSX_BUNDLE_BUNDLE_NAME "Vayu")
   set(MACOSX_BUNDLE_SHORT_VERSION_STRING "${VIEWER_SHORT_VERSION}.${VIEWER_VERSION_REVISION}")
   set(MACOSX_BUNDLE_BUNDLE_VERSION "${VIEWER_SHORT_VERSION}${VIEWER_MACOSX_PHASE}${VIEWER_REVISION}")
-  set(MACOSX_BUNDLE_COPYRIGHT "Copyright © Vayu Viewer Contributors 2026")
+  set(MACOSX_BUNDLE_COPYRIGHT "Copyright © Vayu Contributors 2026")
   set(MACOSX_BUNDLE_NSPRINCIPAL_CLASS "LLApplication")
 
   # https://blog.kitware.com/upcoming-in-cmake-2-8-12-osx-rpath-support/
@@ -2098,7 +2098,7 @@ elseif(DARWIN)
     PROPERTIES
     OUTPUT_NAME "${product}"
     RUNTIME_OUTPUT_DIRECTORY ${VIEWER_STAGING_DIR}
-    # From Contents/MacOS/Vayu Viewer, look in Contents/Frameworks
+    # From Contents/MacOS/Vayu, look in Contents/Frameworks
     BUILD_WITH_INSTALL_RPATH 1
     INSTALL_RPATH "@executable_path/../Frameworks"
     MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/Info-VayuSDL.plist"
@@ -2112,7 +2112,7 @@ elseif(DARWIN)
       find_program(DSYMUTIL_PROGRAM dsymutil REQUIRED)
       add_custom_command(TARGET ${VIEWER_BINARY_NAME} POST_BUILD
             COMMAND ${DSYMUTIL_PROGRAM} -o ${VIEWER_DEBUG_BUNDLE} $<TARGET_FILE:${VIEWER_BINARY_NAME}>
-            COMMENT "Generating Vayu Viewer.dSYM")
+            COMMENT "Generating Vayu.dSYM")
     endif()
   endif()
 
