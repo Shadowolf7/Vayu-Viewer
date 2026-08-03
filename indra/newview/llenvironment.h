@@ -406,6 +406,16 @@ private:
     void                        onRegionChange();
     void                        onParcelChange();
 
+    // "Driver mode": true when VayuDriverModeLockEnvironment is on and the
+    // agent is seated on something (a vehicle) -- while true, parcel/region
+    // crossings don't re-fetch/apply that location's environment, so a long
+    // drive doesn't flicker through every region's own sky/water settings.
+    bool                        isDriverModeLocked() const;
+    // Edge-tracked each frame in update() so dismounting immediately
+    // re-syncs to wherever the agent actually is, rather than waiting for
+    // the next real parcel/region crossing.
+    bool                        mDriverModeWasLocked = false;
+
     bool                        mShowSunBeacon;
     bool                        mShowMoonBeacon;
     S32                         mEditorCounter;

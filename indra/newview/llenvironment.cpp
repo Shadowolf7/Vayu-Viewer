@@ -33,6 +33,7 @@
 #include "llagent.h"
 #include "llviewercontrol.h" // for gSavedSettings
 #include "llviewerregion.h"
+#include "llvoavatarself.h" // for isAgentAvatarValid()/gAgentAvatarp, driver mode
 #include "llwlhandlers.h"
 #include "lltrans.h"
 #include "lltrace.h"
@@ -1010,6 +1011,12 @@ bool LLEnvironment::isInventoryEnabled() const
            !gAgent.getRegionCapability("UpdateSettingsTaskInventory").empty();
 }
 
+bool LLEnvironment::isDriverModeLocked() const
+{
+    static LLCachedControl<bool> driver_mode(gSavedSettings, "VayuDriverModeLockEnvironment", false);
+    return driver_mode && isAgentAvatarValid() && gAgentAvatarp->isSitting() && gAgentAvatarp->getParent();
+}
+
 void LLEnvironment::onRegionChange()
 {
 //     if (gAgent.getRegionCapability("ExperienceQuery").empty())
@@ -1017,6 +1024,13 @@ void LLEnvironment::onRegionChange()
 //     // for now environmental experiences do not survive region crossings
     clearExperienceEnvironment(LLUUID::null, TRANSITION_DEFAULT);
 //     }
+
+    if (isDriverModeLocked())
+    {
+        // Driver mode: don't re-fetch/apply this region's environment while
+        // seated on a vehicle -- keep whatever was active.
+        return;
+    }
 
     LLViewerRegion* cur_region = gAgent.getRegion();
     if (!cur_region)
@@ -1033,6 +1047,13 @@ void LLEnvironment::onRegionChange()
 
 void LLEnvironment::onParcelChange()
 {
+    if (isDriverModeLocked())
+    {
+        // Driver mode: don't re-fetch/apply this parcel's environment while
+        // seated on a vehicle -- keep whatever was active.
+        return;
+    }
+
     S32 parcel_id(INVALID_PARCEL_ID);
 
     if (LLParcel* parcel = LLViewerParcelMgr::instance().getAgentParcel())
@@ -1633,6 +1654,17 @@ void LLEnvironment::update(const LLViewerCamera * cam)
     //F32Seconds now(LLDate::now().secondsSinceEpoch());
     if (!gCubeSnapshot)
     {
+        // Driver mode: the instant we're no longer locked (dismounted, or the
+        // setting got turned off mid-drive), immediately resync to wherever
+        // we actually are rather than waiting for the next real crossing.
+        bool locked_now = isDriverModeLocked();
+        if (mDriverModeWasLocked && !locked_now)
+        {
+            onRegionChange();
+            onParcelChange();
+        }
+        mDriverModeWasLocked = locked_now;
+
         static LLFrameTimer timer;
 
         F32Seconds delta(timer.getElapsedTimeAndResetF32());
