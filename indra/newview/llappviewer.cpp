@@ -5310,6 +5310,7 @@ void LLAppViewer::idle()
     //
     // Update weather effects
     //
+    LLWorld::getInstance()->updateClouds(gFrameDTClamped);
 
     // Update wind vector
     LLVector3 wind_position_region;
@@ -5324,6 +5325,8 @@ void LLAppViewer::idle()
         // Compute average wind and use to drive motion of water
 
         average_wind = regionp->mWind.getAverage();
+        F32 cloud_density = regionp->mCloudLayer.getDensityRegion(wind_position_region);
+        gSky.setCloudDensityAtAgent(cloud_density);
         gSky.setWind(average_wind);
         //LLVOWater::setWind(average_wind);
     }

@@ -34,6 +34,10 @@
 class LLVLData;
 class LLViewerRegion;
 
+constexpr char LAND_LAYER_CODE  = 'L';
+constexpr char WIND_LAYER_CODE  = '7';
+constexpr char CLOUD_LAYER_CODE = '8';
+
 class LLVLManager
 {
 public:

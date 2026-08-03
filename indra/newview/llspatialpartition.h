@@ -748,6 +748,13 @@ public:
     LLHUDParticlePartition(LLViewerRegion* regionp);
 };
 
+//spatial partition for classic clouds (implemented in llvoclouds.cpp)
+class LLCloudPartition : public LLParticlePartition
+{
+public:
+    LLCloudPartition(LLViewerRegion* regionp);
+};
+
 //spatial partition for grass (implemented in LLVOGrass.cpp)
 class LLGrassPartition : public LLSpatialPartition
 {

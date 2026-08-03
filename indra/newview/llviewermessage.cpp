@@ -119,6 +119,7 @@
 #include "llagentui.h"
 #include "llpanelblockedlist.h"
 #include "llpanelplaceprofile.h"
+#include "llcloud.h"
 #include "llviewerregion.h"
 #include "llfloaterregionrestarting.h"
 // [RLVa:KB] - Checked: 2010-03-09 (RLVa-1.2.0a)
@@ -511,6 +512,24 @@ void process_layer_data(LLMessageSystem *mesgsys, void **user_data)
             << LL_ENDL;
         return;
     }
+
+    if (type == CLOUD_LAYER_CODE)
+    {
+        static LLCachedControl<bool> sparse_clouds(gSavedSettings, "SparseClassicClouds");
+        if (!LLCloudLayer::needClassicClouds())
+        {
+            // Classic clouds are unwanted, or past the draw distance.
+            regionp->mCloudLayer.resetDensity();
+            return;
+        }
+        else if (sparse_clouds && !regionp->mCloudLayer.shouldUpdateDensity())
+        {
+            // Already updated this region's layer within the past second,
+            // and the user wants sparser update messages.
+            return;
+        }
+    }
+
     U8 *datap = new U8[size];
     mesgsys->getBinaryDataFast(_PREHASH_LayerData, _PREHASH_Data, datap, size);
     LLVLData *vl_datap = new LLVLData(regionp, type, datap, size);
@@ -521,6 +540,34 @@ void process_layer_data(LLMessageSystem *mesgsys, void **user_data)
     else
     {
         gVLManager.addLayerData(vl_datap, (S32Bytes)mesgsys->getReceiveSize());
+    }
+
+    if (!regionp->mGotClouds)
+    {
+        if (type == CLOUD_LAYER_CODE)
+        {
+            // The simulator is providing real cloud data for this region.
+            regionp->mGotClouds = true;
+        }
+        else if (type == WIND_LAYER_CODE)
+        {
+            if (!LLCloudLayer::needClassicClouds())
+            {
+                regionp->mCloudLayer.resetDensity();
+            }
+            else if (regionp->mFirstWindLayerReceivedTime == 0.f)
+            {
+                regionp->mFirstWindLayerReceivedTime = gFrameTimeSeconds;
+            }
+            else if (gFrameTimeSeconds - regionp->mFirstWindLayerReceivedTime >= 3.f)
+            {
+                // Over three seconds since the first wind layer packet and
+                // still no real cloud data — the simulator almost certainly
+                // isn't sending classic clouds. Synthesize a substitute
+                // density field locally, refreshed on each wind packet.
+                regionp->mCloudLayer.generateDensity();
+            }
+        }
     }
 }
 

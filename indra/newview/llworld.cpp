@@ -202,6 +202,9 @@ LLViewerRegion* LLWorld::addRegion(const U64 &region_handle, const LLHost &host)
         LL_ERRS() << "Unable to create new region!" << LL_ENDL;
     }
 
+    regionp->mCloudLayer.create(regionp);
+    regionp->mCloudLayer.setWindPointer(&regionp->mWind);
+
     if ( !seedUrl.empty() )
     {
         regionp->setCapability("Seed", seedUrl);
@@ -764,6 +767,61 @@ void LLWorld::clearAllVisibleObjects()
 void LLWorld::updateParticles()
 {
     LLViewerPartSim::getInstance()->updateSimulation();
+}
+
+void LLWorld::updateClouds(F32 dt)
+{
+    if (LLPipeline::FreezeTime || !LLCloudLayer::needClassicClouds())
+    {
+        // Don't move clouds in snapshot mode, and don't bother updating
+        // them when not needed.
+        return;
+    }
+
+    if (mActiveRegionList.empty())
+    {
+        return;
+    }
+
+    // Update all the cloud puff positions, and timer-based stuff such as
+    // death decay.
+    for (region_list_t::iterator iter = mActiveRegionList.begin(), end = mActiveRegionList.end(); iter != end; ++iter)
+    {
+        (*iter)->mCloudLayer.updatePuffs(dt);
+    }
+
+    // Reshuffle who owns which puffs.
+    for (region_list_t::iterator iter = mActiveRegionList.begin(), end = mActiveRegionList.end(); iter != end; ++iter)
+    {
+        (*iter)->mCloudLayer.updatePuffOwnership();
+    }
+
+    // Add new puffs.
+    for (region_list_t::iterator iter = mActiveRegionList.begin(), end = mActiveRegionList.end(); iter != end; ++iter)
+    {
+        (*iter)->mCloudLayer.updatePuffCount();
+    }
+}
+
+void LLWorld::killClouds()
+{
+    for (region_list_t::iterator iter = mActiveRegionList.begin(), end = mActiveRegionList.end(); iter != end; ++iter)
+    {
+        (*iter)->mCloudLayer.reset();
+    }
+}
+
+LLCloudGroup* LLWorld::findCloudGroup(const LLCloudPuff &puff)
+{
+    for (region_list_t::iterator iter = mActiveRegionList.begin(), end = mActiveRegionList.end(); iter != end; ++iter)
+    {
+        LLCloudGroup *groupp = (*iter)->mCloudLayer.findCloudGroup(puff);
+        if (groupp)
+        {
+            return groupp;
+        }
+    }
+    return NULL;
 }
 
 void LLWorld::renderPropertyLines()

@@ -68,6 +68,7 @@
 #include "llvlcomposition.h"
 #include "llvoavatarself.h"
 #include "llvocache.h"
+#include "llvoclouds.h"
 #include "llworld.h"
 #include "llspatialpartition.h"
 #include "stringize.h"
@@ -689,6 +690,7 @@ LLViewerRegion::LLViewerRegion(const U64 &handle,
     mImpl->mObjectPartition.push_back(new LLWaterPartition(this));      //PARTITION_WATER
     mImpl->mObjectPartition.push_back(new LLTreePartition(this));       //PARTITION_TREE
     mImpl->mObjectPartition.push_back(new LLParticlePartition(this));   //PARTITION_PARTICLE
+    mImpl->mObjectPartition.push_back(new LLCloudPartition(this));      //PARTITION_CLOUD
     mImpl->mObjectPartition.push_back(new LLGrassPartition(this));      //PARTITION_GRASS
     mImpl->mObjectPartition.push_back(new LLVolumePartition(this)); //PARTITION_VOLUME
     mImpl->mObjectPartition.push_back(new LLBridgePartition(this)); //PARTITION_BRIDGE
@@ -731,6 +733,7 @@ LLViewerRegion::~LLViewerRegion()
     // Can't do this on destruction, because the neighbor pointers might be invalid.
     // This should be reference counted...
     disconnectAllNeighbors();
+    mCloudLayer.destroy();
     LLViewerPartSim::getInstance()->cleanupRegion(this);
 
     {
@@ -875,6 +878,7 @@ void LLViewerRegion::setOriginGlobal(const LLVector3d &origin_global)
     updateRenderMatrix();
     mImpl->mLandp->setOriginGlobal(origin_global);
     mWind.setOriginGlobal(origin_global);
+    mCloudLayer.setOriginGlobal(origin_global);
     calculateCenterGlobal();
 }
 
