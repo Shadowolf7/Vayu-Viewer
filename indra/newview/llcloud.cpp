@@ -32,11 +32,12 @@
 
 #include "llgl.h"
 #include "patch_code.h"
+#include "patch_dct.h"
 
 #include "llagent.h"
 #include "llappviewer.h"        // for gFrameTimeSeconds
 #include "lldefs.h"             // for gDirOpposite
-#include "llstartup.h"          // for LLStartUp::isLoggedIn()
+#include "llstartup.h"          // for LLStartUp::getStartupState()
 #include "llviewercamera.h"
 #include "llviewercontrol.h"
 #include "llviewerobjectlist.h"
@@ -309,7 +310,7 @@ F32 LLCloudLayer::getCloudsAltitude()
     }
     // Wait until fully logged in before using the agent altitude (which is 0
     // until we get the region data and the correct agent position).
-    else if (LLStartUp::isLoggedIn())
+    else if (LLStartUp::getStartupState() == STATE_STARTED)
     {
         sCloudsAltitude = gAgent.getPositionAgent().mV[VZ] - (F32) clouds_altitude;
     }
