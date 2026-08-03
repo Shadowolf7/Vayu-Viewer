@@ -909,7 +909,7 @@
             <key>Value</key>
             <integer>1</integer>
         </map>
-        <key>AlchemyMouselookDecoupleVehicleTilt</key>
+        <key>VayuMouselookDecoupleVehicleTilt</key>
         <map>
             <key>Comment</key>
             <string>Keep the mouselook view level instead of tilting with a vehicle's roll and pitch while seated</string>
@@ -920,7 +920,7 @@
             <key>Value</key>
             <integer>0</integer>
         </map>
-        <key>AlchemyMouselookEyeHeightOffset</key>
+        <key>VayuMouselookEyeHeightOffset</key>
         <map>
             <key>Comment</key>
             <string>Vertical offset in meters applied to the mouselook camera eye position</string>

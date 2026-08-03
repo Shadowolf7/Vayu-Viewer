@@ -1606,7 +1606,7 @@ void LLAgentCamera::updateCamera()
 
             // Apply the same vertical eye-height offset used by calcCameraPositionTargetGlobal()
             // to both the camera origin and the look-at target, so it doesn't introduce pitch.
-            static LLCachedControl<F32> mouselook_eye_height_offset(gSavedSettings, "AlchemyMouselookEyeHeightOffset", 0.f);
+            static LLCachedControl<F32> mouselook_eye_height_offset(gSavedSettings, "VayuMouselookEyeHeightOffset", 0.f);
             LLVector3 eye_height_offset(0.f, 0.f, mouselook_eye_height_offset);
 
             LLViewerCamera::getInstance()->updateCameraLocation(head_pos + eye_height_offset,
@@ -1707,7 +1707,7 @@ LLVector3d LLAgentCamera::calcFocusPositionTargetGlobal()
         if (isAgentAvatarValid() && gAgentAvatarp->getParent())
         {
             LLViewerObject* root_object = (LLViewerObject*)gAgentAvatarp->getRoot();
-            static LLCachedControl<bool> decouple_vehicle_tilt(gSavedSettings, "AlchemyMouselookDecoupleVehicleTilt", false);
+            static LLCachedControl<bool> decouple_vehicle_tilt(gSavedSettings, "VayuMouselookDecoupleVehicleTilt", false);
             if (!root_object->flagCameraDecoupled() && !decouple_vehicle_tilt)
             {
                 agent_rot *= ((LLViewerObject*)(gAgentAvatarp->getParent()))->getRenderRotation();
@@ -1891,7 +1891,7 @@ LLVector3d LLAgentCamera::calcCameraPositionTargetGlobal(bool *hit_limit)
 
         head_offset.clearVec();
 
-        static LLCachedControl<F32> mouselook_eye_height_offset(gSavedSettings, "AlchemyMouselookEyeHeightOffset", 0.f);
+        static LLCachedControl<F32> mouselook_eye_height_offset(gSavedSettings, "VayuMouselookEyeHeightOffset", 0.f);
         head_offset[VZ] += mouselook_eye_height_offset;
 
         F32 fixup;
