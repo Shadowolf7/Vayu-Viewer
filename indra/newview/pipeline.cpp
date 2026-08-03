@@ -5820,9 +5820,12 @@ void LLPipeline::calcNearbyLights(LLCamera& camera)
             const Light* light = &(*iter);
             LLDrawable* drawable = light->drawable;
             const LLViewerObject *vobj = light->drawable->getVObj();
+            LLVOVolume* volight = drawable->getVOVolume();
             if(vobj && vobj->isAttachment())
             {
-                if (!sRenderAttachedLights)
+                // RenderAttachedLights only gates point lights — attached
+                // projector/spotlight attachments are left alone regardless.
+                if (!sRenderAttachedLights && !(volight && volight->isLightSpotlight()))
                 {
                     drawable->clearState(LLDrawable::NEARBY_LIGHT);
                     iter = mNearbyLights.erase(iter);
@@ -5838,7 +5841,6 @@ void LLPipeline::calcNearbyLights(LLCamera& camera)
                 }
             }
 
-            LLVOVolume* volight = drawable->getVOVolume();
             if (!volight || !drawable->isState(LLDrawable::LIGHT))
             {
                 drawable->clearState(LLDrawable::NEARBY_LIGHT);
@@ -5903,7 +5905,7 @@ void LLPipeline::calcNearbyLights(LLCamera& camera)
             }
             if (light->isAttachment())
             {
-                if (!sRenderAttachedLights)
+                if (!sRenderAttachedLights && !light->isLightSpotlight())
                 {
                     continue;
                 }
@@ -6046,7 +6048,7 @@ void LLPipeline::setupHWLights()
 
             if (light->isAttachment())
             {
-                if (!sRenderAttachedLights)
+                if (!sRenderAttachedLights && !light->isLightSpotlight())
                 {
                     continue;
                 }
@@ -9584,7 +9586,7 @@ void LLPipeline::renderDeferredLighting()
 
                     if (volume->isAttachment())
                     {
-                        if (!sRenderAttachedLights)
+                        if (!sRenderAttachedLights && !volume->isLightSpotlight())
                         {
                             continue;
                         }
