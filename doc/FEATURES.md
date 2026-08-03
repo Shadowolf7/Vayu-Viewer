@@ -1,8 +1,20 @@
 # FEATURES.md
 
-Tracks how Vayu diverges from its two ancestors: **Linden Lab's official viewer** and **Alchemy Viewer** (`upstream` remote, `AlchemyViewer/Alchemy`), which Vayu is directly forked from. Alchemy's own divergence from LL is out of scope here — this file only tracks what's specific to Vayu, on top of Alchemy.
+Tracks how Vayu diverges from its two ancestors: **Linden Lab's official viewer** and **Alchemy Viewer** (`upstream` remote, `AlchemyViewer/Alchemy`), which Vayu is directly forked from. The bulk of this file tracks what's specific to Vayu, on top of Alchemy; the section below gives a plain-language rundown of what Alchemy itself adds, for readers who aren't familiar with it.
 
 Update this file as part of the PR that lands a feature, the same way `doc/BUILD.md` gets updated alongside build-system changes. Move items between sections as they progress; don't just append.
+
+## What Alchemy Viewer adds (inherited foundation)
+
+Before Vayu's own changes, Alchemy is already a substantial fork of Linden Lab's official viewer. Highlights, not an exhaustive list:
+
+- **More rendering options:** a choice of tonemapping styles (ACES, Reinhard, Filmic, AGX), 3D LUT-based color grading, sharpening, and a finishing pass with vignette, film grain, dithering, chromatic aberration, and color-vision-deficiency (colorblind) compensation/preview.
+- **Chat quality-of-life:** a set of slash-style chat commands (e.g. jump to your home, set draw distance, look up your position, run quick calculations), colorized/styled nearby chat, typing and online/offline notifications, and radar alerts sent to chat.
+- **Radar and minimap enhancements:** parcels for sale or with collision restrictions highlighted on the map, live nearby-agent counts, adjustable update rate, and rings showing who's currently chatting nearby.
+- **Mouselook and movement:** an identify-friend-or-foe overlay while in mouselook, adjustable zoom timing, a "realistic" mouselook mode, and various movement toggles (e.g. disabling click-to-sit or mouse-steering).
+- **Interface conveniences:** auto-hiding toolbars, font overrides, and other small remembered-state niceties.
+
+This list isn't exhaustive — Alchemy carries roughly 80 of its own settings beyond this summary (`indra/newview/app_settings/settings_alchemy.xml`). Anything not called out above and not listed in the Vayu sections below is Alchemy's, not Vayu's.
 
 ## Naming conventions used in this codebase
 
