@@ -1,8 +1,8 @@
 # FEATURES.md
 
-Tracks how Vayu diverges from its two ancestors: **Linden Lab's official viewer** and **Alchemy Viewer** (`upstream` remote, `AlchemyViewer/Alchemy`), which Vayu is directly forked from. This file covers **current state only** — what's already shipped, in both Alchemy and Vayu. For in-progress work, planned items, and backlog, see [**ROADMAP.md**](ROADMAP.md).
+Tracks how Vayu diverges from its two ancestors: **Linden Lab's official viewer** and **Alchemy Viewer** (`upstream` remote, `AlchemyViewer/Alchemy`), which Vayu is directly forked from. This file covers **current state only** — what's already shipped, in both Alchemy and Vayu.
 
-Update this file as part of the PR that lands a feature, the same way `doc/BUILD.md` gets updated alongside build-system changes — and move the corresponding item out of `ROADMAP.md` in the same PR.
+Update this file as part of the PR that lands a feature, the same way `doc/BUILD.md` gets updated alongside build-system changes.
 
 ## What Alchemy Viewer adds (inherited foundation)
 
@@ -46,4 +46,3 @@ This list isn't exhaustive — Alchemy carries roughly 80 of its own settings be
 
 ---
 
-For what's in progress, planned, backlogged, or being watched, see [**ROADMAP.md**](ROADMAP.md).
