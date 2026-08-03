@@ -329,7 +329,7 @@ Options are defined in [`indra/CMakeLists.txt`](../indra/CMakeLists.txt). The mo
 | Option                                            | Default | Description                                                        |
 |:--------------------------------------------------|:--------|:-------------------------------------------------------------------|
 | `USE_LTO`                                         | OFF     | Link Time Optimization                                             |
-| `USE_SSE4_2`, `USE_AVX`, `USE_AVX2`               | OFF     | Target SIMD instruction sets (x86_64 only)                         |
+| `USE_SSE4_2`, `USE_AVX`, `USE_AVX2`               | `USE_AVX2` ON, others OFF | Target SIMD instruction sets (x86_64 only, all three platforms) — `USE_AVX2` already implies FMA/BMI1/BMI2/F16C via the `x86-64-v3` microarchitecture level, no separate flags needed. Requires a Haswell-class Intel CPU (2013+) or Excavator/Zen-class AMD CPU (2015/2017+); set `USE_AVX2=OFF` for older hardware |
 | `ENABLE_ASAN`, `ENABLE_UBSAN`, `ENABLE_THREADSAN` | OFF     | Sanitizers (macOS and Linux only)                                  |
 | `<COMPILER>_DISABLE_FATAL_WARNINGS`               | OFF     | Don't treat warnings as errors. `<COMPILER>` is `VS`, `GCC`, or `CLANG` |
 | `DISABLE_RELEASE_DEBUG_LOGGING`                   | varies  | Strip debug-level logging from Release builds                      |
