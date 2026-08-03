@@ -3061,6 +3061,17 @@
             <key>Value</key>
             <integer>1</integer>
         </map>
+        <key>VayuDriverModeLockEnvironment</key>
+        <map>
+            <key>Comment</key>
+            <string>While seated on a vehicle, don't change sky/water/day environment when crossing into a new parcel or region -- keep whatever was active until you dismount</string>
+            <key>Persist</key>
+            <integer>1</integer>
+            <key>Type</key>
+            <string>Boolean</string>
+            <key>Value</key>
+            <integer>0</integer>
+        </map>
         <key>SkyUseClassicClouds</key>
         <map>
             <key>Comment</key>

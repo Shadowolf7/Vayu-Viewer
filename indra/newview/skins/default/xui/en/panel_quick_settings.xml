@@ -3,7 +3,7 @@
  class="quick_settings"
  layout="topleft"
  width="300"
- height="435"
+ height="461"
  name="quick_settings">
   <text
    follows="left|top"
@@ -293,6 +293,17 @@
    top_pad="10"
    width="280"
    name="reset_environment_btn" />
+  <check_box
+   control_name="VayuDriverModeLockEnvironment"
+   follows="left|top"
+   height="16"
+   label="Driver Mode (lock environment while on a vehicle)"
+   layout="topleft"
+   left="10"
+   top_pad="10"
+   tool_tip="While seated on a vehicle, don't change sky/water/day environment when crossing into a new parcel or region -- keeps whatever was active until you dismount."
+   width="280"
+   name="driver_mode_lock_environment_check" />
   <text
    follows="left|top"
    height="15"
