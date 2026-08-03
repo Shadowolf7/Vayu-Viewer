@@ -1,8 +1,8 @@
 # FEATURES.md
 
-Tracks how Vayu diverges from its two ancestors: **Linden Lab's official viewer** and **Alchemy Viewer** (`upstream` remote, `AlchemyViewer/Alchemy`), which Vayu is directly forked from. This file covers **current state only** — what's already shipped, in both Alchemy and Vayu. For in-progress work, planned items, and backlog, see [**ROADMAP.md**](ROADMAP.md).
+Tracks how Vayu diverges from its two ancestors: **Linden Lab's official viewer** and **Alchemy Viewer** (`upstream` remote, `AlchemyViewer/Alchemy`), which Vayu is directly forked from. This file covers **current state only** — what's already shipped, in both Alchemy and Vayu.
 
-Update this file as part of the PR that lands a feature, the same way `doc/BUILD.md` gets updated alongside build-system changes — and move the corresponding item out of `ROADMAP.md` in the same PR.
+Update this file as part of the PR that lands a feature, the same way `doc/BUILD.md` gets updated alongside build-system changes.
 
 ## What Alchemy Viewer adds (inherited foundation)
 
@@ -32,7 +32,7 @@ This list isn't exhaustive — Alchemy carries roughly 80 of its own settings be
 
 **Ported from Firestorm:** pose stand, windlight quick-select, FPS limiter, VRAM-triggered draw-distance toggle — plus three XUI-only follow-up fixes (FPS limiter controls and PBR Materials toggle were hidden behind other controls in Preferences; quick-settings environment dropdowns lacked labels).
 
-**Camera:** mouselook eye-height offset (`AlchemyMouselookEyeHeightOffset`) and vehicle-tilt decoupling (`AlchemyMouselookDecoupleVehicleTilt`), new Preferences > Move > Mouse Input controls.
+**Camera:** mouselook eye-height offset (`VayuMouselookEyeHeightOffset`) and vehicle-tilt decoupling (`VayuMouselookDecoupleVehicleTilt`), new Preferences > Move > Mouse Input controls.
 
 **Content creation:** notecard/script file import with CRLF/BOM handling, batch/bulk upload support for notecards and scripts, standalone Notecard/Script entries in the Upload menu, legacy-viewer auto-sizing via width-ruler convention detection.
 
@@ -46,4 +46,3 @@ This list isn't exhaustive — Alchemy carries roughly 80 of its own settings be
 
 ---
 
-For what's in progress, planned, backlogged, or being watched, see [**ROADMAP.md**](ROADMAP.md).

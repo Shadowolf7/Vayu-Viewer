@@ -14,6 +14,9 @@
 
 *~
 
+# Local-only planning doc, not tracked in git (see FEATURES.md for what's shipped)
+/ROADMAP.md
+
 # Specific paths and/or names
 .vs
 .venv
