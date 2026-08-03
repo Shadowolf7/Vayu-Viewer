@@ -74,6 +74,10 @@ option(BUILD_HEADLESS "Build with support for headless mesa OSR rendering backen
 # Dullahan build options
 option(BUILD_DULLAHAN_EXAMPLE "Build the Dullahan OpenGL example application" OFF)
 
+# Standalone notecard/script editor (Scintilla-based). Windows only for now --
+# see indra/vcpkg.json's notecard-editor feature and indra/scintilla/CMakeLists.txt.
+option(BUILD_NOTECARD_EDITOR "Build the standalone notecard/script editor tool" OFF)
+
 # Plugin Build Options
 option(BUILD_EXAMPLE_PLUGIN "Build support for SLPlugin example plugin" ON)
 option(BUILD_CEF_PLUGIN "Build support for SLPlugin CEF web plugin." ON)
@@ -236,6 +240,10 @@ if(BUILD_DULLAHAN_EXAMPLE)
   list(APPEND VCPKG_MANIFEST_FEATURES "dullahan-example")
 endif()
 
+if(BUILD_NOTECARD_EDITOR)
+  list(APPEND VCPKG_MANIFEST_FEATURES "notecard-editor")
+endif()
+
 if (NOT USE_NSSPELLCHECKER AND NOT USE_WINSPELLCHECK)
   list(APPEND VCPKG_MANIFEST_FEATURES "hunspell")
 endif()
@@ -390,6 +398,13 @@ include(Copy3rdPartyLibs)
 add_subdirectory(cmake)
 
 add_subdirectory(dullahan)
+
+if(BUILD_NOTECARD_EDITOR)
+  add_subdirectory(scintilla)
+  add_subdirectory(lexilla)
+  add_subdirectory(notecard_editor)
+endif()
+
 add_subdirectory(llprecompiled)
 add_subdirectory(llaudio)
 add_subdirectory(llappearance)
