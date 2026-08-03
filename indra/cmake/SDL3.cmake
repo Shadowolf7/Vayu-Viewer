@@ -6,6 +6,18 @@ if(NOT USE_SDL_WINDOW)
     return()
 endif()
 
+if(LINUX)
+    # SDL3's own vcpkg build silently links libdecor only if it's present on the
+    # host at *that* configure time (no vcpkg feature flag forces it) — without it,
+    # windows come up with no OS decorations on compositors with no server-side
+    # decoration (GNOME/Mutter, Weston) and nothing here fails to tell you why.
+    # Failing loudly here can't undo an already-stale vcpkg-built SDL3 (see
+    # doc/BUILD.md's Linux prerequisites for the package name per distro), but it
+    # catches the common case: a fresh clone/CI image missing the dev package.
+    find_package(PkgConfig)
+    pkg_check_modules(LIBDECOR REQUIRED IMPORTED_TARGET GLOBAL libdecor-0)
+endif()
+
 find_package(SDL3 CONFIG REQUIRED)
 target_link_libraries(ll::SDL3 INTERFACE SDL3::SDL3)
 
