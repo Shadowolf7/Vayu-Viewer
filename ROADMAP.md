@@ -1,36 +1,8 @@
-# FEATURES.md
+# ROADMAP.md
 
-Tracks how Vayu diverges from its two ancestors: **Linden Lab's official viewer** and **Alchemy Viewer** (`upstream` remote, `AlchemyViewer/Alchemy`), which Vayu is directly forked from. Alchemy's own divergence from LL is out of scope here — this file only tracks what's specific to Vayu, on top of Alchemy.
+Forward-looking work for Vayu: what's in progress, planned, backlogged, or being watched. For what's already shipped, see [**FEATURES.md**](FEATURES.md).
 
-Update this file as part of the PR that lands a feature, the same way `doc/BUILD.md` gets updated alongside build-system changes. Move items between sections as they progress; don't just append.
-
-## Naming conventions used in this codebase
-
-- **Settings/XUI identifiers:** a new `gSavedSettings` key or widget `name=` gets the `Vayu*` prefix if it's genuinely new work, or keeps `Alchemy*` if it's inherited from Alchemy or extends an existing `Alchemy*` feature. Provenance decides, not neighboring keys.
-- **"Layer 1 vs layer 2" rebrand split:** user/OS-visible identity (window titles, icons, bundle IDs, installer names, URLs) was renamed Alchemy → Vayu. Internal plumbing (C++ identifiers, settings-key prefixes, vcpkg port names, the selectable `alchemy` skin, CI workflows tied to Alchemy's own infra) was deliberately left alone — renaming it is cosmetic churn that only grows merge-conflict surface against `upstream`.
-
-## Shipped (merged into `develop`)
-
-**Rebrand:** product identity (name, icons, bundle/app IDs, window class, installer/packaging scripts, per-user data directory, log/crash-dump filenames, About floater, bug-report/update URLs) changed from Alchemy to Vayu. Internal plumbing deliberately left as `Alchemy*` per the layer-1/layer-2 split above.
-
-**Rendering:**
-- BC7/BPTC texture compression support.
-- `RenderPBRMaterials` toggle — fall back PBR faces to legacy Blinn-Phong shading per-face (narrower than a full global PBR/Blinn-Phong switch — see Cool VL Viewer item below).
-- Ported [secondlife/viewer#5927](https://github.com/secondlife/viewer/pull/5927): interleave rigged attachment alpha into world alpha for correct depth sorting.
-
-**Ported from Firestorm:** pose stand, windlight quick-select, FPS limiter, VRAM-triggered draw-distance toggle — plus three XUI-only follow-up fixes (FPS limiter controls and PBR Materials toggle were hidden behind other controls in Preferences; quick-settings environment dropdowns lacked labels).
-
-**Camera:** mouselook eye-height offset (`AlchemyMouselookEyeHeightOffset`) and vehicle-tilt decoupling (`AlchemyMouselookDecoupleVehicleTilt`), new Preferences > Move > Mouse Input controls.
-
-**Content creation:** notecard/script file import with CRLF/BOM handling, batch/bulk upload support for notecards and scripts, standalone Notecard/Script entries in the Upload menu, legacy-viewer auto-sizing via width-ruler convention detection.
-
-**Linux platform:**
-- Fixed Linux FMOD build/packaging; consolidated GPU/GameMode selection (`switcherooctl`/`gamemoderun`) into the main launcher wrapper.
-- `OPENSSL_CONF=/dev/null` workaround for an openSUSE crypto-policy TLS bug (see project memory `project_login_oom_bug_fixed`).
-- Window decorations on Wayland (GNOME/Mutter, Weston): `libdecor` build prerequisite documented for all supported distros, plus a hard CMake configure-time check so a missing dev package fails loudly instead of silently shipping an undecorated window.
-- Auto-checkout of missing git submodules at configure time; ccache wired up for faster incremental rebuilds.
-
-**Reliability fixes:** mesh header retry exhaustion now notifies waiting objects instead of hanging; asset/mesh loading regression from the curl 8.21.0 upgrade; texture compression disabled on `setSubImageFromFrameBuffer` targets (was producing corrupt output).
+Update this file as part of the PR that lands an item — move it out of here into `FEATURES.md` rather than leaving stale entries behind. This is meant to be the single source of truth for status; if a scoping note elsewhere (memory, Obsidian, etc.) disagrees with this file, this file wins — update it, don't let the disagreement stand.
 
 ## In progress (not yet merged)
 
