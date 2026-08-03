@@ -6,7 +6,7 @@ Update this file as part of the PR that lands an item — move it out of here in
 
 ## In progress (not yet merged)
 
-- **Cool VL Viewer Lua scripting** (`feature/coolvl-lua-port`, local-only branch, not yet pushed) — `HBPreprocessor` ported, partial `HBViewerAutomation` core engine, resident script lifecycle, `OnRegionChange`/`OnPositionChange` events, Lua wired as a vcpkg dependency. ~3,075 lines across 6 commits. Not built/tested yet.
+- **Cool VL Viewer Lua scripting** (`feature/coolvl-lua-port`, local-only branch, not yet pushed) — `HBPreprocessor` ported, partial `HBViewerAutomation` core engine, resident script lifecycle, `OnRegionChange`/`OnPositionChange` events, Lua wired as a vcpkg dependency. ~3,075 lines across 6 commits. Not built/tested yet. **On hold (2026-08-03):** Roger is reconsidering whether to pursue this at all before putting more work in — don't resume without checking first.
 - **Standalone notecard/script editor** — vendoring Scintilla/Lexilla via CMake (dropped the vcpkg feature in favor of a direct vendor). Early scaffolding only.
 
 ## Roadmap (scoped, not started)
@@ -26,7 +26,7 @@ Roughly cheapest-to-largest:
 - GitHub Pages project website.
 - Build distribution — plan: GitHub Releases + GitHub Actions + Velopack's built-in GitHub update source (Velopack currently wired for Windows/macOS only; Linux needs its own integration). Code signing plan: SignPath Foundation (free, OSS) or Azure Trusted Signing for Windows; Apple Developer Program ($99/yr) for macOS notarization.
 - Chat log import tool (likely from Firestorm's format) + eventual cloud-backup integration (OwnCloud/Dropbox/OneDrive/iCloud) + fix for chat transcripts breaking continuity on avatar rename.
-- Vendor mimalloc as the allocator (next up, per user's own prioritization), following the precedent of Firestorm bundling jemalloc.
+- Vendor mimalloc as the allocator, following the precedent of Firestorm bundling jemalloc. **Deferred (2026-08-03):** Roger wants this closer to release rather than now — not next up despite earlier prioritization.
 - Windows AMD OpenGL-via-D3D12 workaround (`GALLIUM_DRIVER=d3d12` via `mesa-dist-win`'s `libgallium_wgl.dll`) — AMD's native Windows GL driver is weak; D3D12 is the API every vendor validates hardest against. Zink (already used on Linux) as a fallback toggle.
 - Register a Vayu Discord application — Rich Presence is still hardcoded to Alchemy's own Discord App ID and image asset; needs Roger to register a new app before this can be swapped over.
 - `.github/` CI/release workflows still reference Alchemy's own infra (secrets, signing keys) — needs its own decision pass once distribution is ready.
