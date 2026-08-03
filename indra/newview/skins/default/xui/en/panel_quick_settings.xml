@@ -3,7 +3,7 @@
  class="quick_settings"
  layout="topleft"
  width="300"
- height="420"
+ height="435"
  name="quick_settings">
   <text
    follows="left|top"
@@ -377,6 +377,16 @@
    top_pad="4"
    width="280"
    name="mouselook_decouple_vehicle_tilt_check" />
+  <check_box
+   control_name="VayuMouselookEyeHeightOffsetEnabled"
+   follows="left|top"
+   height="16"
+   label="Apply Eye Height Offset"
+   layout="topleft"
+   left="10"
+   top_pad="4"
+   width="280"
+   name="mouselook_eye_height_offset_enabled_check" />
   <text
    follows="left|top"
    height="15"
