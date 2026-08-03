@@ -409,7 +409,21 @@ if(DARWIN)
   add_compile_options(-g2 -gdwarf -fno-fast-math)
 
   if(BUILD_TARGET_IS_X86_64)
-    add_compile_options(-msse4.2)
+    # Flags to support building with newer instruction sets, matching the
+    # same USE_SSE4_2/USE_AVX/USE_AVX2 options and x86_64 microarchitecture
+    # levels used on Linux/Windows (see below).
+    # https://en.wikipedia.org/wiki/X86-64#Microarchitecture_levels
+    if(USE_AVX2)
+      add_compile_options(-march=x86-64-v3)
+    elseif(USE_AVX)
+      add_compile_options(-march=x86-64-v2 -mavx)
+    elseif(USE_SSE4_2)
+      add_compile_options(-march=x86-64-v2)
+    else()
+      # Historical Mac Intel floor, preserved even if AVX2 is explicitly
+      # turned off and nothing else is opted in.
+      add_compile_options(-msse4.2)
+    endif()
   endif()
 
   # Silence GL deprecation warnings
