@@ -29,10 +29,16 @@ This list isn't exhaustive — Alchemy carries roughly 80 of its own settings be
 - BC7/BPTC texture compression support.
 - `RenderPBRMaterials` toggle — fall back PBR faces to legacy Blinn-Phong shading per-face (narrower than a full global PBR/Blinn-Phong switch — see Cool VL Viewer item below).
 - Ported [secondlife/viewer#5927](https://github.com/secondlife/viewer/pull/5927): interleave rigged attachment alpha into world alpha for correct depth sorting.
+- `RenderAttachedLights` now only gates point-light attachments — attached spotlight/projector lights stay lit regardless of the toggle (emissive PBR materials were never affected, a separate system).
 
 **Ported from Firestorm:** pose stand, windlight quick-select, FPS limiter, VRAM-triggered draw-distance toggle — plus three XUI-only follow-up fixes (FPS limiter controls and PBR Materials toggle were hidden behind other controls in Preferences; quick-settings environment dropdowns lacked labels).
 
-**Camera:** mouselook eye-height offset (`VayuMouselookEyeHeightOffset`) and vehicle-tilt decoupling (`VayuMouselookDecoupleVehicleTilt`), new Preferences > Move > Mouse Input controls.
+**Camera:** mouselook eye-height offset (`VayuMouselookEyeHeightOffset`, with a separate `VayuMouselookEyeHeightOffsetEnabled` master toggle so the dialed-in value survives being switched off) and vehicle-tilt decoupling (`VayuMouselookDecoupleVehicleTilt`), new Preferences > Move > Mouse Input controls, also exposed in Quick Settings.
+
+**Environment:**
+- Classic 3D wind-driven cloud layer (`SkyUseClassicClouds`), distinct from the flat Windlight sky-dome clouds — a real Linden Lab feature removed in 2011, restored from git history and modernized, with client-side density synthesis since modern sims mostly no longer send real cloud data.
+- "Driver mode" (`VayuDriverModeLockEnvironment`) — while seated on a vehicle, parcel/region crossings no longer change the active sky/water/day environment; snaps back to your actual location the instant you dismount.
+- Both exposed in Quick Settings' Environment section.
 
 **Content creation:** notecard/script file import with CRLF/BOM handling, batch/bulk upload support for notecards and scripts, standalone Notecard/Script entries in the Upload menu, legacy-viewer auto-sizing via width-ruler convention detection.
 
