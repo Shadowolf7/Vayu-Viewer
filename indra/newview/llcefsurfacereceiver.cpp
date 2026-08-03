@@ -92,7 +92,7 @@ namespace
             mach_port_insert_right(mach_task_self(), port, port, MACH_MSG_TYPE_MAKE_SEND);
 
             char name[128];
-            snprintf(name, sizeof(name), "org.alchemyviewer.cefsurface.%d", (int)getpid());
+            snprintf(name, sizeof(name), "org.vayuviewer.cefsurface.%d", (int)getpid());
 
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
@@ -212,14 +212,14 @@ namespace
     };
 
     // Abstract-namespace socket address from the viewer pid (the Linux analog of
-    // the macOS bootstrap name org.alchemyviewer.cefsurface.<pid>). Abstract
+    // the macOS bootstrap name org.vayuviewer.cefsurface.<pid>). Abstract
     // sockets need no filesystem entry and vanish when the socket closes.
     socklen_t makeAddr(struct sockaddr_un& addr, int pid)
     {
         memset(&addr, 0, sizeof(addr));
         addr.sun_family = AF_UNIX;
         int n = snprintf(addr.sun_path + 1, sizeof(addr.sun_path) - 1,
-                         "org.alchemyviewer.cefsurface.%d", pid);   // [0] stays NUL = abstract
+                         "org.vayuviewer.cefsurface.%d", pid);   // [0] stays NUL = abstract
         return (socklen_t)(offsetof(struct sockaddr_un, sun_path) + 1 + n);
     }
 
@@ -251,7 +251,7 @@ namespace
             int rcvbuf = 4 * 1024 * 1024;   // hold a few queued frames across a slow tick
             setsockopt(sock, SOL_SOCKET, SO_RCVBUF, &rcvbuf, sizeof(rcvbuf));
 
-            LL_INFOS("Media") << "accel surface receiver: listening (abstract org.alchemyviewer.cefsurface."
+            LL_INFOS("Media") << "accel surface receiver: listening (abstract org.vayuviewer.cefsurface."
                               << (int)getpid() << ")" << LL_ENDL;
             started = true;
             return true;

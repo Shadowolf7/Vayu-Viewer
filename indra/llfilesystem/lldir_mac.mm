@@ -92,7 +92,7 @@ LLDir_Mac::LLDir_Mac()
 {
     mDirDelimiter = "/";
 
-    const std::string secondLifeString = "AlchemyNext";
+    const std::string secondLifeString = "Vayu";
 
     std::string executablepathstr;
     @autoreleasepool {

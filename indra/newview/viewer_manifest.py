@@ -545,7 +545,7 @@ class Windows_x86_64_Manifest(ViewerManifest):
             return
 
         # Velopack packaging author metadata. This is the "Authors" field in the Velopack installer.
-        pack_authors = 'Vayu Viewer Project'
+        pack_authors = 'Vayu Project'
 
         # Velopack splash progress bar color
         splash_color = '#00a5dc'

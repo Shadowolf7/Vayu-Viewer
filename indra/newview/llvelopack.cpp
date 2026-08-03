@@ -810,7 +810,7 @@ static void register_uninstall_info(const std::wstring& install_dir,
                       (BYTE*)app_name.c_str(), (DWORD)((app_name.size() + 1) * sizeof(wchar_t)));
         RegSetValueExW(hkey, L"DisplayVersion", 0, REG_SZ,
                       (BYTE*)version.c_str(), (DWORD)((version.size() + 1) * sizeof(wchar_t)));
-        const std::wstring publisher_string(L"Alchemy Development Group");
+        const std::wstring publisher_string(L"Vayu");
         RegSetValueExW(hkey, L"Publisher", 0, REG_SZ,
                       (BYTE*)publisher_string.c_str(), (DWORD)((publisher_string.size() + 1) * sizeof(wchar_t)));
         RegSetValueExW(hkey, L"UninstallString", 0, REG_SZ,
@@ -818,15 +818,15 @@ static void register_uninstall_info(const std::wstring& install_dir,
         RegSetValueExW(hkey, L"DisplayIcon", 0, REG_SZ,
                       (BYTE*)exe_path.c_str(), (DWORD)((exe_path.size() + 1) * sizeof(wchar_t)));
 
-        std::wstring link_url = L"https://www.alchemyviewer.org";
+        std::wstring link_url = L"https://github.com/Shadowolf7/Vayu-Viewer";
         RegSetValueExW(hkey, L"HelpLink", 0, REG_SZ,
             (BYTE*)link_url.c_str(), (DWORD)((link_url.size() + 1) * sizeof(wchar_t)));
 
-        link_url = L"https://www.alchemyviewer.org";
+        link_url = L"https://github.com/Shadowolf7/Vayu-Viewer";
         RegSetValueExW(hkey, L"URLInfoAbout", 0, REG_SZ,
             (BYTE*)link_url.c_str(), (DWORD)((link_url.size() + 1) * sizeof(wchar_t)));
 
-        link_url = L"https://www.alchemyviewer.org";
+        link_url = L"https://github.com/Shadowolf7/Vayu-Viewer";
         RegSetValueExW(hkey, L"URLUpdateInfo", 0, REG_SZ,
             (BYTE*)link_url.c_str(), (DWORD)((link_url.size() + 1) * sizeof(wchar_t)));
 
@@ -914,7 +914,7 @@ static void on_first_run(void* p_user_data, const char* app_version)
             app_data_path.pop_back();
         }
 
-        std::string user_settings_path = app_data_path + "\\AlchemyNext\\user_settings\\settings.xml";
+        std::string user_settings_path = app_data_path + "\\Vayu\\user_settings\\settings.xml";
         LLControlGroup settings("global");
         if (settings.loadFromFile(user_settings_path))
         {
