@@ -84,6 +84,7 @@
 #include "llviewerwindow.h" // For getSpinAxis
 #include "llvoavatar.h"
 #include "llvoavatarself.h"
+#include "llvoclouds.h"
 #include "llvograss.h"
 #include "llvosky.h"
 #include "llvolume.h"
@@ -231,6 +232,8 @@ LLViewerObject *LLViewerObject::createObject(const LLUUID &id, const LLPCode pco
 //    LL_WARNS() << "Creating new tree!" << LL_ENDL;
 //    res = new LLVOTree(id, pcode, regionp); break;
       res = NULL; break;
+    case LL_VO_CLOUDS:
+      res = new LLVOClouds(id, pcode, regionp); break;
     case LL_VO_SURFACE_PATCH:
       res = new LLVOSurfacePatch(id, pcode, regionp); break;
     case LL_VO_SKY:

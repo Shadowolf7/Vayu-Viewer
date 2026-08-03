@@ -138,6 +138,11 @@ public:
     void                    updateVisibilities();
     void                    updateParticles();
 
+    // Classic (volumetric) cloud layer, restored from the 2011-era LL viewer.
+    void                    updateClouds(F32 dt);
+    void                    killClouds();
+    LLCloudGroup*           findCloudGroup(const LLCloudPuff &puff);
+
     void                    renderPropertyLines();
 
     void updateNetStats(); // Update network statistics for all the regions...

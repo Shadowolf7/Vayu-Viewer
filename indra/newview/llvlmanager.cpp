@@ -36,10 +36,6 @@
 #include "llsurface.h"
 #include "llbitpack.h"
 
-const   char    LAND_LAYER_CODE                 = 'L';
-const   char    WIND_LAYER_CODE                 = '7';
-const   char    CLOUD_LAYER_CODE                = '8';
-
 LLVLManager gVLManager;
 
 LLVLManager::~LLVLManager()
@@ -104,7 +100,7 @@ void LLVLManager::unpackData(const S32 num_packets)
         }
         else if (CLOUD_LAYER_CODE == datap->mType)
         {
-
+            datap->mRegionp->mCloudLayer.decompress(bit_pack, &goph);
         }
     }
 

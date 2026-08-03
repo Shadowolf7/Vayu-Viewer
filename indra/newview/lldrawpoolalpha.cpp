@@ -721,7 +721,8 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, EAlphaStream stream
             pbr_rigged_emissives.resize(0);
 
             bool is_particle_or_hud_particle = group->getSpatialPartition()->mPartitionType == LLViewerRegion::PARTITION_PARTICLE
-                                                      || group->getSpatialPartition()->mPartitionType == LLViewerRegion::PARTITION_HUD_PARTICLE;
+                                                      || group->getSpatialPartition()->mPartitionType == LLViewerRegion::PARTITION_HUD_PARTICLE
+                                                      || group->getSpatialPartition()->mPartitionType == LLViewerRegion::PARTITION_CLOUD;
 
             bool disable_cull = is_particle_or_hud_particle;
             LLGLDisable cull(disable_cull ? GL_CULL_FACE : 0);

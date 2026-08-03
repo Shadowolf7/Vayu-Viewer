@@ -265,6 +265,7 @@ set(viewer_SOURCE_FILES
     llchiclet.cpp
     llchicletbar.cpp
     llclassifiedinfo.cpp
+    llcloud.cpp
     llcofwearables.cpp
     llcolorswatch.cpp
     llcommanddispatcherlistener.cpp
@@ -872,6 +873,7 @@ set(viewer_SOURCE_FILES
     llvoavatar.cpp
     llvoavatarself.cpp
     llvocache.cpp
+    llvoclouds.cpp
     llvograss.cpp
     llvoicecallhandler.cpp
     llvoicechannel.cpp
@@ -1037,6 +1039,7 @@ set(viewer_HEADER_FILES
     llchiclet.h
     llchicletbar.h
     llclassifiedinfo.h
+    llcloud.h
     llcofwearables.h
     llcolorswatch.h
     llcommanddispatcherlistener.h
@@ -1639,6 +1642,7 @@ set(viewer_HEADER_FILES
     llvoavatar.h
     llvoavatarself.h
     llvocache.h
+    llvoclouds.h
     llvograss.h
     llvoicechannel.h
     llvoiceclient.h

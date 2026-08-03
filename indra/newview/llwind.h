@@ -45,16 +45,30 @@ public:
     ~LLWind();
     void renderVectors();
     LLVector3 getVelocity(const LLVector3 &location); // "location" is region-local
+    // "location" is region-local. Restored 2026-08-03 (see llcloud.h) —
+    // reverts a hunk of storm-1622 ("fix viewer-side wind turbulence
+    // simulation") that stripped the cloud-velocity field five months
+    // after classic clouds were removed. Cloud puffs drift by this field,
+    // not by getVelocity(), so it can diverge from plain wind for a clumping
+    // effect (see CLOUD_DIVERGENCE_COEF in llwind.cpp).
+    LLVector3 getCloudVelocity(const LLVector3 &location);
     LLVector3 getVelocityNoisy(const LLVector3 &location, const F32 dim);   // "location" is region-local
 
     void decompress(LLBitPack &bitpack, LLGroupHeader *group_headerp);
     LLVector3 getAverage();
+    // Points this wind at the region's cloud density grid (LLCloudLayer owns
+    // the storage); decompress() reads it to compute the cloud-velocity
+    // divergence. Null when no cloud layer is wired up.
+    void setCloudDensityPointer(F32 *densityp);
 
     void setOriginGlobal(const LLVector3d &origin_global);
 private:
     S32 mSize;
     F32 * mVelX;
     F32 * mVelY;
+    F32 * mCloudVelX;
+    F32 * mCloudVelY;
+    F32 * mCloudDensityp;
 
     LLVector3d mOriginGlobal;
     void init();
