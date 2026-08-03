@@ -8,7 +8,7 @@
 [![License: LGPL 2.1](https://img.shields.io/badge/License-LGPL_2.1-blue.svg)](LICENSE)
 [![Latest Release](https://img.shields.io/github/v/release/Shadowolf7/Vayu-Viewer)](https://github.com/Shadowolf7/Vayu-Viewer/releases)
 
-Vayu is a third-party client for [Second Life](https://secondlife.com), forked from [Alchemy Viewer](https://www.alchemyviewer.org), which is itself forked from the official [Linden Lab viewer](https://github.com/secondlife/viewer). See [**doc/FEATURES.md**](doc/FEATURES.md) for what's shipped, in progress, or planned on top of Alchemy.
+Vayu is a third-party client for [Second Life](https://secondlife.com), forked from [Alchemy Viewer](https://www.alchemyviewer.org), which is itself forked from the official [Linden Lab viewer](https://github.com/secondlife/viewer). See [**FEATURES.md**](FEATURES.md) for what's already shipped, and [**ROADMAP.md**](ROADMAP.md) for what's in progress or planned.
 
 ## 📥 Download
 
