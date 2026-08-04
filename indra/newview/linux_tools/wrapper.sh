@@ -54,11 +54,18 @@ RUN_PATH=$(dirname "${SCRIPTSRC}" || echo .)
 echo "Running from ${RUN_PATH}"
 cd "${RUN_PATH}" || exit
 
-# Re-register the secondlife:// protocol handler every launch, for now.
-./etc/register_secondlifeprotocol.sh
-
-# Re-register the application with the desktop system every launch, for now.
-./etc/refresh_desktop_app_entry.sh
+# Desktop-entry / secondlife:// protocol-handler registration used to run
+# unconditionally here, on every single launch. That's actively harmful for
+# a build run directly out of a build tree for testing (this is exactly how
+# "test from the build directory before installing" is meant to work): the
+# app-menu entry and protocol handler point at wherever the binary that last
+# ran happened to be, silently hijacking a real, working installation's
+# desktop integration if a test build gets launched even once. Registration
+# now only happens as part of a deliberate `install.sh` run -- see
+# homedir_install()/root_install() there. If a real distributed release
+# later wants self-healing re-registration on launch (e.g. to recover from a
+# user moving/upgrading an installed copy in place), that should be a
+# deliberate opt-in for that scenario, not the default for every launch.
 
 ## Before we mess with LD_LIBRARY_PATH, save the old one to restore for
 ##  subprocesses that care.
