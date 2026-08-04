@@ -60,6 +60,7 @@ function homedir_install()
 
     install_to_prefix "$HOME/.vayu-install"
     $HOME/.vayu-install/etc/refresh_desktop_app_entry.sh
+    $HOME/.vayu-install/etc/register_secondlifeprotocol.sh
 }
 
 function root_install()
@@ -78,6 +79,7 @@ function root_install()
 
     mkdir -p /usr/local/share/applications
     "${install_prefix}"/etc/refresh_desktop_app_entry.sh
+    "${install_prefix}"/etc/register_secondlifeprotocol.sh
 }
 
 function install_to_prefix()
