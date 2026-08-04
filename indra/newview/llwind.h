@@ -62,8 +62,16 @@ public:
     void setCloudDensityPointer(F32 *densityp);
 
     void setOriginGlobal(const LLVector3d &origin_global);
+
+    // Variable region size support: the owning LLViewerRegion's actual width
+    // in meters, used to scale the 16x16 wind/cloud-velocity grid to world
+    // space. Defaults to 256m (the standard region size) until the owner
+    // calls this with its real width.
+    void setRegionWidth(F32 width) { mRegionWidth = width; }
+
 private:
     S32 mSize;
+    F32 mRegionWidth = 256.f;
     F32 * mVelX;
     F32 * mVelY;
     F32 * mCloudVelX;
