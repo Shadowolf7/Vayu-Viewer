@@ -411,6 +411,18 @@ Expected on the first run: vcpkg downloads and builds every C/C++ dependency fro
 
 If the run produces no output for a very long time it usually isn't hung — check CPU and disk activity before killing it.
 
+### A build freezes the whole system, not just the terminal
+
+Large parallel C++ builds (RelWithDebInfo especially: debug info + `-O3`, a big precompiled header) can use more RAM per parallel job than a many-core, modest-RAM machine has to spare. Ninja and Make both default to one job per core, so on e.g. a 12-thread laptop with 13GB RAM, a full-parallelism build can overcommit memory badly enough to cause severe swap thrashing — which can make the whole desktop unresponsive, not just slow the build down, even before the kernel's OOM killer reacts.
+
+On Linux (systemd + cgroup v2), wrap the build command with [`scripts/safe-build.sh`](../scripts/safe-build.sh):
+
+```
+scripts/safe-build.sh cmake --build --preset ninja-os-relwithdebinfo
+```
+
+This runs the build in a systemd user-scope cgroup with `MemoryHigh` set to ~70% of total system RAM (computed at run time, not hardcoded), so the kernel proactively reclaims — including swapping — from the build's cgroup specifically once it crosses that threshold, rather than letting it compete unbounded with the rest of the system. Falls back to running the command unwrapped if `systemd-run`/cgroup v2 isn't available (non-Linux, or older systems).
+
 ### CMake is too old
 
 Vayu requires CMake 3.27+. If your distro ships something older, install a newer version via pip inside your venv:
