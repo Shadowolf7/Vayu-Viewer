@@ -56,7 +56,7 @@ public:
         BOOST_HIGH          = 10,
         BOOST_SCULPTED      ,
         BOOST_BUMP          ,
-        BOOST_UNUSED_1      , // Placeholder to avoid disrupting habits around texture debug
+        BOOST_CLOUDS        , // Classic 3D cloud puffs (LLVOClouds)
         BOOST_SELECTED      ,
         BOOST_AVATAR_BAKED_SELF ,
         BOOST_AVATAR_SELF   , // needed for baking avatar

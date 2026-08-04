@@ -57,6 +57,7 @@ const LLUUID IMG_EXPLOSION_2            ("21ce046c-83fe-430a-b629-c7660ac78d7c")
 const LLUUID IMG_EXPLOSION_3            ("fedea30a-1be8-47a6-bc06-337a04a39c4b"); // On dataserver
 const LLUUID IMG_EXPLOSION_4            ("abf0d56b-82e5-47a2-a8ad-74741bb2c29e"); // On dataserver
 const LLUUID IMG_SMOKE_POOF             ("1e63e323-5fe0-452e-92f8-b98bd0f764e3"); // On dataserver
+const LLUUID IMG_CLOUD_POOF             ("fc4b9f0b-d008-45c6-96a4-01dd947ac621"); // On dataserver
 
 const LLUUID IMG_BIG_EXPLOSION_1        ("5e47a0dc-97bf-44e0-8b40-de06718cee9d"); // On dataserver
 const LLUUID IMG_BIG_EXPLOSION_2        ("9c8eca51-53d5-42a7-bb58-cef070395db8"); // On dataserver

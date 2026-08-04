@@ -96,7 +96,7 @@ void LLVOClouds::idleUpdate(LLAgent &agent, const F64 &time)
         // VL's mSunLightColor/mMoonLightColor), so approximate the original
         // diffuse+ambient sum by doubling the diffuse color instead.
         mCloudsColor = diffuse * 2.f;
-        mCloudsColor.adjust(adjustment);
+        mCloudsColor *= (F32) adjustment;
     }
     else
     {
@@ -175,7 +175,7 @@ bool LLVOClouds::updateGeometry(LLDrawable *drawable)
         facep->setViewerObject(this);
 
         const LLCloudPuff &puff = mCloudGroupp->getPuff(face_indx);
-        facep->mCenterLocal = agent.getPosAgentFromGlobal(puff.getPositionGlobal());
+        facep->mCenterLocal = gAgent.getPosAgentFromGlobal(puff.getPositionGlobal());
         facep->setFaceColor(LLColor4(mCloudsColor, puff.getAlpha()));
         facep->setDiffuseMap(getTEImage(0));
     }
