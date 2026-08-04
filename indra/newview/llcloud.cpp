@@ -100,6 +100,18 @@ void LLCloudGroup::setCenterRegion(F32 x, F32 y)
     if (mVOCloudsp)
     {
         mVOCloudsp->setPositionRegion(mCenterRegion);
+
+        // TEMPORARY: diagnosing a report of clouds rendering at ground level.
+        static F32 last_debug_log_time = 0.f;
+        if (gFrameTimeSeconds - last_debug_log_time >= 5.f)
+        {
+            last_debug_log_time = gFrameTimeSeconds;
+            LL_INFOS("Clouds") << "setCenterRegion DEBUG: mCenterRegion=" << mCenterRegion
+                                << " vocloud_posRegion=" << mVOCloudsp->getPositionRegion()
+                                << " vocloud_posAgent=" << mVOCloudsp->getPositionAgent()
+                                << " vocloud_posGlobal=" << mVOCloudsp->getPositionGlobal()
+                                << LL_ENDL;
+        }
     }
 }
 
@@ -316,6 +328,21 @@ F32 LLCloudLayer::getCloudsAltitude()
     }
     constexpr F32 MIN_ALT = CLOUD_HEIGHT_RANGE + CLOUD_PUFF_HEIGHT * 0.5f;
     sCloudsAltitude = llclamp(sCloudsAltitude, MIN_ALT, (F32) max_clouds_alt);
+
+    // TEMPORARY: diagnosing a report of clouds rendering at ground level
+    // despite a positive (absolute) ClassicCloudsAvgAlt. Throttled to avoid
+    // flooding the log, since this is called once per cloud group.
+    static F32 last_debug_log_time = 0.f;
+    if (gFrameTimeSeconds - last_debug_log_time >= 5.f)
+    {
+        last_debug_log_time = gFrameTimeSeconds;
+        LL_INFOS("Clouds") << "getCloudsAltitude DEBUG: raw_setting=" << (S32) clouds_altitude
+                            << " agent_Z=" << gAgent.getPositionAgent().mV[VZ]
+                            << " MIN_ALT=" << MIN_ALT
+                            << " max_clouds_alt=" << (U32) max_clouds_alt
+                            << " -> sCloudsAltitude=" << sCloudsAltitude << LL_ENDL;
+    }
+
     return sCloudsAltitude;
 }
 
