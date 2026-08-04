@@ -96,7 +96,21 @@ void LLVOClouds::idleUpdate(LLAgent &agent, const F64 &time)
         // VL's mSunLightColor/mMoonLightColor), so approximate the original
         // diffuse+ambient sum by doubling the diffuse color instead.
         mCloudsColor = diffuse * 2.f;
-        mCloudsColor *= (F32) adjustment;
+        // Inlined equivalent of Cool VL's LLColor3::adjust(), which this
+        // codebase's LLColor3 doesn't have: scale by adjustment, but if that
+        // would push the brightest channel past 1.0, rescale so it caps at
+        // exactly 1.0 instead (preserves hue instead of letting channels
+        // clip independently). No-op if adjustment is negative.
+        F32 clamped_adjustment = (F32) adjustment;
+        if (clamped_adjustment >= 0.f)
+        {
+            F32 max_channel = llmax(mCloudsColor.mV[0], mCloudsColor.mV[1], mCloudsColor.mV[2]);
+            if (max_channel > 0.f && max_channel * clamped_adjustment > 1.f)
+            {
+                clamped_adjustment = 1.f / max_channel;
+            }
+            mCloudsColor *= clamped_adjustment;
+        }
     }
     else
     {

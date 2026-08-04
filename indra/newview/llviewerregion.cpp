@@ -655,6 +655,7 @@ LLViewerRegion::LLViewerRegion(const U64 &handle,
     mInterestListMode(IL_MODE_DEFAULT)
 {
     mWidth = region_width_meters;
+    mWind.setRegionWidth(region_width_meters);
     mImpl->mOriginGlobal = from_region_handle(handle);
     updateRenderMatrix();
 
