@@ -3086,13 +3086,13 @@
         <key>ClassicCloudsAvgAlt</key>
         <map>
             <key>Comment</key>
-            <string>Altitude of the classic cloud layer in meters: positive is an absolute height, zero or negative is that many meters below the camera</string>
+            <string>Altitude of the classic cloud layer in meters: positive is an absolute height; zero or negative is subtracted from the camera's current altitude, so e.g. -100 puts the clouds 100m above the camera</string>
             <key>Persist</key>
             <integer>1</integer>
             <key>Type</key>
             <string>S32</string>
             <key>Value</key>
-            <integer>0</integer>
+            <integer>192</integer>
         </map>
         <key>ClassicCloudsMaxAlt</key>
         <map>
