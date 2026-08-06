@@ -5033,6 +5033,8 @@ bool LLVOAvatar::updateCharacter(LLAgent &agent)
         LLMotion *motionp = mMotionController.findMotion(ANIM_AGENT_SIT_GROUND_CONSTRAINED);
         if (!motionp || !mMotionController.isMotionLoading(motionp))
         {
+            LL_INFOS("Avatar") << avString() << " sitting with a null parent outside the markDead() "
+                "path; forcing unseat via per-frame reconciliation" << LL_ENDL;
             getOffObject();
         }
     }

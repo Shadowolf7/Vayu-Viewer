@@ -469,6 +469,8 @@ void LLViewerObject::markDead()
             }
             else
             {
+                LL_INFOS("Avatar") << "Vehicle/seat object " << mID << " killed while avatar "
+                    << childp->getID() << " was seated on it; forcing unseat via markDead()" << LL_ENDL;
                 // make sure avatar is no longer parented,
                 // so we can properly set it's position
                 childp->setDrawableParent(NULL);
