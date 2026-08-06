@@ -101,10 +101,6 @@ void LLViewerDynamicTexture::generateGLTexture(LLGLint internal_format, LLGLenum
     }
     createGLTexture(0, raw_image, 0, true, LLGLTexture::DYNAMIC_TEX);
     mGLTexturep->setGLTextureCreated(false);
-    // Dynamic textures are refreshed via setSubImageFromFrameBuffer(), which
-    // cannot work on a compressed texture (partial/copy updates are illegal
-    // on compressed internal formats -- see LLImageGL::setSubImageFromFrameBuffer).
-    mGLTexturep->setAllowCompression(false);
 }
 
 //-----------------------------------------------------------------------------

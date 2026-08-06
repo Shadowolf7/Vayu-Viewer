@@ -18,7 +18,6 @@ This isn't exhaustive — Alchemy carries roughly 80 of its own settings beyond 
 
 ### Rendering
 
-- Support for BC7/BPTC texture compression (better quality-per-byte on modern GPUs).
 - A PBR Materials toggle that lets you fall back individual PBR faces to legacy shading, for content that looks better rendered the old way.
 - Correct depth sorting between rigged attachments and world alpha (clothing/attachments no longer draw in the wrong order relative to transparent world objects).
 - Attached spotlights and projector lights now stay lit regardless of the "attached lights" toggle — only point-light attachments are affected by it.
@@ -55,7 +54,6 @@ Pose stand, Windlight quick-select, an FPS limiter, and a VRAM-triggered draw-di
 
 - Mesh loading no longer hangs waiting objects when a mesh header retry runs out of attempts.
 - Fixed an asset/mesh loading regression introduced by a curl upgrade.
-- Fixed corrupted output from texture compression on screen-captured (framebuffer) images.
 
 ---
 
