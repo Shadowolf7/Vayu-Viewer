@@ -33,7 +33,6 @@ out vec4 frag_color;
 float sampleDirectionalShadow(vec3 pos, vec3 norm, vec2 pos_screen);
 #endif
 
-vec3 scaleSoftClipFragLinear(vec3 l);
 void calcAtmosphericVarsLinear(vec3 inPositionEye, vec3 norm, vec3 light_dir, out vec3 sunlit, out vec3 amblit, out vec3 atten, out vec3 additive);
 vec4 applyWaterFogViewLinear(vec3 pos, vec4 color);
 
@@ -90,7 +89,15 @@ uniform sampler2D depthMap;
 
 uniform sampler2D exclusionTex;
 
-uniform int classic_mode;
+// Classic (legacy pre-PBR) sky lighting is a per-program compile-time variant, not a runtime
+// uniform: the two paths differ by whole blocks of maths and a probe sample, and only one of
+// them is ever live for a given sky. A macro rather than a const global -- these sources are
+// separately compiled units linked into one program, and several of them declare this.
+#ifdef CLASSIC_MODE
+#define classic_mode 1
+#else
+#define classic_mode 0
+#endif
 uniform vec3 lightDir;
 uniform vec3 specular;
 uniform float blurMultiplier;
@@ -119,7 +126,6 @@ vec3 srgb_to_linear(vec3 col);
 vec3 linear_to_srgb(vec3 col);
 
 vec3 atmosLighting(vec3 light);
-vec3 scaleSoftClip(vec3 light);
 
 vec3 transform_normal(vec3 vN, vec3 vT, vec3 vB, vec3 vNt)
 {
@@ -137,6 +143,7 @@ void sampleReflectionProbesLegacy(inout vec3 ambenv, inout vec3 glossenv, inout 
 
 
 vec3 getPositionWithNDC(vec3 ndc);
+float ndcZFromScreenDepth(float d);   // deferredUtil.glsl -- depth-convention aware
 
 void generateWaveNormals(out vec3 wave1, out vec3 wave2, out vec3 wave3)
 {
@@ -257,7 +264,7 @@ void main()
 #ifdef TRANSPARENT_WATER
     float depth = texture(depthMap, distort).r;
 
-    vec3 refPos = getPositionWithNDC(vec3(distort*2.0-vec2(1.0), depth*2.0-1.0));
+    vec3 refPos = getPositionWithNDC(vec3(distort*2.0-vec2(1.0), ndcZFromScreenDepth(depth)));
 
     // Calculate some distance fade in the water to better assist with refraction blending and reducing the refraction texture's "disconnect".
 #ifdef SHORELINE_FADE
@@ -269,7 +276,7 @@ void main()
     distort2 = mix(distort, distort2, min(1, fade * 10));
     depth = texture(depthMap, distort2).r;
 
-    refPos = getPositionWithNDC(vec3(distort2 * 2.0 - vec2(1.0), depth * 2.0 - 1.0));
+    refPos = getPositionWithNDC(vec3(distort2 * 2.0 - vec2(1.0), ndcZFromScreenDepth(depth)));
 
     if (pos.z < refPos.z - 0.05)
     {

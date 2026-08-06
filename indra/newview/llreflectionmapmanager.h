@@ -30,6 +30,7 @@
 #include "llrendertarget.h"
 #include "llcubemaparray.h"
 #include "llcubemap.h"
+#include "aluniformbuffer.h"
 
 class LLSpatialGroup;
 class LLViewerObject;
@@ -96,6 +97,18 @@ public:
         GLint heroShape;
         GLint heroMipCount;
         GLint heroProbeCount;
+
+        // Screen-space reflection march parameters. Frame-constant, and every SSR consumer is
+        // already reading this block, so they ride along here instead of being re-pushed as
+        // loose uniforms on every bindReflectionProbes. (noiseSine is NOT here: it advances
+        // per bind.)
+        F32 iterationCount;
+        F32 rayStep;
+        F32 distanceBias;
+        F32 depthRejectBias;
+        F32 glossySampleCount;
+        F32 adaptiveStepMultiplier;
+        F32 _ssrTailPad[2]; // round the block to a 16-byte multiple (std140)
     };
 
     // allocate an environment map of the given resolution
@@ -103,6 +116,7 @@ public:
 
     // release any GL state
     void cleanup();
+    void cleanupQueryPool();
 
     // maintain reflection probes
     void update();
@@ -161,6 +175,10 @@ public:
     U32 probeCount();
     U32 probeMemory();
 
+    // glDeleteQueries is expensive, so we maintain a pool of queries
+    GLuint allocateQuery();
+    void recycleQuery(GLuint query);
+
 private:
     friend class LLPipeline;
     friend class LLHeroProbeManager;
@@ -186,6 +204,8 @@ private:
 
     // bind UBO used for rendering
     void setUniforms();
+
+    std::deque<GLuint>                                    mQueryPool;
 
     // render target for cube snapshots
     // used to generate mipmaps without doing a copy-to-texture
@@ -220,8 +240,8 @@ private:
     // list of reflection maps to create
     std::vector<LLPointer<LLReflectionMap> > mCreateList;
 
-    // handle to UBO
-    U32 mUBO = 0;
+    // reflection-probe constant block (bound to LLGLSLShader::UB_REFLECTION_PROBES)
+    ALUniformBuffer mUBO;
 
     // list of maps being used for rendering
     std::vector<LLReflectionMap*> mReflectionMaps;

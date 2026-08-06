@@ -36,7 +36,15 @@ out vec4 frag_color;
 uniform mat3 env_mat;
 uniform vec3 sun_dir;
 uniform vec3 moon_dir;
-uniform int classic_mode;
+// Classic (legacy pre-PBR) sky lighting is a per-program compile-time variant, not a runtime
+// uniform: the two paths differ by whole blocks of maths and a probe sample, and only one of
+// them is ever live for a given sky. A macro rather than a const global -- these sources are
+// separately compiled units linked into one program, and several of them declare this.
+#ifdef CLASSIC_MODE
+#define classic_mode 1
+#else
+#define classic_mode 0
+#endif
 
 #ifdef USE_DIFFUSE_TEX
 uniform sampler2D diffuseMap;
@@ -54,13 +62,14 @@ in vec4 vertex_color; //vertex color should be treated as sRGB
 uniform float minimum_alpha;
 
 uniform mat4 proj_mat;
-uniform mat4 inv_proj;
+// Shared matrix stack + derived matrices, spliced from
+// class1/deferred/matricesBlock.glsl and bound at UB_MATRICES.
+//[ENGINE_BLOCK Matrices]
 uniform vec2 screen_res;
 uniform int sun_up_factor;
-uniform vec4 light_position[8];
-uniform vec3 light_direction[8];
-uniform vec4 light_attenuation[8];
-uniform vec3 light_diffuse[8];
+// Shared forward-light arrays, spliced from class1/deferred/lightsBlock.glsl and
+// bound at UB_LIGHTS. Members are read by bare name.
+//[ENGINE_BLOCK Lights]
 
 void waterClip(vec3 pos);
 
@@ -198,12 +207,11 @@ void main()
     vec4 diffuse_srgb = diffuse_tap;
 
 #ifdef FOR_IMPOSTOR
-    vec4 color;
-    color.rgb = diffuse_srgb.rgb;
-    color.a = 1.0;
+    // Misnamed here too, for the same reason as the branch below: LINEAR_DIFFUSE decodes on
+    // the sampler, so this is already linear.
+    vec4 diffuse_linear = diffuse_srgb;
 
-    float final_alpha = diffuse_srgb.a * vertex_color.a;
-    diffuse_srgb.rgb *= vertex_color.rgb;
+    float final_alpha = diffuse_linear.a * vertex_color.a;
 
     // Insure we don't pollute depth with invis pixels in impostor rendering
     //
@@ -212,12 +220,24 @@ void main()
         discard;
     }
 
-    color.rgb = diffuse_srgb.rgb;
+    // Linear in, linear out. The sampler decodes, the tint was linearized in the vertex
+    // stage, and generateImpostor enables GL_FRAMEBUFFER_SRGB so the store encodes -- the
+    // same convention every other forward writer into the bake target follows.
+    //
+    // This used to be the exception: sample encoded, tint in gamma space, write raw. It
+    // survived only because the impostor's post-deferred pass did not encode either, which
+    // is the same gap that left fullbright and PBR alpha too dark in the bake. Tinting now
+    // happens in linear, which is a real (and correct) change for vertex-coloured alpha.
+    vec4 color;
+    color.rgb = diffuse_linear.rgb * vertex_color.rgb;
     color.a = final_alpha;
 
 #else // FOR_IMPOSTOR
 
-    vec4 diffuse_linear = vec4(srgb_to_linear(diffuse_srgb.rgb), diffuse_srgb.a);
+    // diffuse_srgb is misnamed on this path: the sampler decoded it, so it is already
+    // linear. (Same for the FOR_IMPOSTOR branch above. IS_HUD is the one place the name is
+    // still accurate -- it samples raw and decodes below, after its raw tint multiply.)
+    vec4 diffuse_linear = diffuse_srgb;
 
     vec3 light_dir = (sun_up_factor == 1) ? sun_dir: moon_dir; // TODO -- factor out "sun_up_factor" and just send in the appropriate light vector
 
@@ -239,8 +259,17 @@ void main()
         discard;
     }
 
-    diffuse_srgb.rgb *= vertex_color.rgb;
-    diffuse_linear.rgb = srgb_to_linear(diffuse_srgb.rgb);
+    diffuse_linear.rgb *= vertex_color.rgb; // both linear now (IS_HUD: both sRGB)
+#ifndef LINEAR_DIFFUSE
+    // The HUD permutation -- the only non-impostor variant without LINEAR_DIFFUSE --
+    // deliberately skips the sampler decode -- mLinearDiffuse is unset,
+    // HUDs keep pixel-exact gamma-space filtering -- and its tint stays raw in the vertex
+    // stage, so decode the tinted product here, the same order the pre-sampler-decode code
+    // used. That makes the trailing linear_to_srgb an exact round trip. Without it the
+    // encoded texel falls through the linear math and is encoded AGAIN at the end, washing
+    // out every alpha-blended HUD element.
+    diffuse_linear.rgb = srgb_to_linear(diffuse_linear.rgb);
+#endif
 #endif // USE_VERTEX_COLOR
 
     vec3 sunlit;

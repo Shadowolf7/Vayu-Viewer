@@ -62,13 +62,23 @@ uniform float proj_lod  ; // (number of mips in proj map)
 uniform float proj_range; // range between near clip and far clip plane of projection
 uniform float proj_ambiance;
 
-uniform int classic_mode;
+// Classic (legacy pre-PBR) sky lighting is a per-program compile-time variant, not a runtime
+// uniform: the two paths differ by whole blocks of maths and a probe sample, and only one of
+// them is ever live for a given sky. A macro rather than a const global -- these sources are
+// separately compiled units linked into one program, and several of them declare this.
+#ifdef CLASSIC_MODE
+#define classic_mode 1
+#else
+#define classic_mode 0
+#endif
 
 // light params
 uniform vec3 color; // light_color
 uniform float size; // light_size
 
-uniform mat4 inv_proj;
+// Shared matrix stack + derived matrices, spliced from
+// class1/deferred/matricesBlock.glsl and bound at UB_MATRICES.
+//[ENGINE_BLOCK Matrices]
 uniform vec2 screen_res;
 
 const float M_PI = 3.14159265;
@@ -173,11 +183,40 @@ vec4 getNormRaw(vec2 screenpos)
     return norm;
 }
 
+// Convert a stored screen-depth sample to its NDC z under the active depth convention.
+// Under reverse-Z the C++ side sets glClipControl(GL_ZERO_TO_ONE) and feeds reversed
+// zero-to-one projections, so the buffer already holds ndc z; the legacy convention needs
+// the [0,1]->[-1,1] remap. Callers that also attach aoUtil.glsl must not redefine this.
+float ndcZFromScreenDepth(float d)
+{
+#ifdef REVERSE_Z
+    return d;
+#else
+    return 2.0 * d - 1.0;
+#endif
+}
+
+// True when a stored depth sample lies on the far plane (an unwritten sky pixel). The far
+// plane is 0 under reverse-Z and 1 otherwise.
+bool isFarDepth(float d)
+{
+#ifdef REVERSE_Z
+    return d <= 0.0;
+#else
+    return d >= 1.0;
+#endif
+}
+
 // get linear depth value given a depth buffer sample d and znear and zfar values
 float linearDepth(float d, float znear, float zfar)
 {
+#ifdef REVERSE_Z
+    // Reversed zero-to-one: d=1 -> znear, d=0 -> zfar. No cancellation (all-positive denom).
+    return znear * zfar / (znear + d * (zfar - znear));
+#else
     d = d * 2.0 - 1.0;
     return znear * 2.0 * zfar / (zfar + znear - d * (zfar - znear));
+#endif
 }
 
 float linearDepth01(float d, float znear, float zfar)
@@ -198,7 +237,8 @@ vec4 getTexture2DLodAmbient(vec2 tc, float lod)
 #else
     vec4 ret = texture(projectionMap, tc);
 #endif
-    ret.rgb = srgb_to_linear(ret.rgb);
+    // projectionMap is decoded on the sampler (SRGBDecode, see setupSpotLight), so the
+    // cookie is filtered in linear -- the mipped LOD read included. Already linear here.
 
     vec2 dist = tc-vec2(0.5);
     float d = dot(dist,dist);
@@ -214,7 +254,8 @@ vec4 getTexture2DLodDiffuse(vec2 tc, float lod)
 #else
     vec4 ret = texture(projectionMap, tc);
 #endif
-    ret.rgb = srgb_to_linear(ret.rgb);
+    // projectionMap is decoded on the sampler (SRGBDecode, see setupSpotLight), so the
+    // cookie is filtered in linear -- the mipped LOD read included. Already linear here.
 
     vec2 dist = vec2(0.5) - abs(tc-vec2(0.5));
     float det = min(lod/(proj_lod*0.5), 1.0);
@@ -261,7 +302,8 @@ vec4 texture2DLodSpecular(vec2 tc, float lod)
 #else
     vec4 ret = texture(projectionMap, tc);
 #endif
-    ret.rgb = srgb_to_linear(ret.rgb);
+    // projectionMap is decoded on the sampler (SRGBDecode, see setupSpotLight), so the
+    // cookie is filtered in linear -- the mipped LOD read included. Already linear here.
 
     vec2 dist = vec2(0.5) - abs(tc-vec2(0.5));
     float det = min(lod/(proj_lod*0.5), 1.0);
@@ -309,7 +351,7 @@ vec4 getPosition(vec2 pos_screen)
 {
     float depth = getDepth(pos_screen);
     vec2 sc = getScreenCoordinate(pos_screen);
-    vec4 ndc = vec4(sc.x, sc.y, 2.0*depth-1.0, 1.0);
+    vec4 ndc = vec4(sc.x, sc.y, ndcZFromScreenDepth(depth), 1.0);
     vec4 pos = inv_proj * ndc;
     pos /= pos.w;
     pos.w = 1.0;
@@ -326,7 +368,7 @@ vec3 getPositionWithNDC(vec3 ndc)
 vec4 getPositionWithDepth(vec2 pos_screen, float depth)
 {
     vec2 sc = getScreenCoordinate(pos_screen);
-    vec3 ndc = vec3(sc.x, sc.y, 2.0*depth-1.0);
+    vec3 ndc = vec3(sc.x, sc.y, ndcZFromScreenDepth(depth));
     return vec4(getPositionWithNDC(ndc), 1.0);
 }
 

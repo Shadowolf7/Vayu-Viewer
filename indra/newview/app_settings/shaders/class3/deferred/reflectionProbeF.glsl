@@ -38,48 +38,19 @@ uniform float max_probe_lod;
 
 uniform bool transparent_surface;
 
-uniform int classic_mode;
+// Classic (legacy pre-PBR) sky lighting is a per-program compile-time variant, not a runtime
+// uniform: the two paths differ by whole blocks of maths and a probe sample, and only one of
+// them is ever live for a given sky. A macro rather than a const global -- these sources are
+// separately compiled units linked into one program, and several of them declare this.
+#ifdef CLASSIC_MODE
+#define classic_mode 1
+#else
+#define classic_mode 0
+#endif
 
-#define MAX_REFMAP_COUNT 256  // must match LL_MAX_REFLECTION_PROBE_COUNT
-
-layout (std140) uniform ReflectionProbes
-{
-    // list of OBBs for user override probes
-    // box is a set of 3 planes outward facing planes and the depth of the box along that plane
-    // for each box refBox[i]...
-    /// box[0..2] - plane 0 .. 2 in [A,B,C,D] notation
-    //  box[3][0..2] - plane thickness
-    mat4 refBox[MAX_REFMAP_COUNT];
-    mat4 heroBox;
-    // list of bounding spheres for reflection probes sorted by distance to camera (closest first)
-    vec4 refSphere[MAX_REFMAP_COUNT];
-    // extra parameters
-    //  x - irradiance scale
-    //  y - radiance scale
-    //  z - fade in
-    //  w - znear
-    vec4 refParams[MAX_REFMAP_COUNT];
-    vec4 heroSphere;
-    // index  of cube map in reflectionProbes for a corresponding reflection probe
-    // e.g. cube map channel of refSphere[2] is stored in refIndex[2]
-    // refIndex.x - cubemap channel in reflectionProbes
-    // refIndex.y - index in refNeighbor of neighbor list (index is ivec4 index, not int index)
-    // refIndex.z - number of neighbors
-    // refIndex.w - priority, if negative, this probe has a box influence
-    ivec4 refIndex[MAX_REFMAP_COUNT];
-
-    // neighbor list data (refSphere indices, not cubemap array layer)
-    ivec4 refNeighbor[1024];
-
-    ivec4 refBucket[256];
-
-    // number of reflection probes present in refSphere
-    int refmapCount;
-
-    int heroShape;
-    int heroMipCount;
-    int heroProbeCount;
-};
+// Shared reflection-probe + SSR constants, spliced from
+// class1/deferred/reflectionProbesBlock.glsl and bound at UB_REFLECTION_PROBES.
+//[ENGINE_BLOCK ReflectionProbes]
 
 // Inputs
 uniform mat3 env_mat;
@@ -149,6 +120,14 @@ int getStartIndex(vec3 pos)
 // populate "probeIndex" with N probe indices that influence pos where N is REF_SAMPLE_COUNT
 void preProbeSample(vec3 pos)
 {
+    // Start the populate from empty here rather than relying on probeInfluences'
+    // global initializer. That initializer runs once per invocation, so this function
+    // only produces a correct list because nothing currently calls it twice -- the
+    // three entry points that do are all mutually exclusive. Resetting here makes the
+    // populate self-contained instead of correct by coincidence; it is a no-op on
+    // every existing call path.
+    probeInfluences = 0;
+
 #if REFMAP_LEVEL > 0
 
     int start = getStartIndex(pos);

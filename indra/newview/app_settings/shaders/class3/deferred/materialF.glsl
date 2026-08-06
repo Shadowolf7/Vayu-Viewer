@@ -36,18 +36,26 @@
 
 uniform float emissive_brightness;  // fullbright flag, 1.0 == fullbright, 0.0 otherwise
 uniform int sun_up_factor;
-uniform int classic_mode;
+// Classic (legacy pre-PBR) sky lighting is a per-program compile-time variant, not a runtime
+// uniform: the two paths differ by whole blocks of maths and a probe sample, and only one of
+// them is ever live for a given sky. A macro rather than a const global -- these sources are
+// separately compiled units linked into one program, and several of them declare this.
+#ifdef CLASSIC_MODE
+#define classic_mode 1
+#else
+#define classic_mode 0
+#endif
 
 vec4 applySkyAndWaterFog(vec3 pos, vec3 additive, vec3 atten, vec4 color);
-vec3 scaleSoftClipFragLinear(vec3 l);
 void calcAtmosphericVarsLinear(vec3 inPositionEye, vec3 norm, vec3 light_dir, out vec3 sunlit, out vec3 amblit, out vec3 atten, out vec3 additive);
 void calcHalfVectors(vec3 lv, vec3 n, vec3 v, out vec3 h, out vec3 l, out float nh, out float nl, out float nv, out float vh, out float lightDist);
 
 vec3 srgb_to_linear(vec3 cs);
 vec3 linear_to_srgb(vec3 cs);
 
-uniform mat4 modelview_matrix;
-uniform mat3 normal_matrix;
+// Shared matrix stack + derived matrices, spliced from
+// class1/deferred/matricesBlock.glsl and bound at UB_MATRICES.
+//[ENGINE_BLOCK Matrices]
 
 in vec3 vary_position;
 
@@ -81,13 +89,11 @@ uniform vec3 sun_dir;
 uniform vec3 moon_dir;
 
 uniform mat4 proj_mat;
-uniform mat4 inv_proj;
 uniform vec2 screen_res;
 
-uniform vec4 light_position[8];
-uniform vec3 light_direction[8];
-uniform vec4 light_attenuation[8];
-uniform vec3 light_diffuse[8];
+// Shared forward-light arrays, spliced from class1/deferred/lightsBlock.glsl and
+// bound at UB_LIGHTS. Members are read by bare name.
+//[ENGINE_BLOCK Lights]
 
 float getAmbientClamp();
 void waterClip(vec3 pos);
@@ -243,9 +249,12 @@ vec4 getSpecular()
 {
 #ifdef HAS_SPECULAR_MAP
     vec4 spec = texture(specularMap, vary_texcoord2.xy);
-    spec.rgb *= specular_color.rgb;
+    // The map is decoded on the sampler (filtered in linear), so linearise the tint to
+    // match. Yields LINEAR spec: the forward path lights with it directly, the deferred
+    // writer re-encodes to sRGB for the shared RGBA8 store.
+    spec.rgb *= srgb_to_linear(specular_color.rgb);
 #else
-    vec4 spec = vec4(specular_color.rgb, 1.0);
+    vec4 spec = vec4(srgb_to_linear(specular_color.rgb), 1.0);
 #endif
     return spec;
 }
@@ -311,8 +320,9 @@ void main()
 
 #if (DIFFUSE_ALPHA_MODE == DIFFUSE_ALPHA_MODE_BLEND)
     //forward rendering, output lit linear color
-    diffcol.rgb = srgb_to_linear(diffcol.rgb);
-    spec.rgb = srgb_to_linear(spec.rgb);
+    // diffcol arrived linear (decoded on the sampler) and its tint was linearised in the
+    // vertex stage. Spec keeps its in-shader decode below -- its map is still sampled
+    // encoded, matching the deferred writer.
     spec.a = glossiness; // pack glossiness into spec alpha for lighting functions
 
     vec3 pos = vary_position;
@@ -432,7 +442,10 @@ void main()
     float flag = GBUFFER_FLAG_HAS_ATMOS;
 
     frag_data[0] = max(vec4(diffcol.rgb, emissive), vec4(0));        // gbuffer is sRGB for legacy materials
-    frag_data[1] = max(vec4(spec.rgb, glossiness), vec4(0));           // XYZ = Specular color. W = Specular exponent.
+    // frag_data[1] is a plain RGBA8 shared with PBR's linear ORM, so it cannot be sRGB
+    // storage. The spec was FILTERED in linear (sampler decode); re-encode it here so it
+    // lands sRGB the way softenLight reads it. Storage constraint, not a filtering one.
+    frag_data[1] = max(vec4(linear_to_srgb(spec.rgb), glossiness), vec4(0));  // XYZ = Specular color. W = Specular exponent.
     frag_data[2] = encodeNormal(norm, env, flag);   // XY = Normal.  Z = Env. intensity. W = 1 skip atmos (mask off fog)
 
 #if defined(HAS_EMISSIVE)

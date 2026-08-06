@@ -40,10 +40,13 @@
 #include "lldrawpoolmaterials.h"
 #include "llgl.h"
 #include "lldrawable.h"
+#include "altexture3d.h"
+#include "aluniformbuffer.h"
 #include "llrendertarget.h"
 #include "llreflectionmapmanager.h"
 #include "llheroprobemanager.h"
 
+#include <array>
 #include <stack>
 
 class LLViewerTexture;
@@ -294,6 +297,24 @@ public:
     // bind shadow maps
     // if setup is true, wil lset texture compare mode function and filtering options
     void bindShadowMaps(LLGLSLShader& shader);
+
+    // Unbind the shadow maps from whichever units bindShadowMaps last put them on. Detaches
+    // only -- the render targets themselves are owned elsewhere and outlive this (contrast
+    // releaseShadowBuffers, which frees them).
+    //
+    // Programs do not agree on where DEFERRED_SHADOW0..5 live -- one deferred shader may map
+    // them to units 6-11 and another to 26-31 -- so unbinding "this shader's" shadow channels
+    // leaves the previous layout's units still holding depth textures under the compare
+    // sampler. The next program to use those low units for ordinary material maps then reads
+    // a depth texture through a non-shadow sampler, which is undefined behaviour.
+    void unbindShadowMaps();
+
+    // Rebuild the shared shadow/SSAO constant block from current state (CPU only). Called once
+    // per deferred pass; every value in it is fixed for the whole pass.
+    void packDeferredUBO();
+    // Upload (if dirty) and bind that block at UB_DEFERRED.
+    void bindDeferredUBO();
+
     void bindDeferredShaderFast(LLGLSLShader& shader);
     void bindDeferredShader(LLGLSLShader& shader, LLRenderTarget* light_target = nullptr, LLRenderTarget* depth_target = nullptr);
     void setupSpotLight(LLGLSLShader& shader, LLDrawable* drawablep);
@@ -380,6 +401,16 @@ public:
 
     static bool isWaterClip();
     static bool canUseInterleavedAlpha();
+
+    // Depth format for the main scene / non-shadow depth targets: float32 under reverse-Z
+    // (same 4 bytes/px as DEPTH24 on desktop GPUs), fixed 24-bit otherwise.
+    static LLRenderTarget::eDepthFormat mainDepthFormat();
+
+    // Latch reverse-Z on/off to match (setting && clip-control cap): flips LLRender::sReverseZ,
+    // sets glClipControl + clear depth, re-bases the ambient depth func, and clears the sampler
+    // cache. Idempotent; requires a current GL context. Called from setShaders() so the whole
+    // convention flip (clip control, clear depth, RT formats, shader define) is atomic.
+    static void updateReverseZ();
 
     void setRenderTypeMask(U32 type, ...);
     // This is equivalent to 'setRenderTypeMask'
@@ -628,6 +659,12 @@ public:
     bool                     mBackfaceCull;
     S32                      mMatrixOpCount;
     S32                      mTextureMatrixOps;
+    S32                      mTextureMatrixOpsShadow;   // portion of mTextureMatrixOps issued during shadow passes
+    S32                      mTextureMatrixOpsProbe;    // portion issued during reflection/hero probe updates
+    S32                      mTextureMatrixOpsIdentity; // portion whose matrix was exactly identity (degenerate anims)
+    // Classify and count one texture-matrix load; draw pools call this instead of
+    // bumping mTextureMatrixOps directly so the debug display can attribute the total.
+    void countTextureMatrixOp(const LLMatrix4& mat);
     S32                      mNumVisibleNodes;
 
     S32                      mDebugTextureUploadCost;
@@ -652,10 +689,7 @@ public:
     static bool             sShadowRender;
     static bool             sDynamicLOD;
     static bool             sPickAvatar;
-    static bool             sReflectionRender;
-    static bool             sDistortionRender;
     static bool             sImpostorRender;
-    static bool             sImpostorRenderAlphaDepthPass;
     static bool             sUnderWaterRender;
     static bool             sRenderGlow;
     static bool             sTextureBindTest;
@@ -775,6 +809,38 @@ public:
     LLVector4               mSunOrthoClipPlanes;
     LLVector2               mScreenScale;
 
+    // ---- Shared deferred uniform block (UB_DEFERRED) --------------------------------------
+    // std140-packed shadow/SSAO constants, uploaded once per deferred pass instead of being
+    // re-pushed by every bindDeferredShader call. Holds only what is constant across a pass:
+    // screen_res is overridden per call and sun_dir/moon_dir are entangled with atmospherics,
+    // so those stay loose.
+    //
+    // shadow_matrix@0, ssao_effect_mat@384, shadow_clip@432, shadow_res@448,
+    // proj_shadow_res@456, scalars @464..492, size 496. Matrices are COLUMN-major (std140's
+    // default): glm's own storage is uploaded straight through, and ssao_effect_mat is
+    // symmetric either way. Checked against the driver at shader load by
+    // validateEngineBlockLayouts() in debug builds.
+    struct alignas(16) DeferredUBOData
+    {
+        F32 shadow_matrix[6][16];      // mat4[6]
+        F32 ssao_effect_mat[12];       // mat3 (3 vec4-strided columns)
+        F32 shadow_clip[4];            // vec4
+        F32 shadow_res[2];             // vec2
+        F32 proj_shadow_res[2];        // vec2
+        F32 shadow_bias;
+        F32 shadow_offset;
+        F32 spot_shadow_bias;
+        F32 spot_shadow_offset;
+        F32 ssao_radius;
+        F32 ssao_max_radius;
+        F32 ssao_factor;
+        F32 ssao_factor_inv;
+    };
+
+    DeferredUBOData             mDeferredUBOData{};
+    ALUniformBuffer             mDeferredUBO;
+    bool                        mDeferredUBODirty{ true };
+
     //water distortion texture (refraction)
     LLRenderTarget              mWaterDis;
 
@@ -786,7 +852,18 @@ public:
     //noise map
     U32                 mNoiseMap;
     U32                 mTrueNoiseMap;
+    // The units the shadow maps are bound to live in LLGLSLShader::sCompareSamplerUnits --
+    // published there because LLGLSLShader::bind() is what releases them ahead of
+    // non-declaring programs; see bindShadowMaps.
+
     U32                 mLightFunc;
+    // The deferred lighting LUT wants mag=LINEAR + min=NEAREST, which no ALSampler mask
+    // spells, so it resolves through ALSamplerCache's descriptor path -- a linear scan,
+    // kept out of every deferred shader bind by memoising it here and revalidating against
+    // the cache generation (0 = unresolved). Every other fixed mode is an ALSampler named
+    // at the bind site.
+    U32                 mLightFuncSampler = 0;
+    U32                 mLightFuncSamplerGeneration = 0;
 
     //smaa
     U32                 mSMAAAreaMap = 0;
@@ -957,7 +1034,7 @@ protected:
     // Note: no need to keep an quick-lookup to avatar pools, since there's only one per avatar
 
     // Color grading lookup texture and size
-    U32       mCGLut{};
+    LLPointer<ALTexture3D> mCGLut;
     LLVector4 mCGLutSize{};
 
 public:
