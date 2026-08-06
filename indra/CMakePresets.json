@@ -55,6 +55,13 @@
       }
     },
     {
+      "name": "fmod",
+      "hidden": true,
+      "cacheVariables": {
+        "USE_FMODSTUDIO": true
+      }
+    },
+    {
       "name": "clang",
       "hidden": true,
       "cacheVariables": {
@@ -72,6 +79,14 @@
       }
     },
     {
+      "name": "ninja-fmod",
+      "displayName": "Ninja Multi-Config (FMOD)",
+      "inherits": [
+        "ninja-os",
+        "fmod"
+      ]
+    },
+    {
       "name": "ninja",
       "displayName": "Ninja Multi-Config Proprietary",
       "inherits": [
@@ -85,6 +100,14 @@
       "inherits": [
         "ninja-os",
         "clang"
+      ]
+    },
+    {
+      "name": "ninja-clang-fmod",
+      "displayName": "Ninja Multi-Config (Clang, FMOD)",
+      "inherits": [
+        "ninja-os-clang",
+        "fmod"
       ]
     },
     {
@@ -294,6 +317,26 @@
       "configuration": "Release"
     },
     {
+      "name": "ninja-fmod-debug",
+      "configurePreset": "ninja-fmod",
+      "configuration": "Debug"
+    },
+    {
+      "name": "ninja-fmod-optdebug",
+      "configurePreset": "ninja-fmod",
+      "configuration": "OptDebug"
+    },
+    {
+      "name": "ninja-fmod-relwithdebinfo",
+      "configurePreset": "ninja-fmod",
+      "configuration": "RelWithDebInfo"
+    },
+    {
+      "name": "ninja-fmod-release",
+      "configurePreset": "ninja-fmod",
+      "configuration": "Release"
+    },
+    {
       "name": "ninja-clang-debug",
       "configurePreset": "ninja-clang",
       "configuration": "Debug"
@@ -331,6 +374,26 @@
     {
       "name": "ninja-os-clang-release",
       "configurePreset": "ninja-os-clang",
+      "configuration": "Release"
+    },
+    {
+      "name": "ninja-clang-fmod-debug",
+      "configurePreset": "ninja-clang-fmod",
+      "configuration": "Debug"
+    },
+    {
+      "name": "ninja-clang-fmod-optdebug",
+      "configurePreset": "ninja-clang-fmod",
+      "configuration": "OptDebug"
+    },
+    {
+      "name": "ninja-clang-fmod-relwithdebinfo",
+      "configurePreset": "ninja-clang-fmod",
+      "configuration": "RelWithDebInfo"
+    },
+    {
+      "name": "ninja-clang-fmod-release",
+      "configurePreset": "ninja-clang-fmod",
       "configuration": "Release"
     },
     {
@@ -547,6 +610,32 @@
         {
           "type": "build",
           "name": "ninja-os-clang-release"
+        }
+      ]
+    },
+    {
+      "name": "ninja-fmod-release",
+      "steps": [
+        {
+          "type": "configure",
+          "name": "ninja-fmod"
+        },
+        {
+          "type": "build",
+          "name": "ninja-fmod-release"
+        }
+      ]
+    },
+    {
+      "name": "ninja-clang-fmod-release",
+      "steps": [
+        {
+          "type": "configure",
+          "name": "ninja-clang-fmod"
+        },
+        {
+          "type": "build",
+          "name": "ninja-clang-fmod-release"
         }
       ]
     },

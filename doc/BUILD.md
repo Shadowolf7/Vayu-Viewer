@@ -196,12 +196,13 @@ cmake -S indra --list-presets
 
 ### Naming convention
 
-Preset names follow the pattern `<generator>[-<arch>][-os]`:
+Preset names follow the pattern `<generator>[-<arch>][-os|fmod]`:
 
-- **`-os` suffix** — open-source only. Excludes proprietary components (KDU JPEG2000 codec, FMOD audio, and other non-free libraries).
-- **No `-os` suffix** — sets `INSTALL_PROPRIETARY=ON`. Requires licensed source for the proprietary components and is only useful if you have access to them.
+- **`-os` suffix** — true open-source baseline. Excludes proprietary components such as KDU JPEG2000 and FMOD audio.
+- **`-fmod` suffix** — enables FMOD audio while still leaving the KDU/JPEG2000 path disabled.
+- **No `-os` / `-fmod` suffix** — sets `INSTALL_PROPRIETARY=ON` and enables the full proprietary set, including KDU.
 
-Most contributors want the `-os` variants.
+Most contributors want the `-os` variants; use `-fmod` when you specifically want FMOD support without the full proprietary stack.
 
 ### Common presets
 
@@ -209,7 +210,9 @@ Most contributors want the `-os` variants.
 |:---------------------------------------------|:---------|:-------------------|
 | `vs2026-os`, `vs2022-os`                     | Windows  | Visual Studio      |
 | `ninja-os`                                   | Linux    | Ninja Multi-Config |
+| `ninja-fmod`                                 | Linux    | Ninja Multi-Config (FMOD enabled) |
 | `ninja-os-clang`                             | Linux    | Ninja Multi-Config (Clang instead of GCC) |
+| `ninja-clang-fmod`                           | Linux    | Ninja Multi-Config (Clang + FMOD) |
 | `ninja-os-arm64`, `ninja-os-x64`             | macOS    | Ninja Multi-Config |
 | `xcode-os`, `xcode-os-arm64`, `xcode-os-x64` | macOS    | Xcode              |
 
