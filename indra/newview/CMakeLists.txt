@@ -2281,6 +2281,7 @@ if(IS_DIRECTORY ${LOCAL_DIST_DIR})
       ${CMAKE_CURRENT_SOURCE_DIR}/viewer_manifest.py
       ${CMAKE_CURRENT_BINARY_DIR}/viewer_version.txt
       ${VIEWER_BINARY_NAME}
+      ${viewer_XUI_FILES}
       COMMENT "Performing viewer_manifest local dist copy"
       )
 
@@ -2321,6 +2322,7 @@ if (PACKAGE)
         ${CMAKE_CURRENT_SOURCE_DIR}/viewer_manifest.py
         ${CMAKE_CURRENT_BINARY_DIR}/viewer_version.txt
         ${VIEWER_BINARY_NAME} # Prevents two copies of manifest from running at the same time
+        ${viewer_XUI_FILES}
     COMMENT "Performing viewer_manifest package"
     )
 

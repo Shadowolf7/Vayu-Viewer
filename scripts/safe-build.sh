@@ -8,8 +8,18 @@
 # freeze rather than just slow the build down. See doc/BUILD.md's
 # troubleshooting section for the incident that prompted this.
 #
-# Usage: scripts/safe-build.sh <build command and args...>
-# Example: scripts/safe-build.sh cmake --build --preset ninja-os-relwithdebinfo
+# Usage:
+#   ./scripts/safe-build.sh <command> [args...]
+#
+# Examples (run from the repository root):
+#   ./scripts/safe-build.sh cmake --build --preset ninja-os-relwithdebinfo
+#   ./scripts/safe-build.sh cmake --build build-Linux-ninja-os --config RelWithDebInfo --parallel 4
+#   ./scripts/safe-build.sh ninja -C build-Linux-ninja-os -j4
+#
+# The wrapper only adds a MemoryHigh limit to the command it runs. If you
+# want to keep memory pressure lower, pass -j/--parallel explicitly as well.
+# On systems without systemd-run or cgroup v2, the script falls back to
+# running the command unwrapped.
 
 set -euo pipefail
 
