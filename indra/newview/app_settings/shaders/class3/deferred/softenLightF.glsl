@@ -37,9 +37,6 @@ uniform sampler2D lightMap;
 
 uniform sampler2D     lightFunc;
 
-uniform float blur_size;
-uniform float blur_fidelity;
-
 #if defined(HAS_SSAO)
 uniform float ssao_irradiance_scale;
 uniform float ssao_irradiance_max;
@@ -48,15 +45,27 @@ uniform float ssao_irradiance_max;
 // Inputs
 uniform vec4 clipPlane;
 uniform mat3 env_mat;
-uniform mat3  ssao_effect_mat;
+// Shared shadow/SSAO constants, spliced from class1/deferred/deferredBlock.glsl and
+// bound at UB_DEFERRED. Members are read by bare name.
+//[ENGINE_BLOCK Deferred]
 uniform vec3 sun_dir;
 uniform vec3 moon_dir;
 uniform int  sun_up_factor;
-uniform int classic_mode;
+// Classic (legacy pre-PBR) sky lighting is a per-program compile-time variant, not a runtime
+// uniform: the two paths differ by whole blocks of maths and a probe sample, and only one of
+// them is ever live for a given sky. A macro rather than a const global -- these sources are
+// separately compiled units linked into one program, and several of them declare this.
+#ifdef CLASSIC_MODE
+#define classic_mode 1
+#else
+#define classic_mode 0
+#endif
 
 in vec2 vary_fragcoord;
 
-uniform mat4 inv_proj;
+// Shared matrix stack + derived matrices, spliced from
+// class1/deferred/matricesBlock.glsl and bound at UB_MATRICES.
+//[ENGINE_BLOCK Matrices]
 uniform vec2 screen_res;
 
 vec4 getNorm(vec2 pos_screen);
@@ -64,7 +73,6 @@ vec4 getPositionWithDepth(vec2 pos_screen, float depth);
 
 void calcAtmosphericVarsLinear(vec3 inPositionEye, vec3 norm, vec3 light_dir, out vec3 sunlit, out vec3 amblit, out vec3 atten, out vec3 additive);
 vec3  atmosFragLightingLinear(vec3 l, vec3 additive, vec3 atten);
-vec3  scaleSoftClipFragLinear(vec3 l);
 
 // reflection probe interface
 void sampleReflectionProbes(inout vec3 ambenv, inout vec3 glossenv,

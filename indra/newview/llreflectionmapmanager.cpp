@@ -74,22 +74,23 @@ void load_exr(const std::string& filename)
         U32 texName = 0;
         LLImageGL::generateTextures(1, &texName);
 
-        gEXRImage = new LLImageGL(texName, 4, GL_TEXTURE_2D, GL_RGB16F, GL_RGB16F, GL_FLOAT, LLTexUnit::TAM_CLAMP);
+        gEXRImage = new LLImageGL(texName, 4, GL_TEXTURE_2D, GL_RGB16F, GL_RGBA, GL_FLOAT);
         gEXRImage->setHasMipMaps(true);
         gEXRImage->setUseMipMaps(true);
-        gEXRImage->setFilteringOption(LLTexUnit::TFO_TRILINEAR);
+        gEXRImage->markStorageAllocated();
 
-        gGL.getTexUnit(0)->bind(gEXRImage);
+        gGL.getTextureSlot(0)->bind(gEXRImage);
 
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB16F, width, height, 0, GL_RGBA, GL_FLOAT, out);
-
-        LLImageGLMemory::alloc_tex_image(width, height, GL_RGB16F, 1, /*has_mips=*/true);
+        // Immutable storage with the full mip chain, upload and VRAM accounting in one
+        // call -- this used to be a raw mutable glTexImage2D bypassing the allocator.
+        LLImageGL::allocateTexture2D(GL_TEXTURE_2D, GL_RGB16F, width, height, GL_RGBA, GL_FLOAT, out,
+                                     LLImageGL::calcMipLevelCount(width, height));
 
         free(out); // release memory of image data
 
-        glGenerateMipmap(GL_TEXTURE_2D);
+        LLImageGL::generateMipmaps(GL_TEXTURE_2D);
 
-        gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+        gGL.getTextureSlot(0)->unbind();
 
     }
     else
@@ -128,6 +129,36 @@ extern bool gCubeSnapshot;
 extern bool gTeleportDisplay;
 
 static U32 sUpdateCount = 0;
+
+#if !LL_RELEASE_FOR_DOWNLOAD
+namespace
+{
+    // Register the tail of the ReflectionProbes block for debug validation at shader load.
+    // Only the scalars are listed: the leading arrays are what fixes their offsets, so a
+    // packing surprise anywhere ahead of them shows up here, and these are the members with no
+    // other check -- the C++ struct's own size is the only thing pinning _ssrTailPad.
+    const bool s_probe_layout_registered = []
+    {
+#define LL_PROBE_LAYOUT(m) \
+        { -1, #m, (U32)offsetof(LLReflectionMapManager::ReflectionProbeData, m), false }
+        LLGLSLShader::registerEngineBlockLayout("ReflectionProbes",
+        {
+            LL_PROBE_LAYOUT(refmapCount),
+            LL_PROBE_LAYOUT(heroShape),
+            LL_PROBE_LAYOUT(heroMipCount),
+            LL_PROBE_LAYOUT(heroProbeCount),
+            LL_PROBE_LAYOUT(iterationCount),
+            LL_PROBE_LAYOUT(rayStep),
+            LL_PROBE_LAYOUT(distanceBias),
+            LL_PROBE_LAYOUT(depthRejectBias),
+            LL_PROBE_LAYOUT(glossySampleCount),
+            LL_PROBE_LAYOUT(adaptiveStepMultiplier),
+        });
+#undef LL_PROBE_LAYOUT
+        return true;
+    }();
+}
+#endif // !LL_RELEASE_FOR_DOWNLOAD
 
 // get the next highest power of two of v (or v if v is already a power of two)
 //defined in llvertexbuffer.cpp
@@ -525,6 +556,7 @@ void LLReflectionMapManager::refreshSettings()
     mRenderReflectionProbeLevel = gSavedSettings.getS32("RenderReflectionProbeLevel");
     mRenderReflectionProbeCount = gSavedSettings.getU32("RenderReflectionProbeCount");
     mRenderReflectionProbeDynamicAllocation = gSavedSettings.getS32("RenderReflectionProbeDynamicAllocation");
+    cleanupQueryPool();
 }
 
 LLReflectionMap* LLReflectionMapManager::addProbe(LLSpatialGroup* group)
@@ -570,6 +602,25 @@ U32 LLReflectionMapManager::probeCount()
 U32 LLReflectionMapManager::probeMemory()
 {
     return (mDynamicProbeCount * 6 * (mProbeResolution * mProbeResolution) * 4) / 1024 / 1024 + (mDynamicProbeCount * 6 * (mIrradianceMapResolution * mIrradianceMapResolution) * 4) / 1024 / 1024;
+}
+
+GLuint LLReflectionMapManager::allocateQuery()
+{
+    if (mQueryPool.empty())
+    {
+        GLuint query;
+        glGenQueries(1, &query);
+        return query;
+    }
+
+    GLuint query = mQueryPool.front();
+    mQueryPool.pop_front();
+    return query;
+}
+
+void LLReflectionMapManager::recycleQuery(GLuint query)
+{
+    mQueryPool.push_back(query);
 }
 
 struct CompareProbeDepth
@@ -715,6 +766,7 @@ void LLReflectionMapManager::deleteProbe(U32 i)
         other->mNeighbors.erase(iter);
     }
 
+    // Probes are distance sorted, order matters.
     mProbes.erase(mProbes.begin() + i);
 }
 
@@ -822,30 +874,25 @@ void LLReflectionMapManager::updateProbeFace(LLReflectionMap* probe, U32 face)
         gGL.flush();
         U32 res = mProbeResolution * 2;
 
-        static LLStaticHashedString resScale("resScale");
-        static LLStaticHashedString direction("direction");
-        static LLStaticHashedString znear("znear");
-        static LLStaticHashedString zfar("zfar");
-
         LLRenderTarget* screen_rt = &gPipeline.mAuxillaryRT.screen;
 
         // perform a gaussian blur on the super sampled render before downsampling
         {
             gGaussianProgram.bind();
-            gGaussianProgram.uniform1f(resScale, 1.f / (mProbeResolution * 2));
-            S32 diffuseChannel = gGaussianProgram.enableTexture(LLShaderMgr::DEFERRED_DIFFUSE, LLTexUnit::TT_TEXTURE);
+            gGaussianProgram.uniform1f(LLShaderMgr::RES_SCALE, 1.f / (mProbeResolution * 2));
+            S32 diffuseChannel = gGaussianProgram.enableTexture(LLShaderMgr::DEFERRED_DIFFUSE);
 
             // horizontal
-            gGaussianProgram.uniform2f(direction, 1.f, 0.f);
-            gGL.getTexUnit(diffuseChannel)->bind(screen_rt);
+            gGaussianProgram.uniform2f(LLShaderMgr::DIRECTION, 1.f, 0.f);
+            gGL.getTextureSlot(diffuseChannel)->bind(screen_rt);
             mRenderTarget.bindTarget();
             gPipeline.mScreenTriangleVB->setBuffer();
             gPipeline.mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
             mRenderTarget.flush();
 
             // vertical
-            gGaussianProgram.uniform2f(direction, 0.f, 1.f);
-            gGL.getTexUnit(diffuseChannel)->bind(&mRenderTarget);
+            gGaussianProgram.uniform2f(LLShaderMgr::DIRECTION, 0.f, 1.f);
+            gGL.getTextureSlot(diffuseChannel)->bind(&mRenderTarget);
             screen_rt->bindTarget();
             gPipeline.mScreenTriangleVB->setBuffer();
             gPipeline.mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
@@ -856,7 +903,7 @@ void LLReflectionMapManager::updateProbeFace(LLReflectionMap* probe, U32 face)
         S32 mips = (S32)(log2((F32)mProbeResolution) + 0.5f);
 
         gReflectionMipProgram.bind();
-        S32 diffuseChannel = gReflectionMipProgram.enableTexture(LLShaderMgr::DEFERRED_DIFFUSE, LLTexUnit::TT_TEXTURE);
+        S32 diffuseChannel = gReflectionMipProgram.enableTexture(LLShaderMgr::DEFERRED_DIFFUSE);
 
         for (int i = 0; i < mMipChain.size(); ++i)
         {
@@ -864,15 +911,15 @@ void LLReflectionMapManager::updateProbeFace(LLReflectionMap* probe, U32 face)
             mMipChain[i].bindTarget();
             if (i == 0)
             {
-                gGL.getTexUnit(diffuseChannel)->bind(screen_rt);
+                gGL.getTextureSlot(diffuseChannel)->bind(screen_rt);
             }
             else
             {
-                gGL.getTexUnit(diffuseChannel)->bind(&(mMipChain[i - 1]));
+                gGL.getTextureSlot(diffuseChannel)->bind(&(mMipChain[i - 1]));
             }
 
 
-            gReflectionMipProgram.uniform1f(resScale, 1.f/(mProbeResolution*2));
+            gReflectionMipProgram.uniform1f(LLShaderMgr::RES_SCALE, 1.f/(mProbeResolution*2));
 
             gPipeline.mScreenTriangleVB->setBuffer();
             gPipeline.mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
@@ -886,7 +933,7 @@ void LLReflectionMapManager::updateProbeFace(LLReflectionMap* probe, U32 face)
                 LL_PROFILE_GPU_ZONE("probe mip copy");
                 mTexture->bind(0);
                 //glCopyTexSubImage3D(GL_TEXTURE_CUBE_MAP_ARRAY, mip, 0, 0, probe->mCubeIndex * 6 + face, 0, 0, res, res);
-                glCopyTexSubImage3D(GL_TEXTURE_CUBE_MAP_ARRAY, mip, 0, 0, sourceIdx * 6 + face, 0, 0, res, res);
+                mTexture->copyFaceFromFramebuffer(mip, sourceIdx, face, res);
                 //if (i == 0)
                 //{
                     //glCopyTexSubImage3D(GL_TEXTURE_CUBE_MAP_ARRAY, mip, 0, 0, probe->mCubeIndex * 6 + face, 0, 0, res, res);
@@ -900,14 +947,13 @@ void LLReflectionMapManager::updateProbeFace(LLReflectionMap* probe, U32 face)
         gGL.matrixMode(gGL.MM_MODELVIEW);
         gGL.popMatrix();
 
-        gGL.getTexUnit(diffuseChannel)->unbind(LLTexUnit::TT_TEXTURE);
+        gGL.getTextureSlot(diffuseChannel)->unbind();
         gReflectionMipProgram.unbind();
     }
 
     if (face == 5)
     {
         mMipChain[0].bindTarget();
-        static LLStaticHashedString sSourceIdx("sourceIdx");
 
         if (isRadiancePass())
         {
@@ -915,9 +961,9 @@ void LLReflectionMapManager::updateProbeFace(LLReflectionMap* probe, U32 face)
             gRadianceGenProgram.bind();
             mVertexBuffer->setBuffer();
 
-            S32 channel = gRadianceGenProgram.enableTexture(LLShaderMgr::REFLECTION_PROBES, LLTexUnit::TT_CUBE_MAP_ARRAY);
+            S32 channel = gRadianceGenProgram.enableTexture(LLShaderMgr::REFLECTION_PROBES);
             mTexture->bind(channel);
-            gRadianceGenProgram.uniform1i(sSourceIdx, sourceIdx);
+            gRadianceGenProgram.uniform1i(LLShaderMgr::SOURCE_IDX, sourceIdx);
             gRadianceGenProgram.uniform1f(LLShaderMgr::REFLECTION_PROBE_MAX_LOD, mMaxProbeLOD);
             gRadianceGenProgram.uniform1f(LLShaderMgr::REFLECTION_PROBE_STRENGTH, 1.f);
 
@@ -926,13 +972,10 @@ void LLReflectionMapManager::updateProbeFace(LLReflectionMap* probe, U32 face)
             for (int i = 0; i < mMipChain.size(); ++i)
             {
                 LL_PROFILE_GPU_ZONE("probe radiance gen");
-                static LLStaticHashedString sMipLevel("mipLevel");
-                static LLStaticHashedString sRoughness("roughness");
-                static LLStaticHashedString sWidth("u_width");
 
-                gRadianceGenProgram.uniform1f(sRoughness, (F32)i / (F32)(mMipChain.size() - 1));
-                gRadianceGenProgram.uniform1f(sMipLevel, (GLfloat)i);
-                gRadianceGenProgram.uniform1i(sWidth, mProbeResolution);
+                gRadianceGenProgram.uniform1f(LLShaderMgr::ROUGHNESS, (F32)i / (F32)(mMipChain.size() - 1));
+                gRadianceGenProgram.uniform1f(LLShaderMgr::MIP_LEVEL, (GLfloat)i);
+                gRadianceGenProgram.uniform1i(LLShaderMgr::U_WIDTH, mProbeResolution);
 
                 for (int cf = 0; cf < 6; ++cf)
                 { // for each cube face
@@ -945,7 +988,7 @@ void LLReflectionMapManager::updateProbeFace(LLReflectionMap* probe, U32 face)
 
                     mVertexBuffer->drawArrays(gGL.TRIANGLE_STRIP, 0, 4);
 
-                    glCopyTexSubImage3D(GL_TEXTURE_CUBE_MAP_ARRAY, i, 0, 0, probe->mCubeIndex * 6 + cf, 0, 0, res, res);
+                    mTexture->copyFaceFromFramebuffer(i, probe->mCubeIndex, cf, res);
                 }
 
                 if (i != mMipChain.size() - 1)
@@ -961,10 +1004,10 @@ void LLReflectionMapManager::updateProbeFace(LLReflectionMap* probe, U32 face)
         {
             //generate irradiance map
             gIrradianceGenProgram.bind();
-            S32 channel = gIrradianceGenProgram.enableTexture(LLShaderMgr::REFLECTION_PROBES, LLTexUnit::TT_CUBE_MAP_ARRAY);
+            S32 channel = gIrradianceGenProgram.enableTexture(LLShaderMgr::REFLECTION_PROBES);
             mTexture->bind(channel);
 
-            gIrradianceGenProgram.uniform1i(sSourceIdx, sourceIdx);
+            gIrradianceGenProgram.uniform1i(LLShaderMgr::SOURCE_IDX, sourceIdx);
             gIrradianceGenProgram.uniform1f(LLShaderMgr::REFLECTION_PROBE_MAX_LOD, mMaxProbeLOD);
 
             mVertexBuffer->setBuffer();
@@ -996,7 +1039,7 @@ void LLReflectionMapManager::updateProbeFace(LLReflectionMap* probe, U32 face)
 
                     S32 res = mMipChain[i].getWidth();
                     mIrradianceMaps->bind(channel);
-                    glCopyTexSubImage3D(GL_TEXTURE_CUBE_MAP_ARRAY, i - start_mip, 0, 0, probe->mCubeIndex * 6 + cf, 0, 0, res, res);
+                    mIrradianceMaps->copyFaceFromFramebuffer(i - start_mip, probe->mCubeIndex, cf, res);
                     mTexture->bind(channel);
                 }
             }
@@ -1281,18 +1324,17 @@ void LLReflectionMapManager::updateUniforms()
     mProbeData.heroMipCount   = gPipeline.mHeroProbeManager.mHeroData.heroMipCount;
     mProbeData.heroProbeCount = gPipeline.mHeroProbeManager.mHeroData.heroProbeCount;
 
-    //copy mProbeData into uniform buffer object
-    if (mUBO == 0)
-    {
-        glGenBuffers(1, &mUBO);
-    }
+    // SSR march parameters ride along in this block rather than being re-pushed loose on every
+    // bindReflectionProbes; they are constant for the frame.
+    mProbeData.iterationCount         = (F32)LLPipeline::RenderScreenSpaceReflectionIterations;
+    mProbeData.rayStep                = LLPipeline::RenderScreenSpaceReflectionRayStep;
+    mProbeData.distanceBias           = LLPipeline::RenderScreenSpaceReflectionDistanceBias;
+    mProbeData.depthRejectBias        = LLPipeline::RenderScreenSpaceReflectionDepthRejectBias;
+    mProbeData.glossySampleCount      = (F32)LLPipeline::RenderScreenSpaceReflectionGlossySamples;
+    mProbeData.adaptiveStepMultiplier = LLPipeline::RenderScreenSpaceReflectionAdaptiveStepMultiplier;
 
-    {
-        LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("rmmsu - update buffer");
-        glBindBuffer(GL_UNIFORM_BUFFER, mUBO);
-        glBufferData(GL_UNIFORM_BUFFER, sizeof(ReflectionProbeData), &mProbeData, GL_STREAM_DRAW);
-        glBindBuffer(GL_UNIFORM_BUFFER, 0);
-    }
+    //copy mProbeData into uniform buffer object
+    mUBO.update(&mProbeData, sizeof(ReflectionProbeData));
 
 #if 0
     if (!gCubeSnapshot)
@@ -1317,11 +1359,11 @@ void LLReflectionMapManager::setUniforms()
         return;
     }
 
-    if (mUBO == 0)
+    if (!mUBO.allocated())
     {
         updateUniforms();
     }
-    glBindBufferBase(GL_UNIFORM_BUFFER, LLGLSLShader::UB_REFLECTION_PROBES, mUBO);
+    mUBO.bind(LLGLSLShader::UB_REFLECTION_PROBES);
 }
 
 
@@ -1523,6 +1565,11 @@ void LLReflectionMapManager::initReflectionMaps()
 
         buff->getVertexStrider(v);
 
+        // NOTE: z=-1 is load-bearing. radianceGenV/irradianceGenV use this position for BOTH
+        // the clip-space gl_Position AND (rotated by modelview) the cubemap SAMPLE DIRECTION,
+        // so z is the forward axis of the convolution -- do NOT flatten it. The clip-volume
+        // conflict under reverse-Z (z=-1 is outside ZERO_TO_ONE) is resolved in the shaders,
+        // which remap only the output clip z while keeping the direction from this raw z=-1.
         v[0] = LLVector3(-1, -1, -1);
         v[1] = LLVector3(1, -1, -1);
         v[2] = LLVector3(-1, 1, -1);
@@ -1554,11 +1601,23 @@ void LLReflectionMapManager::cleanup()
     mDefaultProbe = nullptr;
     mUpdatingProbe = nullptr;
 
-    glDeleteBuffers(1, &mUBO);
-    mUBO = 0;
+    mUBO.release();
+
+    cleanupQueryPool();
 
     // note: also called on teleport (not just shutdown), so make sure we're in a good "starting" state
     initCubeFree();
+}
+
+void LLReflectionMapManager::cleanupQueryPool()
+{
+    if (!mQueryPool.empty())
+    {
+        LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("cleanup query pool");
+        std::vector<GLuint> queries(mQueryPool.begin(), mQueryPool.end());
+        glDeleteQueries(static_cast<GLsizei>(queries.size()), queries.data());
+        mQueryPool.clear();
+    }
 }
 
 void LLReflectionMapManager::doOcclusion()

@@ -741,6 +741,7 @@ set(viewer_SOURCE_FILES
     llslurl.cpp
     llsnapshotlivepreview.cpp
     llspatialpartition.cpp
+    llstatslistener.cpp
     llspeakers.cpp
     llspeakingindicatormanager.cpp
     llsplitbutton.cpp
@@ -1507,6 +1508,7 @@ set(viewer_HEADER_FILES
     llsnapshotlivepreview.h
     llsnapshotmodel.h
     llspatialpartition.h
+    llstatslistener.h
     llspeakers.h
     llspeakingindicatormanager.h
     llsplitbutton.h
@@ -1843,7 +1845,7 @@ endif (WINDOWS)
 
 # Add the xui files. This is handy for searching for xui elements
 # from within the IDE.
-file(GLOB_RECURSE viewer_XUI_FILES LIST_DIRECTORIES FALSE
+file(GLOB_RECURSE viewer_XUI_FILES CONFIGURE_DEPENDS LIST_DIRECTORIES FALSE
     ${CMAKE_CURRENT_SOURCE_DIR}/skins/*.xml)
 source_group(TREE ${CMAKE_CURRENT_SOURCE_DIR}/skins PREFIX "XUI Files" FILES ${viewer_XUI_FILES})
 set_source_files_properties(${viewer_XUI_FILES}

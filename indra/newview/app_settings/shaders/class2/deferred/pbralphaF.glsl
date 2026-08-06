@@ -23,6 +23,11 @@
  * $/LicenseInfo$
  */
 
+// NOTE: base colour and emissive are NOT converted here. Their samplers ask the hardware
+// to decode (GLTF_COLOR_SAMPLER, pushGLTFBatchIndexed), which converts each texel before
+// filtering rather than after -- converting a blend taken in sRGB space is what made
+// minified albedo read too dark. Doing it here as well would convert twice.
+
 /*[EXTRA_CODE_HERE]*/
 
 #ifndef IS_HUD
@@ -43,7 +48,15 @@ uniform sampler2D lightMap;
 uniform int sun_up_factor;
 uniform vec3 sun_dir;
 uniform vec3 moon_dir;
-uniform int classic_mode;
+// Classic (legacy pre-PBR) sky lighting is a per-program compile-time variant, not a runtime
+// uniform: the two paths differ by whole blocks of maths and a probe sample, and only one of
+// them is ever live for a given sky. A macro rather than a const global -- these sources are
+// separately compiled units linked into one program, and several of them declare this.
+#ifdef CLASSIC_MODE
+#define classic_mode 1
+#else
+#define classic_mode 0
+#endif
 
 out vec4 frag_color;
 
@@ -73,13 +86,10 @@ uniform float minimum_alpha; // PBR alphaMode: MASK, See: mAlphaCutoff, setAlpha
 
 // Lights
 // See: LLRender::syncLightState()
-uniform vec4 light_position[8];
-uniform vec3 light_direction[8]; // spot direction
-uniform vec4 light_attenuation[8]; // linear, quadratic, is omni, unused, See: LLPipeline::setupHWLights() and syncLightState()
-uniform vec3 light_diffuse[8];
-uniform vec2 light_deferred_attenuation[8]; // light size and falloff
+// Shared forward-light arrays, spliced from class1/deferred/lightsBlock.glsl and
+// bound at UB_LIGHTS. Members are read by bare name.
+//[ENGINE_BLOCK Lights]
 
-vec3 srgb_to_linear(vec3 c);
 vec3 linear_to_srgb(vec3 c);
 
 void calcAtmosphericVarsLinear(vec3 inPositionEye, vec3 norm, vec3 light_dir, out vec3 sunlit, out vec3 amblit, out vec3 atten, out vec3 additive);
@@ -135,7 +145,6 @@ void main()
     waterClip(pos);
 
     vec4 basecolor = texture(diffuseMap, base_color_texcoord.xy).rgba;
-    basecolor.rgb = srgb_to_linear(basecolor.rgb);
 #ifdef HAS_ALPHA_MASK
     if (basecolor.a < minimum_alpha)
     {
@@ -144,6 +153,23 @@ void main()
 #endif
 
     vec3 col = vertex_color.rgb * basecolor.rgb;
+
+#ifdef FOR_IMPOSTOR
+    // Flat, unlit base colour -- the impostor bake wants ALBEDO, not a shaded result.
+    //
+    // An impostor is a G-buffer capture that gets replayed into the scene G-buffer and lit
+    // once at composite time. Shading here and then handing that result over as albedo lights
+    // it twice: sun, shadow, probe irradiance and fog all applied at bake, then applied again
+    // to the billboard. deferred/alphaF has had a FOR_IMPOSTOR branch for exactly this
+    // reason; the PBR and legacy-material alpha paths never got one, so they were the two
+    // still double-lighting. Matches that branch: base colour times vertex colour, nothing
+    // else, with coverage in alpha for the bake's premultiplied compositing.
+    //
+    // The material response is genuinely lost for blended surfaces in an impostor. It cannot
+    // be kept: a G-buffer has one normal and one ORM per texel and blended layers have no
+    // single value for either, which is why the flat path is the convention here.
+    frag_color = max(vec4(col, basecolor.a * vertex_color.a), vec4(0));
+#else
 
     vec3 vNt = texture(bumpMap, normal_texcoord.xy).xyz*2.0-1.0;
     float sign = vary_sign;
@@ -180,7 +206,7 @@ void main()
     // emissiveColor is the emissive color factor from GLTF and is already in linear space
     vec3 colorEmissive = emissiveColor;
     // emissiveMap here is a vanilla RGB texture encoded as sRGB, manually convert to linear
-    colorEmissive *= srgb_to_linear(texture(emissiveMap, emissive_texcoord.xy).rgb);
+    colorEmissive *= texture(emissiveMap, emissive_texcoord.xy).rgb;
 
     // PBR IBL
     float gloss      = 1.0 - perceptualRoughness;
@@ -218,6 +244,7 @@ void main()
     if (classic_mode > 0)
         final_scale = 1.1;
     frag_color = max(vec4(color.rgb * final_scale,a), vec4(0));
+#endif // FOR_IMPOSTOR
 }
 
 #else
@@ -240,7 +267,6 @@ in vec4 vertex_color;
 uniform float minimum_alpha; // PBR alphaMode: MASK, See: mAlphaCutoff, setAlphaCutoff()
 #endif
 
-vec3 srgb_to_linear(vec3 c);
 vec3 linear_to_srgb(vec3 c);
 
 
@@ -251,7 +277,6 @@ void main()
     vec3  pos         = vary_position;
 
     vec4 basecolor = texture(diffuseMap, base_color_texcoord.xy).rgba;
-    basecolor.rgb = srgb_to_linear(basecolor.rgb);
 #ifdef HAS_ALPHA_MASK
     if (basecolor.a < minimum_alpha)
     {
@@ -264,7 +289,7 @@ void main()
     // emissiveColor is the emissive color factor from GLTF and is already in linear space
     vec3 colorEmissive = emissiveColor;
     // emissiveMap here is a vanilla RGB texture encoded as sRGB, manually convert to linear
-    colorEmissive *= srgb_to_linear(texture(emissiveMap, emissive_texcoord.xy).rgb);
+    colorEmissive *= texture(emissiveMap, emissive_texcoord.xy).rgb;
 
 
     float a = basecolor.a*vertex_color.a;

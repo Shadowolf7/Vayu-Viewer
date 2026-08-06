@@ -23,9 +23,17 @@
  * $/LicenseInfo$
  */
 
+// NOTE: base colour and emissive are NOT converted here. Their samplers ask the hardware
+// to decode (GLTF_COLOR_SAMPLER, pushGLTFBatchIndexed), which converts each texel before
+// filtering rather than after -- converting a blend taken in sRGB space is what made
+// minified albedo read too dark. Doing it here as well would convert twice.
+
 /*[EXTRA_CODE_HERE]*/
 
 
+// Shared matrix stack + derived matrices, spliced from
+// class1/deferred/matricesBlock.glsl and bound at UB_MATRICES.
+//[ENGINE_BLOCK Matrices]
 #ifndef IS_HUD
 
 // deferred opaque implementation
@@ -55,7 +63,6 @@ in vec2 emissive_texcoord;
 uniform float minimum_alpha; // PBR alphaMode: MASK, See: mAlphaCutoff, setAlphaCutoff()
 
 vec3 linear_to_srgb(vec3 c);
-vec3 srgb_to_linear(vec3 c);
 
 uniform vec4 clipPlane;
 uniform float clipSign;
@@ -63,14 +70,12 @@ uniform float clipSign;
 void mirrorClip(vec3 pos);
 vec4 encodeNormal(vec3 n, float env, float gbuffer_flag);
 
-uniform mat3 normal_matrix;
 
 void main()
 {
     mirrorClip(vary_position);
 
     vec4 basecolor = texture(diffuseMap, base_color_texcoord.xy).rgba;
-    basecolor.rgb = srgb_to_linear(basecolor.rgb);
 
     basecolor *= vertex_color;
 
@@ -101,7 +106,7 @@ void main()
     spec.b *= metallicFactor;
 
     vec3 emissive = emissiveColor;
-    emissive *= srgb_to_linear(texture(emissiveMap, emissive_texcoord.xy).rgb);
+    emissive *= texture(emissiveMap, emissive_texcoord.xy).rgb;
 
     tnorm *= gl_FrontFacing ? 1.0 : -1.0;
 
@@ -117,7 +122,7 @@ void main()
     frag_data[2] = encodeNormal(tnorm, 0, GBUFFER_FLAG_HAS_PBR); // normal, environment intensity, flags
 
 #if defined(HAS_EMISSIVE)
-    frag_data[3] = max(vec4(emissive,0), vec4(0));                                                // PBR sRGB Emissive
+    frag_data[3] = max(vec4(emissive,0), vec4(0));                                                // PBR linear Emissive (sampler-decoded, float attachment stores it verbatim)
 #endif
 }
 
@@ -141,7 +146,6 @@ in vec2 emissive_texcoord;
 uniform float minimum_alpha; // PBR alphaMode: MASK, See: mAlphaCutoff, setAlphaCutoff()
 
 vec3 linear_to_srgb(vec3 c);
-vec3 srgb_to_linear(vec3 c);
 
 void main()
 {
@@ -154,10 +158,10 @@ void main()
         discard;
     }
 
-    vec3 col = vertex_color.rgb * srgb_to_linear(basecolor.rgb);
+    vec3 col = vertex_color.rgb * basecolor.rgb;
 
     vec3 emissive = emissiveColor;
-    emissive *= srgb_to_linear(texture(emissiveMap, emissive_texcoord.xy).rgb);
+    emissive *= texture(emissiveMap, emissive_texcoord.xy).rgb;
 
     col += emissive;
 

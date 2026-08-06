@@ -259,8 +259,6 @@ cmake --build --preset ninja-os-release
 
 ### From an IDE
 
-When you edit XUI files under the viewer skins, the packaging manifest now tracks those files as dependencies, so rebuilding the package target will refresh the packaged UI assets rather than leaving stale XUI content behind.
-
 ```
 # Visual Studio
 start .\build-Windows-vs2026-os\Vayu.slnx
@@ -393,6 +391,8 @@ cmake -S indra --preset <preset> -DPACKAGE=OFF
 ```
 
 Velopack also requires `dotnet tool restore` to have been run so the `vpk` CLI is on PATH.
+
+XUI files under the viewer skins are tracked as dependencies of the packaging manifest, so editing one and rebuilding the package target refreshes the packaged UI assets rather than leaving stale XUI content behind.
 
 ## Troubleshooting
 

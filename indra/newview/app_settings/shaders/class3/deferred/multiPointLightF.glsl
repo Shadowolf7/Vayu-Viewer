@@ -30,15 +30,24 @@ out vec4 frag_color;
 uniform sampler2D     lightFunc;
 
 uniform vec3  env_mat[3];
-uniform float sun_wash;
 uniform int   light_count;
 uniform vec4  light[LIGHT_COUNT];     // .w = size; see C++ fullscreen_lights.push_back()
 uniform vec4  light_col[LIGHT_COUNT]; // .a = falloff
 
 uniform vec2  screen_res;
 uniform float far_z;
-uniform mat4  inv_proj;
-uniform int classic_mode;
+// Shared matrix stack + derived matrices, spliced from
+// class1/deferred/matricesBlock.glsl and bound at UB_MATRICES.
+//[ENGINE_BLOCK Matrices]
+// Classic (legacy pre-PBR) sky lighting is a per-program compile-time variant, not a runtime
+// uniform: the two paths differ by whole blocks of maths and a probe sample, and only one of
+// them is ever live for a given sky. A macro rather than a const global -- these sources are
+// separately compiled units linked into one program, and several of them declare this.
+#ifdef CLASSIC_MODE
+#define classic_mode 1
+#else
+#define classic_mode 0
+#endif
 
 in vec4 vary_fragcoord;
 
@@ -174,13 +183,4 @@ void main()
         final_scale = 0.9;
     frag_color.rgb = max(final_color * final_scale, vec3(0));
     frag_color.a   = 0.0;
-
-#ifdef IS_AMD_CARD
-    // If it's AMD make sure the GLSL compiler sees the arrays referenced once by static index. Otherwise it seems to optimise the storage
-    // away which leads to unfun crashes and artifacts.
-    vec4 dummy1 = light[0];
-    vec4 dummy2 = light_col[0];
-    vec4 dummy3 = light[LIGHT_COUNT - 1];
-    vec4 dummy4 = light_col[LIGHT_COUNT - 1];
-#endif
 }

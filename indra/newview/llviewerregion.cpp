@@ -1799,6 +1799,11 @@ void LLViewerRegion::killInvisibleObjects(F32 max_time)
         if(iter == mImpl->mActiveSet.end())
         {
             iter = mImpl->mActiveSet.begin();
+            if (iter == mImpl->mActiveSet.end())
+            {
+                // Set became empty
+                break;
+            }
         }
         if((*iter)->getParentID() > 0)
         {
@@ -3338,6 +3343,7 @@ void LLViewerRegionImpl::buildCapabilityNames(LLSD& capabilityNames)
     capabilityNames.append("FetchInventory2");
     capabilityNames.append("FetchInventoryDescendents2");
     capabilityNames.append("IncrementCOFVersion");
+    capabilityNames.append("CreateTaskInventoryItem");
     capabilityNames.append("RequestTaskInventory");
     AISAPI::getCapNames(capabilityNames);
 

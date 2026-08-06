@@ -28,19 +28,23 @@
  // DO NOT declare sampler uniforms here as OS X doesn't compile
  // them out
 
-uniform float mirror_flag;
+// clipPlane stays a runtime uniform: the MIRROR_CLIP copy reads it for the actual clip, and it
+// is also consumed independently of the mirror pass by the hero-probe tap in reflectionProbeF.
 uniform vec4 clipPlane;
 uniform float clipSign;
 
+// Clips geometry behind the mirror plane, and only ever applies during the hero-probe mirror
+// pass. That makes it a compile-time variant rather than a runtime test: the base copy of this
+// object compiles the clip -- and its clipPlane read -- away entirely, and the pass binds the
+// MIRROR_CLIP copy instead. See LLGLSLShader::VARIANT_MIRROR.
 void mirrorClip(vec3 pos)
 {
-    if (mirror_flag > 0)
+#ifdef MIRROR_CLIP
+    if ((dot(pos.xyz, clipPlane.xyz) + clipPlane.w) < 0.0)
     {
-        if ((dot(pos.xyz, clipPlane.xyz) + clipPlane.w) < 0.0)
-        {
-                discard;
-        }
+        discard;
     }
+#endif
 }
 
  // Octahedron normal vector encoding
@@ -72,5 +76,25 @@ vec4 decodeNormal(vec4 norm)
     n.xy += vec2(n.x >= 0.0 ? -t : t, n.y >= 0.0 ? -t : t);
     n.xyz = normalize(n.xyz);
     return n;
+}
+
+// Interleaved gradient noise (Jimenez 2014). Screen-stable: no temporal term, so the
+// pattern does not shimmer frame to frame.
+float screenNoise(vec2 frag_px)
+{
+    return fract(52.9829189 * fract(dot(frag_px, vec2(0.06711056, 0.00583715))));
+}
+
+// Break quantization banding at the emissive store. R11F_G11F_B10F keeps 6/6/5 explicit
+// mantissa bits, so a value quantizes at roughly 2^-7/2^-7/2^-6 of its own magnitude --
+// coarse enough to band in the sky writers' smooth gradients, and coarsest in blue, which is
+// exactly where a sky lives. Adding ~1 ulp of screen-stable noise before the ROP rounds
+// trades the bands for imperceptible grain. Multiplicative, so black stays black and the
+// amplitude tracks the format's scale-relative precision; on the non-HDR GL_RGB8 emissive
+// it lands near a single 8-bit step, harmless.
+vec3 ditherEmissive(vec3 v, vec2 frag_px)
+{
+    float n = screenNoise(frag_px) - 0.5;
+    return v * (1.0 + n * vec3(1.0 / 64.0, 1.0 / 64.0, 1.0 / 32.0));
 }
 

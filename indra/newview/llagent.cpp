@@ -2211,9 +2211,9 @@ bool LLAgent::needsRenderAvatar()
 bool LLAgent::needsRenderHead()
 {
 // [RLVa:KB] - Checked: RLVa-2.0.2
-    return ((LLVOAvatar::sVisibleInFirstPerson && LLPipeline::sReflectionRender) || (mShowAvatar && !gAgentCamera.cameraMouselook())) && (!gRlvHandler.hasBehaviour(RLV_BHVR_SHOWSELFHEAD));
+    return ((mShowAvatar && !gAgentCamera.cameraMouselook())) && (!gRlvHandler.hasBehaviour(RLV_BHVR_SHOWSELFHEAD));
 // [/RLVa:KB]
-//  return (LLVOAvatar::sVisibleInFirstPerson && LLPipeline::sReflectionRender) || (mShowAvatar && !gAgentCamera.cameraMouselook());
+//  return (mShowAvatar && !gAgentCamera.cameraMouselook());
 }
 
 //-----------------------------------------------------------------------------
@@ -5184,7 +5184,7 @@ void LLAgent::renderAutoPilotTarget()
         gGL.pushMatrix();
 
         // not textured
-        gGL.getTexUnit(0)->unbind(LLTexUnit::TT_TEXTURE);
+        gGL.getTextureSlot(0)->unbind();
 
         // lovely green
         gGL.color4f(0.f, 1.f, 1.f, 1.f);

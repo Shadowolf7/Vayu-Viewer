@@ -27,10 +27,11 @@ uniform sampler2D sceneMap;
 uniform sampler2D sceneDepth;
 
 uniform vec2 screen_res;
-uniform mat4 projection_matrix;
+// Shared matrix stack + derived matrices, spliced from
+// class1/deferred/matricesBlock.glsl and bound at UB_MATRICES.
+//[ENGINE_BLOCK Matrices]
 //uniform float zNear;
 //uniform float zFar;
-uniform mat4 inv_proj;
 uniform mat4 modelview_delta;  // should be transform from last camera space to current camera space
 uniform mat4 inv_modelview_delta;
 
@@ -56,12 +57,9 @@ bool isAdaptiveStepEnabled = true;
 bool isExponentialStepEnabled = true;
 bool debugDraw = false;
 
-uniform float iterationCount;
-uniform float rayStep;
-uniform float distanceBias;
-uniform float depthRejectBias;
-uniform float glossySampleCount;
-uniform float adaptiveStepMultiplier;
+// Shared reflection-probe + SSR constants, spliced from
+// class1/deferred/reflectionProbesBlock.glsl and bound at UB_REFLECTION_PROBES.
+//[ENGINE_BLOCK ReflectionProbes]
 uniform float noiseSine;
 
 float epsilon = 0.1;
