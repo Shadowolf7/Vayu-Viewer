@@ -296,6 +296,7 @@ if(LINUX)
     -fsigned-char
     -pipe
     -g
+    -gsplit-dwarf
   )
 
   # Debug Options
