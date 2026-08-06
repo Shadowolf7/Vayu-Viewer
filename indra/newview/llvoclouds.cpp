@@ -36,7 +36,6 @@
 
 #include "llvoclouds.h"
 
-#include "indra_constants.h"    // for IMG_CLOUD_POOF
 #include "llenvironment.h"
 #include "llsettingssky.h"
 
@@ -52,15 +51,16 @@
 #include "llworld.h"
 #include "pipeline.h"
 
-LLUUID gCloudTextureID = IMG_CLOUD_POOF;
-
 LLVOClouds::LLVOClouds(const LLUUID &id, const LLPCode pcode, LLViewerRegion *regionp)
 :   LLAlphaObject(id, LL_VO_CLOUDS, regionp),
     mCloudGroupp(NULL)
 {
     mbCanSelect = false;
     setNumTEs(1);
-    LLViewerTexture *image = LLViewerTextureManager::getFetchedTexture(gCloudTextureID, FTT_DEFAULT, true, LLGLTexture::BOOST_CLOUDS);
+    // Shipped locally (skins/default/textures/cloud-particle.j2c) rather than
+    // fetched over the network — it's bundled either way, so there's no
+    // point depending on a live asset fetch for it.
+    LLViewerTexture *image = LLViewerTextureManager::getFetchedTextureFromFile("cloud-particle.j2c", FTT_LOCAL_FILE, true, LLGLTexture::BOOST_CLOUDS);
     setTEImage(0, image);
 }
 
