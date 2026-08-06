@@ -29,6 +29,8 @@
 
 #include "linden_common.h"
 
+#include <cstdlib>
+
 #include "fsvirtualtrackpad.h"
 #include "llrect.h"
 #include "lluictrlfactory.h"
@@ -131,9 +133,9 @@ void FSVirtualTrackpad::determineThumbClickError(S32 x, S32 y)
     errorX -= x;
     errorY -= y;
 
-    if (fabs(errorX) > mImgSunFront->getWidth() / 2.0)
+    if (std::abs(errorX) > mImgSunFront->getWidth() / 2.0)
         return;
-    if (fabs(errorY) > mImgSunFront->getHeight() / 2.0)
+    if (std::abs(errorY) > mImgSunFront->getHeight() / 2.0)
         return;
 
     mThumbClickOffsetX = errorX;
@@ -186,9 +188,9 @@ void FSVirtualTrackpad::determineThumbClickErrorForPinch(S32 x, S32 y)
     errorX -= x;
     errorY -= y;
 
-    if (fabs(errorX) > mImgMoonFront->getWidth() / 2.0)
+    if (std::abs(errorX) > mImgMoonFront->getWidth() / 2.0)
         return;
-    if (fabs(errorY) > mImgMoonFront->getHeight() / 2.0)
+    if (std::abs(errorY) > mImgMoonFront->getHeight() / 2.0)
         return;
 
     mPinchThumbClickOffsetX = errorX;

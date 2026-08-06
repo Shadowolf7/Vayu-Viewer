@@ -57,12 +57,12 @@ public:
     virtual ~LLAudioEngine_FMODSTUDIO();
 
     // initialization/startup/shutdown
-    virtual bool init(void *user_data, const std::string &app_title);
-    virtual std::string getDriverName(bool verbose);
-    virtual LLStreamingAudioInterface* createDefaultStreamingAudioImpl() const;
-    virtual void allocateListener();
+    bool init(void *user_data, const std::string &app_title) override;
+    std::string getDriverName(bool verbose) override;
+    LLStreamingAudioInterface* createDefaultStreamingAudioImpl() const override;
+    void allocateListener() override;
 
-    virtual void shutdown();
+    void shutdown() override;
 
     // Device selection (override base API). The id is the FMOD_GUID
     // string format; the name is the driver display name from
@@ -96,19 +96,19 @@ public:
         if (mWindGen) mWindGen->setGustinessDepth(depth);
     }
 
-    /*virtual*/ bool initWind();
-    /*virtual*/ void cleanupWind();
+    bool initWind() override;
+    void cleanupWind() override;
 
-    /*virtual*/void updateWind(LLVector3 direction, F32 camera_height_above_water);
+    void updateWind(LLVector3 direction, F32 camera_height_above_water) override;
 
     typedef F32 MIXBUFFERFORMAT;
 
     FMOD::System *getSystem()               const {return mSystem;}
 protected:
-    /*virtual*/ LLAudioBuffer *createBuffer(); // Get a free buffer, or flush an existing one if you have to.
-    /*virtual*/ LLAudioChannel *createChannel(); // Create a new audio channel.
+    LLAudioBuffer *createBuffer() override; // Get a free buffer, or flush an existing one if you have to.
+    LLAudioChannel *createChannel() override; // Create a new audio channel.
 
-    /*virtual*/ void setInternalGain(F32 gain);
+    void setInternalGain(F32 gain) override;
 
     bool mInited;
 

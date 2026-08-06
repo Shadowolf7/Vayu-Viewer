@@ -256,6 +256,17 @@ if(LINUX)
     LL_IGNORE_SIGCHLD
   )
 
+  # _REENTRANT above is already applied to every target, but the -pthread
+  # compiler flag itself is not -- it only reaches a target that happens to
+  # link Threads::Threads (directly or via ll::oslibraries). Since the
+  # precompiled header in llprecompiled/ is shared across nearly every
+  # target, that divergence is fatal under Clang: it validates a PCH's
+  # embedded POSIX-thread state against the consuming TU's and refuses to
+  # reuse it on a mismatch ("POSIX thread support was enabled/disabled in
+  # precompiled file... but is currently disabled/enabled"). Apply it
+  # globally so the PCH and every consumer can never disagree.
+  add_compile_options(-pthread)
+
   if(ENABLE_ASAN OR ENABLE_UBSAN OR ENABLE_THREADSAN)
     set(GCC_DISABLE_FATAL_WARNINGS ON) # Disable warnings as errors during sanitizer builds due to false positives
 
