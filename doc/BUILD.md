@@ -209,6 +209,7 @@ Most contributors want the `-os` variants.
 |:---------------------------------------------|:---------|:-------------------|
 | `vs2026-os`, `vs2022-os`                     | Windows  | Visual Studio      |
 | `ninja-os`                                   | Linux    | Ninja Multi-Config |
+| `ninja-os-clang`                             | Linux    | Ninja Multi-Config (Clang instead of GCC) |
 | `ninja-os-arm64`, `ninja-os-x64`             | macOS    | Ninja Multi-Config |
 | `xcode-os`, `xcode-os-arm64`, `xcode-os-x64` | macOS    | Xcode              |
 
@@ -225,7 +226,8 @@ The first configure run downloads and builds every vcpkg dependency from source.
 #### Platform notes
 
 - **macOS** — `xcode-os` and `ninja-os` (no arch suffix) pick the host architecture. Use the explicit `-arm64` / `-x64` preset to cross-build (e.g. an arm64 bundle from an Intel Mac).
-- **Linux with Clang** (faster builds): append `-DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_LINKER_TYPE=LLD` to the configure command.
+- **Linux with Clang** (often faster local-iteration builds, better diagnostics): use the `ninja-os-clang` preset (or `ninja-clang` for the proprietary variant) instead of `ninja-os`/`ninja`. Warnings are still fatal under Clang by default (`CMAKE_COMPILE_WARNING_AS_ERROR`, see `indra/cmake/00-Common.cmake:45`) — override with `-DCLANG_DISABLE_FATAL_WARNINGS=TRUE` if needed, same as the GCC/MSVC escape hatches below.
+- **Linux linker** — `mold` is picked automatically via `CMAKE_LINKER_TYPE` when installed (`indra/cmake/00-Common.cmake`, `find_program(MOLD_LINKER mold)`), on both the default GCC presets and the Clang ones above. Pass `-DCMAKE_LINKER_TYPE=LLD` (or any other value CMake supports) explicitly to override it.
 
 ### Workflow presets (one-shot configure + build)
 
