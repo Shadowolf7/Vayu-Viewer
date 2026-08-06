@@ -235,6 +235,15 @@ endif(WINDOWS)
 if(LINUX)
   set(CMAKE_SKIP_RPATH TRUE)
 
+  # Prefer mold over the default bfd ld for link speed, unless the caller
+  # already picked a linker explicitly (e.g. -DCMAKE_LINKER_TYPE=LLD).
+  if(NOT CMAKE_LINKER_TYPE)
+    find_program(MOLD_LINKER mold)
+    if(MOLD_LINKER)
+      set(CMAKE_LINKER_TYPE MOLD)
+    endif()
+  endif()
+
   # LL_IGNORE_SIGCHLD
   # don't catch SIGCHLD in our base application class for the viewer - some of
   # our 3rd party libs may need their *own* SIGCHLD handler to work. Sigh! The
@@ -285,7 +294,9 @@ if(LINUX)
     -fexceptions
     -fno-math-errno
     -fsigned-char
+    -pipe
     -g
+    -gsplit-dwarf
   )
 
   # Debug Options
