@@ -1,54 +1,62 @@
-# FEATURES.md
+# Features
 
-Tracks how Vayu diverges from its two ancestors: **Linden Lab's official viewer** and **Alchemy Viewer** (`upstream` remote, `AlchemyViewer/Alchemy`), which Vayu is directly forked from. This file covers **current state only** — what's already shipped, in both Alchemy and Vayu.
+Vayu is a Second Life viewer forked from [Alchemy Viewer](https://github.com/AlchemyViewer/Alchemy), which is itself a substantial fork of Linden Lab's official viewer. This page covers what you actually get — grouped by where it comes from, so you know what's Vayu's own work versus inherited. For in-progress and planned work, see the project's public issue tracker; for internal naming/dev conventions, see [doc/ARCHITECTURE.md](doc/ARCHITECTURE.md).
 
-Update this file as part of the PR that lands a feature, the same way `doc/BUILD.md` gets updated alongside build-system changes.
+## Inherited from Alchemy Viewer
 
-## What Alchemy Viewer adds (inherited foundation)
+Alchemy is already a deep fork of the official viewer, and Vayu builds on all of it:
 
-Before Vayu's own changes, Alchemy is already a substantial fork of Linden Lab's official viewer. Highlights, not an exhaustive list:
+- **More rendering options** — a choice of tonemapping styles (ACES, Reinhard, Filmic, AGX), 3D LUT-based color grading, sharpening, and a finishing pass with vignette, film grain, dithering, chromatic aberration, and colorblind-friendly compensation/preview.
+- **Chat quality-of-life** — handy slash-style chat commands (jump home, set draw distance, check your position, quick math), colorized/styled nearby chat, typing and online/offline notifications, and radar alerts sent to chat.
+- **Radar and minimap enhancements** — parcels for sale or with collision restrictions highlighted on the map, live nearby-agent counts, adjustable update rate, and rings showing who's currently chatting nearby.
+- **Mouselook and movement** — a friend/foe overlay in mouselook, adjustable zoom timing, a "realistic" mouselook mode, and toggles for click-to-sit and mouse-steering.
+- **Interface conveniences** — auto-hiding toolbars, font overrides, and other small remembered-state niceties.
 
-- **More rendering options:** a choice of tonemapping styles (ACES, Reinhard, Filmic, AGX), 3D LUT-based color grading, sharpening, and a finishing pass with vignette, film grain, dithering, chromatic aberration, and color-vision-deficiency (colorblind) compensation/preview.
-- **Chat quality-of-life:** a set of slash-style chat commands (e.g. jump to your home, set draw distance, look up your position, run quick calculations), colorized/styled nearby chat, typing and online/offline notifications, and radar alerts sent to chat.
-- **Radar and minimap enhancements:** parcels for sale or with collision restrictions highlighted on the map, live nearby-agent counts, adjustable update rate, and rings showing who's currently chatting nearby.
-- **Mouselook and movement:** an identify-friend-or-foe overlay while in mouselook, adjustable zoom timing, a "realistic" mouselook mode, and various movement toggles (e.g. disabling click-to-sit or mouse-steering).
-- **Interface conveniences:** auto-hiding toolbars, font overrides, and other small remembered-state niceties.
+This isn't exhaustive — Alchemy carries roughly 80 of its own settings beyond this summary. Anything not listed here or in the Vayu section below is Alchemy's.
 
-This list isn't exhaustive — Alchemy carries roughly 80 of its own settings beyond this summary (`indra/newview/app_settings/settings_alchemy.xml`). Anything not called out above and not listed in the Vayu sections below is Alchemy's, not Vayu's.
+## What Vayu adds
 
-## Naming conventions used in this codebase
+### Rendering
 
-- **Settings/XUI identifiers:** a new `gSavedSettings` key or widget `name=` gets the `Vayu*` prefix if it's genuinely new work, or keeps `Alchemy*` if it's inherited from Alchemy or extends an existing `Alchemy*` feature. Provenance decides, not neighboring keys.
-- **"Layer 1 vs layer 2" rebrand split:** user/OS-visible identity (window titles, icons, bundle IDs, installer names, URLs) was renamed Alchemy → Vayu. Internal plumbing (C++ identifiers, settings-key prefixes, vcpkg port names, the selectable `alchemy` skin, CI workflows tied to Alchemy's own infra) was deliberately left alone — renaming it is cosmetic churn that only grows merge-conflict surface against `upstream`.
+- Support for BC7/BPTC texture compression (better quality-per-byte on modern GPUs).
+- A PBR Materials toggle that lets you fall back individual PBR faces to legacy shading, for content that looks better rendered the old way.
+- Correct depth sorting between rigged attachments and world alpha (clothing/attachments no longer draw in the wrong order relative to transparent world objects).
+- Attached spotlights and projector lights now stay lit regardless of the "attached lights" toggle — only point-light attachments are affected by it.
 
-## Shipped (merged into `develop`)
+### Camera & movement
 
-**Rebrand:** product identity (name, icons, bundle/app IDs, window class, installer/packaging scripts, per-user data directory, log/crash-dump filenames, About floater, bug-report/update URLs) changed from Alchemy to Vayu. Internal plumbing deliberately left as `Alchemy*` per the layer-1/layer-2 split above.
+- **Mouselook eye-height offset** — dial in your first-person camera height, with a master toggle so your saved value survives being switched off. Preferences → Move → Mouse Input, also in Quick Settings.
+- **Vehicle-tilt decoupling** — mouselook camera no longer tilts with the vehicle's roll/pitch while driving.
 
-**Rendering:**
-- BC7/BPTC texture compression support.
-- `RenderPBRMaterials` toggle — fall back PBR faces to legacy Blinn-Phong shading per-face (narrower than a full global PBR/Blinn-Phong switch — see Cool VL Viewer item below).
-- Ported [secondlife/viewer#5927](https://github.com/secondlife/viewer/pull/5927): interleave rigged attachment alpha into world alpha for correct depth sorting.
-- `RenderAttachedLights` now only gates point-light attachments — attached spotlight/projector lights stay lit regardless of the toggle (emissive PBR materials were never affected, a separate system).
+### Environment
 
-**Ported from Firestorm:** pose stand, windlight quick-select, FPS limiter, VRAM-triggered draw-distance toggle — plus three XUI-only follow-up fixes (FPS limiter controls and PBR Materials toggle were hidden behind other controls in Preferences; quick-settings environment dropdowns lacked labels).
+- **Classic clouds** — a real Linden Lab feature removed in 2011, restored and modernized: a proper wind-driven 3D cloud layer instead of the flat Windlight sky-dome. Includes client-side density synthesis since modern regions mostly no longer send real cloud data.
+- **Driver mode** — while seated on a vehicle, region/parcel crossings no longer swap your sky/water/day environment out from under you; snaps back to your actual location the instant you dismount.
+- Both available in Quick Settings' Environment section.
 
-**Camera:** mouselook eye-height offset (`VayuMouselookEyeHeightOffset`, with a separate `VayuMouselookEyeHeightOffsetEnabled` master toggle so the dialed-in value survives being switched off) and vehicle-tilt decoupling (`VayuMouselookDecoupleVehicleTilt`), new Preferences > Move > Mouse Input controls, also exposed in Quick Settings.
+### Ported from Firestorm
 
-**Environment:**
-- Classic 3D wind-driven cloud layer (`SkyUseClassicClouds`), distinct from the flat Windlight sky-dome clouds — a real Linden Lab feature removed in 2011, restored from git history and modernized, with client-side density synthesis since modern sims mostly no longer send real cloud data.
-- "Driver mode" (`VayuDriverModeLockEnvironment`) — while seated on a vehicle, parcel/region crossings no longer change the active sky/water/day environment; snaps back to your actual location the instant you dismount.
-- Both exposed in Quick Settings' Environment section.
+Pose stand, Windlight quick-select, an FPS limiter, and a VRAM-triggered draw-distance toggle.
 
-**Content creation:** notecard/script file import with CRLF/BOM handling, batch/bulk upload support for notecards and scripts, standalone Notecard/Script entries in the Upload menu, legacy-viewer auto-sizing via width-ruler convention detection.
+### Content creation
 
-**Linux platform:**
-- Fixed Linux FMOD build/packaging; consolidated GPU/GameMode selection (`switcherooctl`/`gamemoderun`) into the main launcher wrapper.
-- `OPENSSL_CONF=/dev/null` workaround for an openSUSE crypto-policy TLS bug (see project memory `project_login_oom_bug_fixed`).
-- Window decorations on Wayland (GNOME/Mutter, Weston): `libdecor` build prerequisite documented for all supported distros, plus a hard CMake configure-time check so a missing dev package fails loudly instead of silently shipping an undecorated window.
-- Auto-checkout of missing git submodules at configure time; ccache wired up for faster incremental rebuilds.
+- Import notecards and scripts directly from files (handles CRLF/BOM automatically), with batch/bulk upload support.
+- Standalone Notecard/Script entries in the Upload menu.
+- Legacy-viewer auto-sizing detection for notecards that use the old width-ruler convention.
 
-**Reliability fixes:** mesh header retry exhaustion now notifies waiting objects instead of hanging; asset/mesh loading regression from the curl 8.21.0 upgrade; texture compression disabled on `setSubImageFromFrameBuffer` targets (was producing corrupt output).
+### Linux
+
+- Fixed FMOD audio build/packaging.
+- One-stop GPU/GameMode selection (`switcherooctl`/`gamemoderun`) built into the launcher — no more manually forcing your dGPU.
+- Window decorations under Wayland (GNOME/Mutter, Weston).
+- Missing git submodules are checked out automatically; ccache wired in for faster rebuilds if you're building from source.
+
+### Reliability fixes
+
+- Mesh loading no longer hangs waiting objects when a mesh header retry runs out of attempts.
+- Fixed an asset/mesh loading regression introduced by a curl upgrade.
+- Fixed corrupted output from texture compression on screen-captured (framebuffer) images.
 
 ---
 
+Want to see what's next? Check the project's issue tracker for planned and in-progress work.
