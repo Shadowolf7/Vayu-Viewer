@@ -667,7 +667,6 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, EAlphaStream stream
     // depth-write conditions that apply to every group in this pass; in merged
     // mode, stamped rigged groups additionally write depth (see below)
     const bool write_depth_always = LLDrawPoolWater::sSkipScreenCopy ||
-                                    LLPipeline::sImpostorRenderAlphaDepthPass ||
                                     getType() == LLDrawPoolAlpha::POOL_ALPHA_PRE_WATER;
 
     // merged mode: per-group depth-write guard, re-emplaced only when the
