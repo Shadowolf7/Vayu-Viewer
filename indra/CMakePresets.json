@@ -538,6 +538,32 @@
       ]
     },
     {
+      "name": "ninja-os-clang-release",
+      "steps": [
+        {
+          "type": "configure",
+          "name": "ninja-os-clang"
+        },
+        {
+          "type": "build",
+          "name": "ninja-os-clang-release"
+        }
+      ]
+    },
+    {
+      "name": "ninja-clang-release",
+      "steps": [
+        {
+          "type": "configure",
+          "name": "ninja-clang"
+        },
+        {
+          "type": "build",
+          "name": "ninja-clang-release"
+        }
+      ]
+    },
+    {
       "name": "vs2022-release",
       "steps": [
         {

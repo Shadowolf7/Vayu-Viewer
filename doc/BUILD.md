@@ -235,6 +235,8 @@ Workflow presets run configure and build as a single command. Useful for CI and 
 
 ```
 cmake --workflow --preset ninja-os-release
+cmake --workflow --preset ninja-os-clang-release
+cmake --workflow --preset ninja-clang-release
 cmake --workflow --preset vs2026-os-release
 cmake --workflow --preset xcode-os-release
 ```
@@ -256,6 +258,8 @@ cmake --build --preset ninja-os-release
 ```
 
 ### From an IDE
+
+When you edit XUI files under the viewer skins, the packaging manifest now tracks those files as dependencies, so rebuilding the package target will refresh the packaged UI assets rather than leaving stale XUI content behind.
 
 ```
 # Visual Studio
