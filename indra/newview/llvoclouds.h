@@ -71,6 +71,4 @@ protected:
     LLColor3      mCloudsColor;
 };
 
-extern LLUUID gCloudTextureID;
-
 #endif // LL_LLVOCLOUDS_H
