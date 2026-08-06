@@ -169,6 +169,11 @@ Viewer settings are XML-defined in `indra/newview/app_settings/`:
 
 UI is defined via XUI (XML User Interface) files in `indra/newview/skins/`. Multiple skins exist: `default`, `alchemy`, `gemini`, `heretic`, `ionic`. Each skin contains `xui/` (XML layouts), `textures/`, and theme files. English strings are in `xui/en/`. Skins support language-specific XUI overrides (en, de, es, fr, ja, it, pt, ru, tr, zh).
 
+### Naming Conventions
+
+- **Settings/XUI identifiers:** a new `gSavedSettings` key or widget `name=` gets the `Vayu*` prefix if it's genuinely new work, or keeps `Alchemy*` if it's inherited from Alchemy or extends an existing `Alchemy*` feature. Provenance decides, not neighboring keys.
+- **"Layer 1 vs layer 2" rebrand split:** user/OS-visible identity (window titles, icons, bundle IDs, installer names, URLs) was renamed Alchemy → Vayu. Internal plumbing (C++ identifiers, settings-key prefixes, vcpkg port names, the selectable `alchemy` skin, CI workflows tied to Alchemy's own infra) was deliberately left alone — renaming it is cosmetic churn that only grows merge-conflict surface against `upstream`.
+
 ### Tracy Profiling
 
 Tracy profiler support is built into the project. It is enabled by default for "Test" channel builds (controlled by `USE_TRACY`). Use `USE_TRACY_ON_DEMAND=ON` (default) to only profile when a Tracy server connects.
