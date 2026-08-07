@@ -69,13 +69,25 @@ if(NOT DEFINED VCPKG_TARGET_TRIPLET)
             endif()
         endif()
     else()
+        # Ports vcpkg builds from source (e.g. cef-bin's libcef_dll_wrapper)
+        # use the system default compiler unless the triplet chainloads one -
+        # the outer CMAKE_CXX_COMPILER selection here never propagates there
+        # on its own. Route Clang presets to a triplet that chainloads Clang,
+        # so vcpkg-built ports match the rest of the tree (see GH issue #30 -
+        # CEF's TRIVIAL_ABI scoped_refptr breaks across a GCC/Clang boundary).
+        if(CMAKE_CXX_COMPILER MATCHES "clang")
+            set(LL_LINUX_TRIPLET_BASE "x64-linux-alchemy-clang")
+        else()
+            set(LL_LINUX_TRIPLET_BASE "x64-linux-alchemy")
+        endif()
+
         if(LL_GENERATOR_IS_MULTI_CONFIG)
-            set(VCPKG_TARGET_TRIPLET "x64-linux-alchemy")
+            set(VCPKG_TARGET_TRIPLET "${LL_LINUX_TRIPLET_BASE}")
         else()
             if(CMAKE_BUILD_TYPE STREQUAL Debug)
-                set(VCPKG_TARGET_TRIPLET "x64-linux-alchemy")
+                set(VCPKG_TARGET_TRIPLET "${LL_LINUX_TRIPLET_BASE}")
             else()
-                set(VCPKG_TARGET_TRIPLET "x64-linux-alchemy-release")
+                set(VCPKG_TARGET_TRIPLET "${LL_LINUX_TRIPLET_BASE}-release")
             endif()
         endif()
     endif()
