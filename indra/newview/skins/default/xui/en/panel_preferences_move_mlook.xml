@@ -230,7 +230,7 @@
    layout="topleft"
    left="80"
    name="vayu_mlook_decouple_vehicle_tilt"
-   tool_tip="Prevents the mouselook view from tilting with a vehicle's roll and pitch while you're seated on it."
+   tool_tip="Prevents the mouselook view from banking with a vehicle's roll while you're seated on it."
    top_pad="15"
    width="330" />
   <check_box

@@ -1278,8 +1278,27 @@ void LLAgentCamera::updateCamera()
         gAgentAvatarp->isSitting() &&
         camera_mode == CAMERA_MODE_MOUSELOOK)
     {
-        //changed camera_skyward to the new global "mCameraUpVector"
-        mCameraUpVector = mCameraUpVector * gAgentAvatarp->getRenderRotation();
+        static LLCachedControl<bool> decouple_vehicle_tilt(gSavedSettings, "VayuMouselookDecoupleVehicleTilt", false);
+        LLViewerObject* root_object = (LLViewerObject*)gAgentAvatarp->getRoot();
+        if (decouple_vehicle_tilt && gAgentAvatarp->getParent() && !root_object->flagCameraDecoupled())
+        {
+            // Derive "up" from the vehicle's rotation with roll stripped out, rather
+            // than the avatar's full render rotation, so the horizon doesn't bank
+            // with the vehicle while heading and pitch still track it. Must match
+            // the roll-stripping in calcFocusPositionTargetGlobal() or the look and
+            // up vectors disagree. Gated on flagCameraDecoupled() the same way, so a
+            // script-controlled camera isn't fought over here either.
+            LLQuaternion vehicle_rot = ((LLViewerObject*)gAgentAvatarp->getParent())->getRenderRotation();
+            F32 roll, pitch, yaw;
+            vehicle_rot.getEulerAngles(&roll, &pitch, &yaw);
+            vehicle_rot.setEulerAngles(0.f, pitch, yaw);
+            mCameraUpVector = mCameraUpVector * vehicle_rot;
+        }
+        else
+        {
+            //changed camera_skyward to the new global "mCameraUpVector"
+            mCameraUpVector = mCameraUpVector * gAgentAvatarp->getRenderRotation();
+        }
     }
 
     if (cameraThirdPerson() && (mFocusOnAvatar || mAllowChangeToFollow) && LLFollowCamMgr::getInstance()->getActiveFollowCamParams())
@@ -1709,9 +1728,18 @@ LLVector3d LLAgentCamera::calcFocusPositionTargetGlobal()
         {
             LLViewerObject* root_object = (LLViewerObject*)gAgentAvatarp->getRoot();
             static LLCachedControl<bool> decouple_vehicle_tilt(gSavedSettings, "VayuMouselookDecoupleVehicleTilt", false);
-            if (!root_object->flagCameraDecoupled() && !decouple_vehicle_tilt)
+            if (!root_object->flagCameraDecoupled())
             {
-                agent_rot *= ((LLViewerObject*)(gAgentAvatarp->getParent()))->getRenderRotation();
+                LLQuaternion vehicle_rot = ((LLViewerObject*)(gAgentAvatarp->getParent()))->getRenderRotation();
+                if (decouple_vehicle_tilt)
+                {
+                    // Keep heading and pitch coupled to the vehicle, but strip out roll so
+                    // mouselook doesn't bank sideways with the vehicle.
+                    F32 roll, pitch, yaw;
+                    vehicle_rot.getEulerAngles(&roll, &pitch, &yaw);
+                    vehicle_rot.setEulerAngles(0.f, pitch, yaw);
+                }
+                agent_rot *= vehicle_rot;
             }
         }
         at_axis = at_axis * agent_rot;
