@@ -245,6 +245,7 @@
    top_pad="10"
    width="330" />
   <text
+   enabled_control="VayuMouselookEyeHeightOffsetEnabled"
    type="string"
    length="1"
    follows="left|top"
@@ -259,6 +260,7 @@
   </text>
   <slider
    control_name="VayuMouselookEyeHeightOffset"
+   enabled_control="VayuMouselookEyeHeightOffsetEnabled"
    follows="left|top"
    height="15"
    layout="topleft"
@@ -271,6 +273,7 @@
    top_delta="0"
    width="115" />
   <spinner
+   enabled_control="VayuMouselookEyeHeightOffsetEnabled"
    top_delta="-3"
    height="20"
    label=""

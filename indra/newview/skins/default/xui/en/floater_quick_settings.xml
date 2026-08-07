@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="utf-8" standalone="yes" ?>
 <floater
  width="300"
- height="489"
+ height="469"
  layout="topleft"
- min_height="489"
+ min_height="469"
  min_width="300"
  name="floater_quick_settings"
  positioning="cascading"
