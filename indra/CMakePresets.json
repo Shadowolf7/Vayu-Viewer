@@ -55,14 +55,6 @@
       }
     },
     {
-      "name": "clang",
-      "hidden": true,
-      "cacheVariables": {
-        "CMAKE_C_COMPILER": "clang",
-        "CMAKE_CXX_COMPILER": "clang++"
-      }
-    },
-    {
       "name": "ninja-os",
       "displayName": "Ninja Multi-Config",
       "generator": "Ninja Multi-Config",
@@ -76,22 +68,6 @@
       "displayName": "Ninja Multi-Config Proprietary",
       "inherits": [
         "ninja-os",
-        "nonfree"
-      ]
-    },
-    {
-      "name": "ninja-os-clang",
-      "displayName": "Ninja Multi-Config (Clang)",
-      "inherits": [
-        "ninja-os",
-        "clang"
-      ]
-    },
-    {
-      "name": "ninja-clang",
-      "displayName": "Ninja Multi-Config Proprietary (Clang)",
-      "inherits": [
-        "ninja-os-clang",
         "nonfree"
       ]
     },
@@ -291,46 +267,6 @@
     {
       "name": "ninja-os-release",
       "configurePreset": "ninja-os",
-      "configuration": "Release"
-    },
-    {
-      "name": "ninja-clang-debug",
-      "configurePreset": "ninja-clang",
-      "configuration": "Debug"
-    },
-    {
-      "name": "ninja-clang-optdebug",
-      "configurePreset": "ninja-clang",
-      "configuration": "OptDebug"
-    },
-    {
-      "name": "ninja-clang-relwithdebinfo",
-      "configurePreset": "ninja-clang",
-      "configuration": "RelWithDebInfo"
-    },
-    {
-      "name": "ninja-clang-release",
-      "configurePreset": "ninja-clang",
-      "configuration": "Release"
-    },
-    {
-      "name": "ninja-os-clang-debug",
-      "configurePreset": "ninja-os-clang",
-      "configuration": "Debug"
-    },
-    {
-      "name": "ninja-os-clang-optdebug",
-      "configurePreset": "ninja-os-clang",
-      "configuration": "OptDebug"
-    },
-    {
-      "name": "ninja-os-clang-relwithdebinfo",
-      "configurePreset": "ninja-os-clang",
-      "configuration": "RelWithDebInfo"
-    },
-    {
-      "name": "ninja-os-clang-release",
-      "configurePreset": "ninja-os-clang",
       "configuration": "Release"
     },
     {
@@ -534,32 +470,6 @@
         {
           "type": "build",
           "name": "ninja-os-release"
-        }
-      ]
-    },
-    {
-      "name": "ninja-os-clang-release",
-      "steps": [
-        {
-          "type": "configure",
-          "name": "ninja-os-clang"
-        },
-        {
-          "type": "build",
-          "name": "ninja-os-clang-release"
-        }
-      ]
-    },
-    {
-      "name": "ninja-clang-release",
-      "steps": [
-        {
-          "type": "configure",
-          "name": "ninja-clang"
-        },
-        {
-          "type": "build",
-          "name": "ninja-clang-release"
         }
       ]
     },

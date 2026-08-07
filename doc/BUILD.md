@@ -209,7 +209,6 @@ Most contributors want the `-os` variants.
 |:---------------------------------------------|:---------|:-------------------|
 | `vs2026-os`, `vs2022-os`                     | Windows  | Visual Studio      |
 | `ninja-os`                                   | Linux    | Ninja Multi-Config |
-| `ninja-os-clang`                             | Linux    | Ninja Multi-Config (Clang instead of GCC) |
 | `ninja-os-arm64`, `ninja-os-x64`             | macOS    | Ninja Multi-Config |
 | `xcode-os`, `xcode-os-arm64`, `xcode-os-x64` | macOS    | Xcode              |
 
@@ -223,11 +222,19 @@ This creates a build tree at `build-<HostSystem>-<preset>/` next to the source �
 
 The first configure run downloads and builds every vcpkg dependency from source. Expect **30–60+ minutes** and several GB of disk; subsequent configures finish in seconds.
 
+### vcpkg
+
+Third-party dependencies are managed by [vcpkg](https://vcpkg.io) in manifest mode, using the ports/triplets under `indra/vcpkg/`. `indra/cmake/BootstrapVcpkg.cmake` clones and bootstraps vcpkg itself into `../vcpkg` (next to `indra/`) automatically on first configure — nothing to install by hand.
+
+**Compiler selection doesn't automatically reach vcpkg.** Ports vcpkg builds from source (e.g. `cef-bin`'s bundled `libcef_dll_wrapper`) run through their own CMake invocation, driven by the *triplet*, not by the outer `CMAKE_CXX_COMPILER` you pass to the top-level configure. Mixing them — viewer built with Clang, vcpkg dependencies still built with the system default GCC — isn't just an inconsistency, it caused a real crash: [GH issue #30](https://github.com/Shadowolf7/Vayu-Viewer/issues/30). CEF's `scoped_refptr` uses a Clang-only `[[clang::trivial_abi]]` calling convention that GCC doesn't understand, so a GCC-built `libcef_dll_wrapper` called from Clang-compiled code silently corrupted its own arguments — no build error, just a runtime segfault in the media plugin.
+
+This repo handles it for you: `BootstrapVcpkg.cmake` auto-selects the `x64-linux-alchemy-clang` triplet (chainloads Clang for vcpkg's own port builds) whenever `CMAKE_CXX_COMPILER` matches `clang`, so the Clang flags below are safe as-is. The catch — **switching compilers on an already-configured tree forces a full vcpkg rebuild.** The triplet name is part of vcpkg's binary-cache key, so none of the ~300 already-built packages carry over; budget the same 30–60+ minutes as a from-scratch configure.
+
 #### Platform notes
 
 - **macOS** — `xcode-os` and `ninja-os` (no arch suffix) pick the host architecture. Use the explicit `-arm64` / `-x64` preset to cross-build (e.g. an arm64 bundle from an Intel Mac).
-- **Linux with Clang** (often faster local-iteration builds, better diagnostics): use the `ninja-os-clang` preset (or `ninja-clang` for the proprietary variant) instead of `ninja-os`/`ninja`. Warnings are still fatal under Clang by default (`CMAKE_COMPILE_WARNING_AS_ERROR`, see `indra/cmake/00-Common.cmake:45`) — override with `-DCLANG_DISABLE_FATAL_WARNINGS=TRUE` if needed, same as the GCC/MSVC escape hatches below.
-- **Linux linker** — `mold` is picked automatically via `CMAKE_LINKER_TYPE` when installed (`indra/cmake/00-Common.cmake`, `find_program(MOLD_LINKER mold)`), on both the default GCC presets and the Clang ones above. Pass `-DCMAKE_LINKER_TYPE=LLD` (or any other value CMake supports) explicitly to override it.
+- **Linux with Clang** (faster builds): append `-DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_LINKER_TYPE=LLD` to the configure command. See [vcpkg](#vcpkg) above for why this is safe on a fresh configure but costly on an existing one.
+- **Linux linker** — `mold` is picked automatically via `CMAKE_LINKER_TYPE` when installed (`indra/cmake/00-Common.cmake`, `find_program(MOLD_LINKER mold)`), regardless of which compiler you select. Pass `-DCMAKE_LINKER_TYPE=LLD` (or any other value CMake supports) explicitly to override it.
 
 ### Workflow presets (one-shot configure + build)
 
@@ -235,8 +242,6 @@ Workflow presets run configure and build as a single command. Useful for CI and 
 
 ```
 cmake --workflow --preset ninja-os-release
-cmake --workflow --preset ninja-os-clang-release
-cmake --workflow --preset ninja-clang-release
 cmake --workflow --preset vs2026-os-release
 cmake --workflow --preset xcode-os-release
 ```
