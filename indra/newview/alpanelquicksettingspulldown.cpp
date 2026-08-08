@@ -36,3 +36,17 @@ ALPanelQuickSettingsPulldown::ALPanelQuickSettingsPulldown() : LLPanelPulldown()
 {
     buildFromFile("panel_quick_settings_pulldown.xml");
 }
+
+// virtual
+void ALPanelQuickSettingsPulldown::onVisibilityChange(bool new_visibility)
+{
+    LLPanelPulldown::onVisibilityChange(new_visibility);
+
+    // LLPanelPulldown::onVisibilityChange() (above) only handles the
+    // auto-close hover timer and, unlike LLView's default implementation,
+    // does not forward the visibility change to child views. The embedded
+    // "quick_settings" content panel (ALPanelQuickSettings) relies on that
+    // notification to rescan inventory for environment presets each time
+    // this popdown is shown, so forward it explicitly here.
+    LLView::onVisibilityChange(new_visibility);
+}

@@ -42,6 +42,7 @@ public:
 
     bool postBuild() override;
     void refresh() override;
+    void onVisibilityChange(bool new_visibility) override;
 
 private:
     void onHoverSliderMoved(const LLSD& val);
