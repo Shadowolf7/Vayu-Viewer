@@ -9173,8 +9173,10 @@ void LLPipeline::bindLightFunc(LLGLSLShader& shader)
                                             mLightFuncSampler);
     }
 
+    // RenderSpecularAA itself is a compile-time permutation (SPECULAR_AA, see llviewershadermgr.cpp
+    // and deferredUtil.glsl); these two only matter to shaders that were built with it and are
+    // no-ops (uniform location -1) on every other shader.
     shader.uniform1f(LLShaderMgr::DEFERRED_SPECULAR_EXPONENT, RenderSpecularExponent);
-    shader.uniform1i(LLShaderMgr::DEFERRED_SPECULAR_AA_ENABLED, RenderSpecularAA ? 1 : 0);
     shader.uniform1f(LLShaderMgr::DEFERRED_SPECULAR_AA_SCALE, RenderSpecularAAScale);
 
     channel = shader.enableTexture(LLShaderMgr::DEFERRED_BRDF_LUT);

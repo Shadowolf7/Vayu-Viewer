@@ -94,10 +94,11 @@ uniform float sky_hdr_scale;
 
 void calcHalfVectors(vec3 lv, vec3 n, vec3 v, out vec3 h, out vec3 l, out float nh, out float nl, out float nv, out float vh, out float lightDist);
 void calcDiffuseSpecular(vec3 baseColor, float metallic, inout vec3 diffuseColor, inout vec3 specularColor);
+#ifdef SPECULAR_AA
 float evalBlinnPhongSpec(float nh, float glossiness);
 float calcSpecularAAVariance(vec3 n, vec3 v);
 float filterGlossiness(float glossiness, float variance);
-uniform int specular_aa_enabled;
+#endif
 
 vec3 pbrBaseLight(vec3 diffuseColor,
                   vec3 specularColor,
@@ -136,16 +137,13 @@ void main()
 
     GBufferInfo gb = getGBuffer(tc);
 
-    // specular_aa_enabled is a uniform -- identical for every pixel in this draw call -- so
-    // branching on it is uniform control flow, not the divergent case dFdx/dFdy can't handle
-    // (that hazard is about per-pixel-varying conditions like HAS_PBR below, not this). Skips the
-    // derivative work entirely when the feature is off. Computed once, before any *per-pixel*
-    // branch, per deferredUtil.glsl's placement rule.
+    // Computed once, before any *per-pixel* branch (HAS_PBR below), per deferredUtil.glsl's
+    // placement rule for dFdx/dFdy. SPECULAR_AA is a compile-time permutation, so the disabled
+    // build never contains calcSpecularAAVariance at all.
     float specAAVariance = 0.0;
-    if (specular_aa_enabled != 0)
-    {
-        specAAVariance = calcSpecularAAVariance(gb.normal, -normalize(pos.xyz));
-    }
+#ifdef SPECULAR_AA
+    specAAVariance = calcSpecularAAVariance(gb.normal, -normalize(pos.xyz));
+#endif
 
     vec3 colorEmissive = gb.emissive.rgb;
     float envIntensity = gb.envIntensity;
@@ -280,9 +278,11 @@ void main()
                 float gtdenom = 2 * nh;
                 float gt = max(0,(min(gtdenom * nv / vh, gtdenom * nl / vh)));
 
-                float specSample = (specular_aa_enabled != 0)
-                    ? evalBlinnPhongSpec(nh, filterGlossiness(spec.a, specAAVariance))
-                    : texture(lightFunc, vec2(nh, spec.a)).r;
+#ifdef SPECULAR_AA
+                float specSample = evalBlinnPhongSpec(nh, filterGlossiness(spec.a, specAAVariance));
+#else
+                float specSample = texture(lightFunc, vec2(nh, spec.a)).r;
+#endif
                 scol *= fres*specSample*gt/(nh*nl);
                 color.rgb += lit*scol*sunlit_linear.rgb*spec.rgb;
             }

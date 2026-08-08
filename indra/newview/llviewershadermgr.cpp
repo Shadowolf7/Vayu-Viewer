@@ -1211,6 +1211,9 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     LL_PROFILE_ZONE_SCOPED;
     bool use_sun_shadow = mShaderLevel[SHADER_DEFERRED] > 1 &&
         gSavedSettings.getS32("RenderShadowDetail") > 0;
+    // Compile-time permutation rather than a runtime uniform branch -- see deferredUtil.glsl --
+    // so toggling RenderSpecularAA requires the shader reload wired up in llviewercontrol.cpp.
+    bool specular_aa = gSavedSettings.getBOOL("RenderSpecularAA");
 
     if (mShaderLevel[SHADER_DEFERRED] == 0)
     {
@@ -1435,6 +1438,11 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             if (use_sun_shadow)
             {
                 gDeferredMaterialProgram[i].addPermutation("HAS_SUN_SHADOW", "1");
+            }
+
+            if (specular_aa)
+            {
+                gDeferredMaterialProgram[i].addPermutation("SPECULAR_AA", "1");
             }
 
             add_common_permutations(&gDeferredMaterialProgram[i]);
@@ -1863,6 +1871,11 @@ bool LLViewerShaderMgr::loadShadersDeferred()
 
         gDeferredLightProgram.clearPermutations();
 
+        if (specular_aa)
+        {
+            gDeferredLightProgram.addPermutation("SPECULAR_AA", "1");
+        }
+
         add_common_permutations(&gDeferredLightProgram);
 
         success = gDeferredLightProgram.createShader(LLGLSLShader::VARIANT_CLASSIC);
@@ -1886,6 +1899,11 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             gDeferredMultiLightProgram[i].mShaderLevel = mShaderLevel[SHADER_DEFERRED];
             gDeferredMultiLightProgram[i].addPermutation("LIGHT_COUNT", llformat("%d", i+1));
 
+            if (specular_aa)
+            {
+                gDeferredMultiLightProgram[i].addPermutation("SPECULAR_AA", "1");
+            }
+
             add_common_permutations(&gDeferredMultiLightProgram[i]);
 
             success = gDeferredMultiLightProgram[i].createShader(LLGLSLShader::VARIANT_CLASSIC);
@@ -1907,6 +1925,11 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredSpotLightProgram.mShaderFiles.push_back(make_pair("deferred/spotLightF.glsl", GL_FRAGMENT_SHADER));
         gDeferredSpotLightProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
 
+        if (specular_aa)
+        {
+            gDeferredSpotLightProgram.addPermutation("SPECULAR_AA", "1");
+        }
+
         add_common_permutations(&gDeferredSpotLightProgram);
 
         success = gDeferredSpotLightProgram.createShader(LLGLSLShader::VARIANT_CLASSIC);
@@ -1927,6 +1950,11 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredMultiSpotLightProgram.mShaderFiles.push_back(make_pair("deferred/multiPointLightV.glsl", GL_VERTEX_SHADER));
         gDeferredMultiSpotLightProgram.mShaderFiles.push_back(make_pair("deferred/spotLightF.glsl", GL_FRAGMENT_SHADER));
         gDeferredMultiSpotLightProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+
+        if (specular_aa)
+        {
+            gDeferredMultiSpotLightProgram.addPermutation("SPECULAR_AA", "1");
+        }
 
         add_common_permutations(&gDeferredMultiSpotLightProgram);
 
@@ -2360,6 +2388,11 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         if (use_sun_shadow)
         {
             gDeferredSoftenProgram.addPermutation("HAS_SUN_SHADOW", "1");
+        }
+
+        if (specular_aa)
+        {
+            gDeferredSoftenProgram.addPermutation("SPECULAR_AA", "1");
         }
 
         if (gSavedSettings.getBOOL("RenderDeferredSSAO"))

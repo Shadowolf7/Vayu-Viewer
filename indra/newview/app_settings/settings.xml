@@ -8974,7 +8974,7 @@
   <key>RenderSpecularAAScale</key>
   <map>
     <key>Comment</key>
-    <string>Strength of legacy specular anti-aliasing. Only has an effect when RenderSpecularAA is enabled. Needs to be large (hundreds+) to visibly matter -- screen-space normal/view variance is small except at silhouettes and grazing angles.</string>
+    <string>Strength of legacy specular anti-aliasing. Only has an effect when RenderSpecularAA is enabled. Needs to be large (thousands+) to visibly matter -- screen-space normal/view variance is small except at silhouettes and grazing angles.</string>
     <key>Persist</key>
     <integer>1</integer>
     <key>Type</key>

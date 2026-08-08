@@ -49,10 +49,11 @@ uniform int sun_up_factor;
 vec4 applySkyAndWaterFog(vec3 pos, vec3 additive, vec3 atten, vec4 color);
 void calcAtmosphericVarsLinear(vec3 inPositionEye, vec3 norm, vec3 light_dir, out vec3 sunlit, out vec3 amblit, out vec3 atten, out vec3 additive);
 void calcHalfVectors(vec3 lv, vec3 n, vec3 v, out vec3 h, out vec3 l, out float nh, out float nl, out float nv, out float vh, out float lightDist);
+#ifdef SPECULAR_AA
 float evalBlinnPhongSpec(float nh, float glossiness);
 float calcSpecularAAVariance(vec3 n, vec3 v);
 float filterGlossiness(float glossiness, float variance);
-uniform int specular_aa_enabled;
+#endif
 
 vec3 srgb_to_linear(vec3 cs);
 vec3 linear_to_srgb(vec3 cs);
@@ -176,9 +177,11 @@ vec3 calcPointLightOrSpotLight(vec3 light_col, vec3 npos, vec3 diffuse, vec4 spe
 
             if (nh > 0.0)
             {
-                float specSample = (specular_aa_enabled != 0)
-                    ? evalBlinnPhongSpec(nh, filterGlossiness(spec.a, specAAVariance))
-                    : texture(lightFunc, vec2(nh, spec.a)).r;
+#ifdef SPECULAR_AA
+                float specSample = evalBlinnPhongSpec(nh, filterGlossiness(spec.a, specAAVariance));
+#else
+                float specSample = texture(lightFunc, vec2(nh, spec.a)).r;
+#endif
                 float scol = fres*specSample*gt / (nh*da);
                 vec3 speccol = lit*scol*light_col.rgb*spec.rgb;
                 speccol = clamp(speccol, vec3(0), vec3(1));
@@ -334,16 +337,13 @@ void main()
 
     vec3 pos = vary_position;
 
-    // specular_aa_enabled is a uniform -- identical for every pixel in this draw call -- so
-    // branching on it is uniform control flow, not the divergent case dFdx/dFdy can't handle
-    // (that hazard is about per-pixel-varying conditions like glossiness>0.0 below, not this).
-    // Skips the derivative work entirely when the feature is off. Computed once, before any
-    // *per-pixel* branch, per deferredUtil.glsl's placement rule.
+    // Computed once, before any *per-pixel* branch (glossiness>0.0 below), per deferredUtil.glsl's
+    // placement rule for dFdx/dFdy. SPECULAR_AA is now a compile-time permutation rather than a
+    // runtime uniform branch, so the disabled build never contains calcSpecularAAVariance at all.
     float specAAVariance = 0.0;
-    if (specular_aa_enabled != 0)
-    {
-        specAAVariance = calcSpecularAAVariance(norm.xyz, -normalize(pos.xyz));
-    }
+#ifdef SPECULAR_AA
+    specAAVariance = calcSpecularAAVariance(norm.xyz, -normalize(pos.xyz));
+#endif
 
     float shadow = getShadow(pos, norm);
 
@@ -409,9 +409,11 @@ void main()
             float gtdenom = 2 * nh;
             float gt = max(0,(min(gtdenom * nv / vh, gtdenom * nl / vh)));
 
-            float specSample = (specular_aa_enabled != 0)
-                ? evalBlinnPhongSpec(nh, filterGlossiness(glossiness, specAAVariance))
-                : texture(lightFunc, vec2(nh, glossiness)).r;
+#ifdef SPECULAR_AA
+            float specSample = evalBlinnPhongSpec(nh, filterGlossiness(glossiness, specAAVariance));
+#else
+            float specSample = texture(lightFunc, vec2(nh, glossiness)).r;
+#endif
             float scol = shadow*fres*specSample*gt/(nh*nl);
             color.rgb += lit*scol*sunlit_linear.rgb*spec.rgb;
         }

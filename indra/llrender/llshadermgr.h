@@ -227,7 +227,6 @@ public:
         DEFERRED_NOISE,                     //  "noiseMap"
         DEFERRED_LIGHTFUNC,                 //  "lightFunc"
         DEFERRED_SPECULAR_EXPONENT,         //  "specular_exponent"
-        DEFERRED_SPECULAR_AA_ENABLED,       //  "specular_aa_enabled"
         DEFERRED_SPECULAR_AA_SCALE,         //  "specular_aa_scale"
         DEFERRED_LIGHT,                     //  "lightMap"
         DEFERRED_PROJECTION,                //  "projectionMap"

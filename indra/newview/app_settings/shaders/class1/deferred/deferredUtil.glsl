@@ -138,11 +138,21 @@ void calcHalfVectors(vec3 lv, vec3 n, vec3 v,
     lightDist = length(lv);
 }
 
-// Analytic Blinn-Phong specular term -- same math LLPipeline::createLUTBuffers() (pipeline.cpp)
-// uses to build the lightFunc LUT this can replace, evaluated per-pixel instead of precomputed
-// into a 1024x256 texture. Removes the LUT's linear-in-nh quantization, which at high glossiness
-// compresses the entire visible highlight ramp into ~1 texel (glossiness=1 -> exponent 368 ->
-// pow(nh,368) is ~0 until nh is within a fraction of a percent of 1.0).
+// Analytic Blinn-Phong specular term and screen-space AA variance for the legacy direct-light
+// path. Unconditionally defined here even though the call sites (materialF.glsl etc.) gate their
+// use behind #ifdef SPECULAR_AA -- this file is compiled exactly ONCE (see the fixed-attribs pass
+// in llviewershadermgr.cpp around line 958) and attached BY REFERENCE into every deferred program
+// via attachFragmentObject's filename-keyed cache, so it can't vary per-program the way a
+// permutation define normally would. A program that never calls these (SPECULAR_AA not defined at
+// ITS OWN compile) still links fine -- the linker just drops the unreferenced functions from that
+// program -- so leaving them unconditional here costs nothing on the disabled path; gating them
+// here instead breaks linking for every program that DOES want them (unresolved reference).
+//
+// Same math LLPipeline::createLUTBuffers() (pipeline.cpp) uses to build the lightFunc LUT this
+// replaces, evaluated per-pixel instead of precomputed into a 1024x256 texture. Removes the LUT's
+// linear-in-nh quantization, which at high glossiness compresses the entire visible highlight ramp
+// into ~1 texel (glossiness=1 -> exponent 368 -> pow(nh,368) is ~0 until nh is within a fraction of
+// a percent of 1.0).
 uniform float specular_exponent; // RenderSpecularExponent, mirrors createLUTBuffers()'s specExp
 float evalBlinnPhongSpec(float nh, float glossiness)
 {
@@ -172,8 +182,9 @@ float calcSpecularAAVariance(vec3 n, vec3 v)
 // Pure scalar combine, safe anywhere including divergent control flow. glossiness is this
 // codebase's normalized [0,1] value (specular_color.a / spec.a). Broadens (reduces) glossiness
 // in proportion to per-pixel variance, scaled by a tunable uniform so it can be dialed in
-// in-world without a shader recompile.
-uniform float specular_aa_scale; // RenderSpecularAAScale, only meaningful when specular_aa_enabled
+// in-world without a shader recompile -- unlike the boolean enable, which is now baked in at
+// compile time, the strength stays a live-tunable uniform.
+uniform float specular_aa_scale; // RenderSpecularAAScale
 float filterGlossiness(float glossiness, float variance)
 {
     return glossiness * inversesqrt(1.0 + specular_aa_scale * variance * glossiness * glossiness);
