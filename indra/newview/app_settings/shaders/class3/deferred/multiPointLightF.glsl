@@ -52,6 +52,10 @@ uniform float far_z;
 in vec4 vary_fragcoord;
 
 void calcHalfVectors(vec3 lv, vec3 n, vec3 v, out vec3 h, out vec3 l, out float nh, out float nl, out float nv, out float vh, out float lightDist);
+float evalBlinnPhongSpec(float nh, float glossiness);
+float calcSpecularAAVariance(vec3 n, vec3 v);
+float filterGlossiness(float glossiness, float variance);
+uniform int specular_aa_enabled;
 float calcLegacyDistanceAttenuation(float distance, float falloff);
 vec4 getPosition(vec2 pos_screen);
 vec4 getNorm(vec2 screenpos);
@@ -79,6 +83,20 @@ void main()
     vec3 final_color = vec3(0, 0, 0);
     vec2 tc          = getScreenCoord(vary_fragcoord);
     vec3 pos         = getPosition(tc).xyz;
+
+    // Computed here, using a cheap normal-only sample (getNorm), before the discard below and
+    // outside the per-light loop further down -- variance depends only on this fragment's normal
+    // and view direction, not which light is being evaluated, and dFdx/dFdy inside divergent
+    // control flow (including past a discard some quad-mates take and others don't) are
+    // undefined, see deferredUtil.glsl. specular_aa_enabled is a uniform (same value for every
+    // pixel in this draw call), so gating on it doesn't reintroduce that hazard -- it just skips
+    // the derivative work (and the extra getNorm sample) when the feature is off.
+    float specAAVariance = 0.0;
+    if (specular_aa_enabled != 0)
+    {
+        specAAVariance = calcSpecularAAVariance(getNorm(tc).xyz, -normalize(pos));
+    }
+
     if (pos.z < far_z)
     {
         discard;
@@ -168,7 +186,10 @@ void main()
 
                         if (nh > 0.0)
                         {
-                            float scol = fres * texture(lightFunc, vec2(nh, spec.a)).r * gt / (nh * nl);
+                            float specSample = (specular_aa_enabled != 0)
+                                ? evalBlinnPhongSpec(nh, filterGlossiness(spec.a, specAAVariance))
+                                : texture(lightFunc, vec2(nh, spec.a)).r;
+                            float scol = fres * specSample * gt / (nh * nl);
                             col += lit * scol * light_col[i].rgb * spec.rgb;
                         }
                     }

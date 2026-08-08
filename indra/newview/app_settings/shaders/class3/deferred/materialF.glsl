@@ -49,6 +49,10 @@ uniform int sun_up_factor;
 vec4 applySkyAndWaterFog(vec3 pos, vec3 additive, vec3 atten, vec4 color);
 void calcAtmosphericVarsLinear(vec3 inPositionEye, vec3 norm, vec3 light_dir, out vec3 sunlit, out vec3 amblit, out vec3 atten, out vec3 additive);
 void calcHalfVectors(vec3 lv, vec3 n, vec3 v, out vec3 h, out vec3 l, out float nh, out float nl, out float nv, out float vh, out float lightDist);
+float evalBlinnPhongSpec(float nh, float glossiness);
+float calcSpecularAAVariance(vec3 n, vec3 v);
+float filterGlossiness(float glossiness, float variance);
+uniform int specular_aa_enabled;
 
 vec3 srgb_to_linear(vec3 cs);
 vec3 linear_to_srgb(vec3 cs);
@@ -98,7 +102,7 @@ uniform vec2 screen_res;
 float getAmbientClamp();
 void waterClip(vec3 pos);
 
-vec3 calcPointLightOrSpotLight(vec3 light_col, vec3 npos, vec3 diffuse, vec4 spec, vec3 v, vec3 n, vec4 lp, vec3 ln, float la, float fa, float is_pointlight, inout float glare, float ambiance)
+vec3 calcPointLightOrSpotLight(vec3 light_col, vec3 npos, vec3 diffuse, vec4 spec, vec3 v, vec3 n, vec4 lp, vec3 ln, float la, float fa, float is_pointlight, inout float glare, float ambiance, float specAAVariance)
 {
     // SL-14895 inverted attenuation work-around
     // This routine is tweaked to match deferred lighting, but previously used an inverted la value. To reconstruct
@@ -172,7 +176,10 @@ vec3 calcPointLightOrSpotLight(vec3 light_col, vec3 npos, vec3 diffuse, vec4 spe
 
             if (nh > 0.0)
             {
-                float scol = fres*texture(lightFunc, vec2(nh, spec.a)).r*gt / (nh*da);
+                float specSample = (specular_aa_enabled != 0)
+                    ? evalBlinnPhongSpec(nh, filterGlossiness(spec.a, specAAVariance))
+                    : texture(lightFunc, vec2(nh, spec.a)).r;
+                float scol = fres*specSample*gt / (nh*da);
                 vec3 speccol = lit*scol*light_col.rgb*spec.rgb;
                 speccol = clamp(speccol, vec3(0), vec3(1));
                 col += speccol;
@@ -327,6 +334,17 @@ void main()
 
     vec3 pos = vary_position;
 
+    // specular_aa_enabled is a uniform -- identical for every pixel in this draw call -- so
+    // branching on it is uniform control flow, not the divergent case dFdx/dFdy can't handle
+    // (that hazard is about per-pixel-varying conditions like glossiness>0.0 below, not this).
+    // Skips the derivative work entirely when the feature is off. Computed once, before any
+    // *per-pixel* branch, per deferredUtil.glsl's placement rule.
+    float specAAVariance = 0.0;
+    if (specular_aa_enabled != 0)
+    {
+        specAAVariance = calcSpecularAAVariance(norm.xyz, -normalize(pos.xyz));
+    }
+
     float shadow = getShadow(pos, norm);
 
     vec4 diffuse = diffcol;
@@ -391,7 +409,10 @@ void main()
             float gtdenom = 2 * nh;
             float gt = max(0,(min(gtdenom * nv / vh, gtdenom * nl / vh)));
 
-            float scol = shadow*fres*texture(lightFunc, vec2(nh, glossiness)).r*gt/(nh*nl);
+            float specSample = (specular_aa_enabled != 0)
+                ? evalBlinnPhongSpec(nh, filterGlossiness(glossiness, specAAVariance))
+                : texture(lightFunc, vec2(nh, glossiness)).r;
+            float scol = shadow*fres*specSample*gt/(nh*nl);
             color.rgb += lit*scol*sunlit_linear.rgb*spec.rgb;
         }
 
@@ -414,7 +435,7 @@ void main()
     vec3 npos = normalize(-pos.xyz);
     vec3 light = vec3(0, 0, 0);
 
-#define LIGHT_LOOP(i) light.rgb += calcPointLightOrSpotLight(light_diffuse[i].rgb, npos, diffuse.rgb, spec, pos.xyz, norm.xyz, light_position[i], light_direction[i].xyz, light_attenuation[i].x, light_attenuation[i].y, light_attenuation[i].z, glare, light_attenuation[i].w );
+#define LIGHT_LOOP(i) light.rgb += calcPointLightOrSpotLight(light_diffuse[i].rgb, npos, diffuse.rgb, spec, pos.xyz, norm.xyz, light_position[i], light_direction[i].xyz, light_attenuation[i].x, light_attenuation[i].y, light_attenuation[i].z, glare, light_attenuation[i].w, specAAVariance );
 
     LIGHT_LOOP(1)
         LIGHT_LOOP(2)

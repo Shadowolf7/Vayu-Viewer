@@ -8959,6 +8959,30 @@
     <real>368.0</real>
   </map>
 
+  <key>RenderSpecularAA</key>
+  <map>
+    <key>Comment</key>
+    <string>Anti-alias legacy Blinn-Phong specular highlights (fixes flicker on glossy materials, e.g. vehicle glass, at grazing angles). Off by default -- when off, rendering is byte-identical to the un-AA'd lightFunc lookup.</string>
+    <key>Persist</key>
+    <integer>1</integer>
+    <key>Type</key>
+    <string>Boolean</string>
+    <key>Value</key>
+    <integer>0</integer>
+  </map>
+
+  <key>RenderSpecularAAScale</key>
+  <map>
+    <key>Comment</key>
+    <string>Strength of legacy specular anti-aliasing. Only has an effect when RenderSpecularAA is enabled. Needs to be large (hundreds+) to visibly matter -- screen-space normal/view variance is small except at silhouettes and grazing angles.</string>
+    <key>Persist</key>
+    <integer>1</integer>
+    <key>Type</key>
+    <string>F32</string>
+    <key>Value</key>
+    <real>0.0</real>
+  </map>
+
   <key>RenderDeferred</key>
   <map>
     <key>Comment</key>

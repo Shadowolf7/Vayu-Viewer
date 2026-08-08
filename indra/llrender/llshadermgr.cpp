@@ -1611,6 +1611,9 @@ void LLShaderMgr::initAttribsAndUniforms()
     mReservedUniforms.push_back("brdfLut");
     mReservedUniforms.push_back("noiseMap");
     mReservedUniforms.push_back("lightFunc");
+    mReservedUniforms.push_back("specular_exponent");
+    mReservedUniforms.push_back("specular_aa_enabled");
+    mReservedUniforms.push_back("specular_aa_scale");
     mReservedUniforms.push_back("lightMap");
     mReservedUniforms.push_back("projectionMap");
     mReservedUniforms.push_back("norm_mat");
