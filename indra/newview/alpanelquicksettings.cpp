@@ -149,6 +149,23 @@ bool ALPanelQuickSettings::postBuild()
 }
 
 // virtual
+void ALPanelQuickSettings::onVisibilityChange(bool new_visibility)
+{
+    LLPanel::onVisibilityChange(new_visibility);
+
+    if (new_visibility)
+    {
+        // The status-bar popdown instance of this panel is built once at
+        // viewer startup, well before login/inventory finish loading, so
+        // the postBuild() scan above can find nothing. Rescan on every
+        // showing instead, same as the on-demand floater instance (which
+        // works because it's typically first built well after inventory
+        // is ready).
+        loadEnvironmentPresets();
+    }
+}
+
+// virtual
 void ALPanelQuickSettings::refresh()
 {
     LLPanel::refresh();
@@ -257,6 +274,12 @@ void ALPanelQuickSettings::loadEnvironmentPresets()
 
     auto fill_combo = [](LLComboBox* combo, const std::multimap<std::string, LLUUID>& preset_map)
     {
+        // Rescans (triggered by onVisibilityChange, see above) can happen
+        // after the user has already picked a preset -- preserve that
+        // selection across the rebuild instead of silently reverting to
+        // Region Default.
+        LLSD previous_value = combo->getSelectedValue();
+
         combo->removeall();
         combo->add("Region Default", LLSD(REGION_DEFAULT_VALUE));
         combo->addSeparator();
@@ -267,7 +290,11 @@ void ALPanelQuickSettings::loadEnvironmentPresets()
                 combo->add(name, LLSD(asset_id));
             }
         }
-        combo->setCurrentByIndex(0);
+
+        if (!previous_value.isDefined() || !combo->setSelectedByValue(previous_value, true))
+        {
+            combo->setCurrentByIndex(0);
+        }
     };
 
     fill_combo(mSkyPresetCombo, sky_map);

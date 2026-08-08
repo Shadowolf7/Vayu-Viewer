@@ -34,6 +34,8 @@ class ALPanelQuickSettingsPulldown final : public LLPanelPulldown
 {
 public:
     ALPanelQuickSettingsPulldown();
+
+    void onVisibilityChange(bool new_visibility) override;
 };
 
 #endif // AL_ALPANELQUICKSETTINGSPULLDOWN_H
