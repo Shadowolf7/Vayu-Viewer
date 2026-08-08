@@ -74,6 +74,11 @@ uniform vec2 screen_res;
 //[ENGINE_BLOCK Matrices]
 
 void calcHalfVectors(vec3 lv, vec3 n, vec3 v, out vec3 h, out vec3 l, out float nh, out float nl, out float nv, out float vh, out float lightDist);
+#ifdef SPECULAR_AA
+float evalBlinnPhongSpec(float nh, float glossiness);
+float calcSpecularAAVariance(vec3 n, vec3 v);
+float filterGlossiness(float glossiness, float variance);
+#endif
 float calcLegacyDistanceAttenuation(float distance, float falloff);
 bool clipProjectedLightVars(vec3 center, vec3 pos, out float dist, out float l_dist, out vec3 lv, out vec4 proj_tc );
 vec4 getNorm(vec2 screenpos);
@@ -104,6 +109,17 @@ void main()
     vec3 final_color = vec3(0,0,0);
     vec2 tc          = getScreenCoord(vary_fragcoord);
     vec3 pos         = getPosition(tc).xyz;
+
+    // Computed here, using a cheap normal-only sample (getNorm), before either discard below --
+    // the full gbuffer fetch further down is deliberately deferred past those discards, and
+    // dFdx/dFdy inside divergent control flow (including past a discard some quad-mates take and
+    // others don't) are undefined, see deferredUtil.glsl. SPECULAR_AA is a compile-time
+    // permutation, so the disabled build never contains calcSpecularAAVariance (or the extra
+    // getNorm sample it needs) at all.
+    float specAAVariance = 0.0;
+#ifdef SPECULAR_AA
+    specAAVariance = calcSpecularAAVariance(getNorm(tc).xyz, -normalize(pos));
+#endif
 
     vec3 lv;
     vec4 proj_tc;
@@ -236,7 +252,12 @@ void main()
 
             if (nh > 0.0)
             {
-                float scol = fres*texture(lightFunc, vec2(nh, spec.a)).r*gt/(nh*nl);
+#ifdef SPECULAR_AA
+                float specSample = evalBlinnPhongSpec(nh, filterGlossiness(spec.a, specAAVariance));
+#else
+                float specSample = texture(lightFunc, vec2(nh, spec.a)).r;
+#endif
+                float scol = fres*specSample*gt/(nh*nl);
                 vec3 speccol = dlit*scol*spec.rgb*shadow;
                 speccol = clamp(speccol, vec3(0), vec3(1));
                 final_color += speccol;

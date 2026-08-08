@@ -94,6 +94,11 @@ uniform float sky_hdr_scale;
 
 void calcHalfVectors(vec3 lv, vec3 n, vec3 v, out vec3 h, out vec3 l, out float nh, out float nl, out float nv, out float vh, out float lightDist);
 void calcDiffuseSpecular(vec3 baseColor, float metallic, inout vec3 diffuseColor, inout vec3 specularColor);
+#ifdef SPECULAR_AA
+float evalBlinnPhongSpec(float nh, float glossiness);
+float calcSpecularAAVariance(vec3 n, vec3 v);
+float filterGlossiness(float glossiness, float variance);
+#endif
 
 vec3 pbrBaseLight(vec3 diffuseColor,
                   vec3 specularColor,
@@ -131,6 +136,14 @@ void main()
     vec4  pos          = getPositionWithDepth(tc, depth);
 
     GBufferInfo gb = getGBuffer(tc);
+
+    // Computed once, before any *per-pixel* branch (HAS_PBR below), per deferredUtil.glsl's
+    // placement rule for dFdx/dFdy. SPECULAR_AA is a compile-time permutation, so the disabled
+    // build never contains calcSpecularAAVariance at all.
+    float specAAVariance = 0.0;
+#ifdef SPECULAR_AA
+    specAAVariance = calcSpecularAAVariance(gb.normal, -normalize(pos.xyz));
+#endif
 
     vec3 colorEmissive = gb.emissive.rgb;
     float envIntensity = gb.envIntensity;
@@ -265,7 +278,12 @@ void main()
                 float gtdenom = 2 * nh;
                 float gt = max(0,(min(gtdenom * nv / vh, gtdenom * nl / vh)));
 
-                scol *= fres*texture(lightFunc, vec2(nh, spec.a)).r*gt/(nh*nl);
+#ifdef SPECULAR_AA
+                float specSample = evalBlinnPhongSpec(nh, filterGlossiness(spec.a, specAAVariance));
+#else
+                float specSample = texture(lightFunc, vec2(nh, spec.a)).r;
+#endif
+                scol *= fres*specSample*gt/(nh*nl);
                 color.rgb += lit*scol*sunlit_linear.rgb*spec.rgb;
             }
 

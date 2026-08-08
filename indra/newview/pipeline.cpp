@@ -176,6 +176,9 @@ S32 LLPipeline::RenderShadowDetail;
 S32 LLPipeline::RenderShadowSplits;
 bool LLPipeline::RenderDeferredSSAO;
 F32 LLPipeline::RenderShadowResolutionScale;
+bool LLPipeline::RenderSpecularAA;
+F32 LLPipeline::RenderSpecularAAScale;
+F32 LLPipeline::RenderSpecularExponent;
 bool LLPipeline::RenderDelayCreation;
 bool LLPipeline::RenderAnimateRes;
 bool LLPipeline::FreezeTime;
@@ -553,6 +556,9 @@ void LLPipeline::init()
     connectRefreshCachedSettingsSafe("RenderShadowSplits");
     connectRefreshCachedSettingsSafe("RenderDeferredSSAO");
     connectRefreshCachedSettingsSafe("RenderShadowResolutionScale");
+    connectRefreshCachedSettingsSafe("RenderSpecularAA");
+    connectRefreshCachedSettingsSafe("RenderSpecularAAScale");
+    connectRefreshCachedSettingsSafe("RenderSpecularExponent");
     connectRefreshCachedSettingsSafe("RenderDelayCreation");
     connectRefreshCachedSettingsSafe("RenderAnimateRes");
     connectRefreshCachedSettingsSafe("FreezeTime");
@@ -1151,6 +1157,9 @@ void LLPipeline::refreshCachedSettings()
     RenderShadowSplits = gSavedSettings.getS32("RenderShadowSplits");
     RenderDeferredSSAO = gSavedSettings.getBOOL("RenderDeferredSSAO");
     RenderShadowResolutionScale = gSavedSettings.getF32("RenderShadowResolutionScale");
+    RenderSpecularAA = gSavedSettings.getBOOL("RenderSpecularAA");
+    RenderSpecularAAScale = gSavedSettings.getF32("RenderSpecularAAScale");
+    RenderSpecularExponent = gSavedSettings.getF32("RenderSpecularExponent");
     RenderDelayCreation = gSavedSettings.getBOOL("RenderDelayCreation");
     RenderAnimateRes = gSavedSettings.getBOOL("RenderAnimateRes");
     FreezeTime = gSavedSettings.getBOOL("FreezeTime");
@@ -9163,6 +9172,12 @@ void LLPipeline::bindLightFunc(LLGLSLShader& shader)
         gGL.getTextureSlot(channel)->bindManual(ALTextureSlot::TT_TEXTURE, mLightFunc,
                                             mLightFuncSampler);
     }
+
+    // RenderSpecularAA itself is a compile-time permutation (SPECULAR_AA, see llviewershadermgr.cpp
+    // and deferredUtil.glsl); these two only matter to shaders that were built with it and are
+    // no-ops (uniform location -1) on every other shader.
+    shader.uniform1f(LLShaderMgr::DEFERRED_SPECULAR_EXPONENT, RenderSpecularExponent);
+    shader.uniform1f(LLShaderMgr::DEFERRED_SPECULAR_AA_SCALE, RenderSpecularAAScale);
 
     channel = shader.enableTexture(LLShaderMgr::DEFERRED_BRDF_LUT);
     if (channel > -1)
