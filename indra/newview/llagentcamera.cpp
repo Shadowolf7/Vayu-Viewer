@@ -1626,7 +1626,7 @@ void LLAgentCamera::updateCamera()
             // Apply the same vertical eye-height offset used by calcCameraPositionTargetGlobal()
             // to both the camera origin and the look-at target, so it doesn't introduce pitch.
             static LLCachedControl<bool> mouselook_eye_height_offset_enabled(gSavedSettings, "VayuMouselookEyeHeightOffsetEnabled", true);
-            static LLCachedControl<F32> mouselook_eye_height_offset(gSavedSettings, "VayuMouselookEyeHeightOffset", 0.f);
+            static LLCachedControl<F32> mouselook_eye_height_offset(gSavedSettings, "VayuMouselookEyeHeightOffset", -0.1f);
             LLVector3 eye_height_offset(0.f, 0.f, mouselook_eye_height_offset_enabled ? (F32)mouselook_eye_height_offset : 0.f);
 
             LLViewerCamera::getInstance()->updateCameraLocation(head_pos + eye_height_offset,
@@ -1921,7 +1921,7 @@ LLVector3d LLAgentCamera::calcCameraPositionTargetGlobal(bool *hit_limit)
         head_offset.clearVec();
 
         static LLCachedControl<bool> mouselook_eye_height_offset_enabled(gSavedSettings, "VayuMouselookEyeHeightOffsetEnabled", true);
-        static LLCachedControl<F32> mouselook_eye_height_offset(gSavedSettings, "VayuMouselookEyeHeightOffset", 0.f);
+        static LLCachedControl<F32> mouselook_eye_height_offset(gSavedSettings, "VayuMouselookEyeHeightOffset", -0.1f);
         if (mouselook_eye_height_offset_enabled)
         {
             head_offset[VZ] += mouselook_eye_height_offset;
