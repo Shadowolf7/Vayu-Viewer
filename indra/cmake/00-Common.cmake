@@ -435,12 +435,19 @@ if(DARWIN)
     # same USE_SSE4_2/USE_AVX/USE_AVX2 options and x86_64 microarchitecture
     # levels used on Linux/Windows (see below).
     # https://en.wikipedia.org/wiki/X86-64#Microarchitecture_levels
+    #
+    # Unlike the Linux branch below, these are spelled out as individual -m
+    # flags rather than "-march=x86-64-v2/v3": Apple's clang driver doesn't
+    # accept that psABI microarchitecture-level alias ("unsupported argument
+    # to option '-march='"), even though it accepts the individual feature
+    # flags those aliases expand to. See the matching fix and longer
+    # explanation in vcpkg/triplets/x64-osx-alchemy(-release).cmake.
     if(USE_AVX2)
-      add_compile_options(-march=x86-64-v3)
+      add_compile_options(-msse4.2 -mavx -mavx2 -mfma -mbmi -mbmi2 -mf16c -mlzcnt -mmovbe)
     elseif(USE_AVX)
-      add_compile_options(-march=x86-64-v2 -mavx)
+      add_compile_options(-msse4.2 -mavx)
     elseif(USE_SSE4_2)
-      add_compile_options(-march=x86-64-v2)
+      add_compile_options(-msse4.2)
     else()
       # Historical Mac Intel floor, preserved even if AVX2 is explicitly
       # turned off and nothing else is opted in.

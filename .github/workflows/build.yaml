@@ -137,6 +137,7 @@ jobs:
     permissions:
       packages: write
     strategy:
+      fail-fast: false
       matrix:
         runner: ["windows-2025-vs2026", "macos-26", "ubuntu-24.04"]
         configuration: [release]

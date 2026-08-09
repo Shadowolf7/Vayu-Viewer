@@ -7,12 +7,19 @@ set(VCPKG_OSX_ARCHITECTURES x86_64)
 
 set(VCPKG_OSX_DEPLOYMENT_TARGET 14.0)
 
-# Match the viewer's own -march (USE_AVX2, indra/cmake/00-Common.cmake, the
-# BUILD_TARGET_IS_X86_64 branch) so vcpkg-built deps aren't compiled at the
-# compiler's plain baseline. Not applicable to arm64-osx-alchemy — the
+# Match the viewer's own AVX2 tier (USE_AVX2, indra/cmake/00-Common.cmake,
+# the BUILD_TARGET_IS_X86_64 branch) so vcpkg-built deps aren't compiled at
+# the compiler's plain baseline. Not applicable to arm64-osx-alchemy — the
 # viewer never sets an ISA flag on Apple Silicon.
-set(VCPKG_C_FLAGS "-march=x86-64-v3")
-set(VCPKG_CXX_FLAGS "-march=x86-64-v3")
+#
+# Spelled out as individual -m flags rather than "-march=x86-64-v3": that
+# psABI microarchitecture-level alias is a GCC/Linux-clang convention (see
+# the x64-linux-alchemy* triplets, where it works fine) that Apple's clang
+# driver rejects outright ("unsupported argument 'x86-64-v3' to option
+# '-march='"). The individual feature flags are recognized on every clang
+# target, including Darwin.
+set(VCPKG_C_FLAGS "-msse4.2 -mavx -mavx2 -mfma -mbmi -mbmi2 -mf16c -mlzcnt -mmovbe")
+set(VCPKG_CXX_FLAGS "-msse4.2 -mavx -mavx2 -mfma -mbmi -mbmi2 -mf16c -mlzcnt -mmovbe")
 
 if(PORT MATCHES "hunspell")
     set(VCPKG_LIBRARY_LINKAGE dynamic)
