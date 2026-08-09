@@ -2059,8 +2059,7 @@ U32 LLPipeline::getPoolTypeFromTE(const LLTextureEntry* te, LLViewerTexture* ima
     }
 
     LLMaterial* mat = te->getMaterialParams().get();
-    static LLCachedControl<bool> render_pbr_materials(gSavedSettings, "RenderPBRMaterials", true);
-    LLGLTFMaterial* gltf_mat = render_pbr_materials ? te->getGLTFRenderMaterial() : nullptr;
+    LLGLTFMaterial* gltf_mat = te->getGLTFRenderMaterial();
 
     bool color_alpha = te->getColor().mV[3] < 0.999f;
     bool alpha = color_alpha;

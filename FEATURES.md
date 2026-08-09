@@ -18,7 +18,6 @@ This isn't exhaustive — Alchemy carries roughly 80 of its own settings beyond 
 
 ### Rendering
 
-- A PBR Materials toggle that lets you fall back individual PBR faces to legacy shading, for content that looks better rendered the old way.
 - Correct depth sorting between rigged attachments and world alpha (clothing/attachments no longer draw in the wrong order relative to transparent world objects).
 - Attached spotlights and projector lights now stay lit regardless of the "attached lights" toggle — only point-light attachments are affected by it.
 
