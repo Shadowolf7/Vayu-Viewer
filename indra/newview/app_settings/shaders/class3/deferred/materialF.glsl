@@ -103,6 +103,21 @@ uniform vec2 screen_res;
 float getAmbientClamp();
 void waterClip(vec3 pos);
 
+// Local to this file (not deferredUtil.glsl): SPECULAR_AA is a per-program permutation, but
+// deferredUtil.glsl is compiled once with a fixed define set shared across every deferred
+// program (see llviewershadermgr.cpp's sGlobalDefines / variantObjectKey), so an #ifdef on a
+// per-program flag can't live there -- it would resolve the same way for every caller. This
+// file IS recompiled per-program, so the #ifdef below correctly follows this program's own
+// SPECULAR_AA state.
+float resolveSpecularSample(float nh, float glossiness, float variance)
+{
+#ifdef SPECULAR_AA
+    return evalBlinnPhongSpec(nh, filterGlossiness(glossiness, variance));
+#else
+    return texture(lightFunc, vec2(nh, glossiness)).r;
+#endif
+}
+
 vec3 calcPointLightOrSpotLight(vec3 light_col, vec3 npos, vec3 diffuse, vec4 spec, vec3 v, vec3 n, vec4 lp, vec3 ln, float la, float fa, float is_pointlight, inout float glare, float ambiance, float specAAVariance)
 {
     // SL-14895 inverted attenuation work-around
@@ -177,11 +192,7 @@ vec3 calcPointLightOrSpotLight(vec3 light_col, vec3 npos, vec3 diffuse, vec4 spe
 
             if (nh > 0.0)
             {
-#ifdef SPECULAR_AA
-                float specSample = evalBlinnPhongSpec(nh, filterGlossiness(spec.a, specAAVariance));
-#else
-                float specSample = texture(lightFunc, vec2(nh, spec.a)).r;
-#endif
+                float specSample = resolveSpecularSample(nh, spec.a, specAAVariance);
                 float scol = fres*specSample*gt / (nh*da);
                 vec3 speccol = lit*scol*light_col.rgb*spec.rgb;
                 speccol = clamp(speccol, vec3(0), vec3(1));
@@ -409,11 +420,7 @@ void main()
             float gtdenom = 2 * nh;
             float gt = max(0,(min(gtdenom * nv / vh, gtdenom * nl / vh)));
 
-#ifdef SPECULAR_AA
-            float specSample = evalBlinnPhongSpec(nh, filterGlossiness(glossiness, specAAVariance));
-#else
-            float specSample = texture(lightFunc, vec2(nh, glossiness)).r;
-#endif
+            float specSample = resolveSpecularSample(nh, glossiness, specAAVariance);
             float scol = shadow*fres*specSample*gt/(nh*nl);
             color.rgb += lit*scol*sunlit_linear.rgb*spec.rgb;
         }

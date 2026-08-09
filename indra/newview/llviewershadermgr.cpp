@@ -396,6 +396,45 @@ static void add_common_permutations(LLGLSLShader* shader)
     }
 }
 
+// Compile-time permutation rather than a runtime uniform branch -- see deferredUtil.glsl --
+// so toggling RenderSpecularAA requires the shader reload wired up in llviewercontrol.cpp.
+static void add_specular_aa_permutation(LLGLSLShader* shader)
+{
+    static LLCachedControl<bool> specular_aa(gSavedSettings, "RenderSpecularAA", false);
+
+    if (specular_aa)
+    {
+        shader->addPermutation("SPECULAR_AA", "1");
+    }
+}
+
+// Single source of truth for the sun-shadow gate: shader level plus RenderShadowDetail. Callers
+// also read the returned bool for LLGLSLShaderFeatures::hasShadows, so this returns the value
+// rather than adding the permutation directly -- see add_sun_shadow_permutation() below.
+static bool sun_shadow_enabled(S32 deferred_shader_level)
+{
+    static LLCachedControl<S32> shadow_detail(gSavedSettings, "RenderShadowDetail", 0);
+    return deferred_shader_level > 1 && shadow_detail > 0;
+}
+
+static void add_sun_shadow_permutation(LLGLSLShader* shader, bool use_sun_shadow)
+{
+    if (use_sun_shadow)
+    {
+        shader->addPermutation("HAS_SUN_SHADOW", "1");
+    }
+}
+
+static void add_bloom_halation_permutation(LLGLSLShader* shader)
+{
+    static LLCachedControl<bool> halation(gSavedSettings, "RenderBloomHalation", false);
+
+    if (halation)
+    {
+        shader->addPermutation("BLOOM_HALATION", "1");
+    }
+}
+
 // Map an indexed GLTF PBR program's per-slot samplers to texture units. Slot s
 // uses base color unit s; when full (the GBuffer-write shaders, not the shadow
 // alpha-mask shader) it also uses normal N+s, ORM 2N+s and emissive 3N+s. Inactive
@@ -997,8 +1036,7 @@ bool LLViewerShaderMgr::loadShadersWater()
     bool success = true;
     bool terrainWaterSuccess = true;
 
-    bool use_sun_shadow = mShaderLevel[SHADER_DEFERRED] > 1 &&
-        gSavedSettings.getS32("RenderShadowDetail") > 0;
+    bool use_sun_shadow = sun_shadow_enabled(mShaderLevel[SHADER_DEFERRED]);
 
     if (mShaderLevel[SHADER_WATER] == 0)
     {
@@ -1027,10 +1065,7 @@ bool LLViewerShaderMgr::loadShadersWater()
             gWaterProgram.addPermutation("TRANSPARENT_WATER", "1");
         }
 
-        if (use_sun_shadow)
-        {
-            gWaterProgram.addPermutation("HAS_SUN_SHADOW", "1");
-        }
+        add_sun_shadow_permutation(&gWaterProgram, use_sun_shadow);
 
         gWaterProgram.mShaderGroup = LLGLSLShader::SG_WATER;
         gWaterProgram.mShaderLevel = mShaderLevel[SHADER_WATER];
@@ -1141,8 +1176,6 @@ bool LLViewerShaderMgr::loadShadersEffects()
         }
     }
 
-    const bool bloom_halation = gSavedSettings.getBOOL("RenderBloomHalation");
-
     if (success)
     {
         gBloomExtractProgram.mName = "HDR Bloom Extract";
@@ -1150,10 +1183,7 @@ bool LLViewerShaderMgr::loadShadersEffects()
         gBloomExtractProgram.mShaderFiles.push_back(make_pair("effects/glowExtractV.glsl", GL_VERTEX_SHADER));
         gBloomExtractProgram.mShaderFiles.push_back(make_pair("effects/bloomExtractF.glsl", GL_FRAGMENT_SHADER));
         gBloomExtractProgram.mShaderLevel = mShaderLevel[SHADER_EFFECT];
-        if (bloom_halation)
-        {
-            gBloomExtractProgram.addPermutation("BLOOM_HALATION", "1");
-        }
+        add_bloom_halation_permutation(&gBloomExtractProgram);
         success = gBloomExtractProgram.createShader();
     }
 
@@ -1195,10 +1225,7 @@ bool LLViewerShaderMgr::loadShadersEffects()
         gBloomCompositeProgram.mShaderFiles.push_back(make_pair("effects/glowExtractV.glsl", GL_VERTEX_SHADER));
         gBloomCompositeProgram.mShaderFiles.push_back(make_pair("effects/bloomCompositeF.glsl", GL_FRAGMENT_SHADER));
         gBloomCompositeProgram.mShaderLevel = mShaderLevel[SHADER_EFFECT];
-        if (bloom_halation)
-        {
-            gBloomCompositeProgram.addPermutation("BLOOM_HALATION", "1");
-        }
+        add_bloom_halation_permutation(&gBloomCompositeProgram);
         success = gBloomCompositeProgram.createShader();
     }
 
@@ -1209,11 +1236,7 @@ bool LLViewerShaderMgr::loadShadersEffects()
 bool LLViewerShaderMgr::loadShadersDeferred()
 {
     LL_PROFILE_ZONE_SCOPED;
-    bool use_sun_shadow = mShaderLevel[SHADER_DEFERRED] > 1 &&
-        gSavedSettings.getS32("RenderShadowDetail") > 0;
-    // Compile-time permutation rather than a runtime uniform branch -- see deferredUtil.glsl --
-    // so toggling RenderSpecularAA requires the shader reload wired up in llviewercontrol.cpp.
-    bool specular_aa = gSavedSettings.getBOOL("RenderSpecularAA");
+    bool use_sun_shadow = sun_shadow_enabled(mShaderLevel[SHADER_DEFERRED]);
 
     if (mShaderLevel[SHADER_DEFERRED] == 0)
     {
@@ -1435,16 +1458,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
                 gDeferredMaterialProgram[i].addPermutation("HAS_ALPHA_MASK", "1");
             }
 
-            if (use_sun_shadow)
-            {
-                gDeferredMaterialProgram[i].addPermutation("HAS_SUN_SHADOW", "1");
-            }
-
-            if (specular_aa)
-            {
-                gDeferredMaterialProgram[i].addPermutation("SPECULAR_AA", "1");
-            }
-
+            add_sun_shadow_permutation(&gDeferredMaterialProgram[i], use_sun_shadow);
+            add_specular_aa_permutation(&gDeferredMaterialProgram[i]);
             add_common_permutations(&gDeferredMaterialProgram[i]);
 
             gDeferredMaterialProgram[i].mFeatures.hasSrgb = true;
@@ -1696,11 +1711,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         shader->addPermutation("USE_VERTEX_COLOR", "1");
 
         add_common_permutations(shader);
-
-        if (use_sun_shadow)
-        {
-            shader->addPermutation("HAS_SUN_SHADOW", "1");
-        }
+        add_sun_shadow_permutation(shader, use_sun_shadow);
 
         shader->mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = shader->createShader(LLGLSLShader::VARIANT_RIGGED | LLGLSLShader::VARIANT_CLASSIC | mirror_variant());
@@ -1871,11 +1882,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
 
         gDeferredLightProgram.clearPermutations();
 
-        if (specular_aa)
-        {
-            gDeferredLightProgram.addPermutation("SPECULAR_AA", "1");
-        }
-
+        add_specular_aa_permutation(&gDeferredLightProgram);
         add_common_permutations(&gDeferredLightProgram);
 
         success = gDeferredLightProgram.createShader(LLGLSLShader::VARIANT_CLASSIC);
@@ -1899,11 +1906,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             gDeferredMultiLightProgram[i].mShaderLevel = mShaderLevel[SHADER_DEFERRED];
             gDeferredMultiLightProgram[i].addPermutation("LIGHT_COUNT", llformat("%d", i+1));
 
-            if (specular_aa)
-            {
-                gDeferredMultiLightProgram[i].addPermutation("SPECULAR_AA", "1");
-            }
-
+            add_specular_aa_permutation(&gDeferredMultiLightProgram[i]);
             add_common_permutations(&gDeferredMultiLightProgram[i]);
 
             success = gDeferredMultiLightProgram[i].createShader(LLGLSLShader::VARIANT_CLASSIC);
@@ -1925,11 +1928,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredSpotLightProgram.mShaderFiles.push_back(make_pair("deferred/spotLightF.glsl", GL_FRAGMENT_SHADER));
         gDeferredSpotLightProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
 
-        if (specular_aa)
-        {
-            gDeferredSpotLightProgram.addPermutation("SPECULAR_AA", "1");
-        }
-
+        add_specular_aa_permutation(&gDeferredSpotLightProgram);
         add_common_permutations(&gDeferredSpotLightProgram);
 
         success = gDeferredSpotLightProgram.createShader(LLGLSLShader::VARIANT_CLASSIC);
@@ -1951,11 +1950,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredMultiSpotLightProgram.mShaderFiles.push_back(make_pair("deferred/spotLightF.glsl", GL_FRAGMENT_SHADER));
         gDeferredMultiSpotLightProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
 
-        if (specular_aa)
-        {
-            gDeferredMultiSpotLightProgram.addPermutation("SPECULAR_AA", "1");
-        }
-
+        add_specular_aa_permutation(&gDeferredMultiSpotLightProgram);
         add_common_permutations(&gDeferredMultiSpotLightProgram);
 
         success = gDeferredMultiSpotLightProgram.createShader(LLGLSLShader::VARIANT_CLASSIC);
@@ -2057,11 +2052,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             shader->addPermutation("USE_VERTEX_COLOR", "1");
             shader->addPermutation("HAS_ALPHA_MASK", "1");
             shader->addPermutation("USE_INDEXED_TEX", "1");
-            if (use_sun_shadow)
-            {
-                shader->addPermutation("HAS_SUN_SHADOW", "1");
-            }
-
+            add_sun_shadow_permutation(shader, use_sun_shadow);
             add_common_permutations(shader);
 
             if (hud)
@@ -2123,11 +2114,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         // ran in did not encode either.
         shader->addPermutation("LINEAR_DIFFUSE", "1");
 
-        if (use_sun_shadow)
-        {
-            shader->addPermutation("HAS_SUN_SHADOW", "1");
-        }
-
+        add_sun_shadow_permutation(shader, use_sun_shadow);
         add_common_permutations(shader);
 
         shader->mShaderLevel = mShaderLevel[SHADER_DEFERRED];
@@ -2385,15 +2372,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
 
         gDeferredSoftenProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
 
-        if (use_sun_shadow)
-        {
-            gDeferredSoftenProgram.addPermutation("HAS_SUN_SHADOW", "1");
-        }
-
-        if (specular_aa)
-        {
-            gDeferredSoftenProgram.addPermutation("SPECULAR_AA", "1");
-        }
+        add_sun_shadow_permutation(&gDeferredSoftenProgram, use_sun_shadow);
+        add_specular_aa_permutation(&gDeferredSoftenProgram);
 
         if (gSavedSettings.getBOOL("RenderDeferredSSAO"))
         { //if using SSAO, take screen space light map into account as if shadows are enabled
@@ -2707,10 +2687,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredAvatarAlphaProgram.addPermutation("LINEAR_DIFFUSE", "1");
         gDeferredAvatarAlphaProgram.addPermutation("USE_DIFFUSE_TEX", "1");
         gDeferredAvatarAlphaProgram.addPermutation("IS_AVATAR_SKIN", "1");
-        if (use_sun_shadow)
-        {
-            gDeferredAvatarAlphaProgram.addPermutation("HAS_SUN_SHADOW", "1");
-        }
+        add_sun_shadow_permutation(&gDeferredAvatarAlphaProgram, use_sun_shadow);
 
         gDeferredAvatarAlphaProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
 
@@ -3229,8 +3206,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     // bloom alpha channel when RenderBloomHalation is on — both settings trigger
     // shader rebuilds, so reading them at compile time stays in sync with the
     // bloom pyramid format.
-    const bool hdr_enabled         = gSavedSettings.getBOOL("RenderHDREnabled");
-    const bool bloom_halation_perm = gSavedSettings.getBOOL("RenderBloomHalation");
+    const bool hdr_enabled = gSavedSettings.getBOOL("RenderHDREnabled");
 
     if (success)
     {
@@ -3249,10 +3225,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         else
         {
             gCGGammaProgram.addPermutation("BLOOM_COMPOSITE", "1");
-            if (bloom_halation_perm)
-            {
-                gCGGammaProgram.addPermutation("BLOOM_HALATION", "1");
-            }
+            add_bloom_halation_permutation(&gCGGammaProgram);
         }
         gCGGammaProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gCGGammaProgram.createShader();
@@ -3277,10 +3250,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         else
         {
             gCGLegacyGammaProgram.addPermutation("BLOOM_COMPOSITE", "1");
-            if (bloom_halation_perm)
-            {
-                gCGLegacyGammaProgram.addPermutation("BLOOM_HALATION", "1");
-            }
+            add_bloom_halation_permutation(&gCGLegacyGammaProgram);
         }
         gCGLegacyGammaProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gCGLegacyGammaProgram.createShader();
@@ -3306,10 +3276,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         else
         {
             gCGColorgradeGammaProgram.addPermutation("BLOOM_COMPOSITE", "1");
-            if (bloom_halation_perm)
-            {
-                gCGColorgradeGammaProgram.addPermutation("BLOOM_HALATION", "1");
-            }
+            add_bloom_halation_permutation(&gCGColorgradeGammaProgram);
         }
         gCGColorgradeGammaProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success                                = gCGColorgradeGammaProgram.createShader();
@@ -3336,10 +3303,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         else
         {
             gCGColorgradeLegacyGammaProgram.addPermutation("BLOOM_COMPOSITE", "1");
-            if (bloom_halation_perm)
-            {
-                gCGColorgradeLegacyGammaProgram.addPermutation("BLOOM_HALATION", "1");
-            }
+            add_bloom_halation_permutation(&gCGColorgradeLegacyGammaProgram);
         }
         gCGColorgradeLegacyGammaProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gCGColorgradeLegacyGammaProgram.createShader();
@@ -3365,10 +3329,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         else
         {
             gCGTonemapProgram.addPermutation("BLOOM_COMPOSITE", "1");
-            if (bloom_halation_perm)
-            {
-                gCGTonemapProgram.addPermutation("BLOOM_HALATION", "1");
-            }
+            add_bloom_halation_permutation(&gCGTonemapProgram);
         }
         gCGTonemapProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gCGTonemapProgram.createShader();
@@ -3395,10 +3356,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         else
         {
             gCGTonemapLegacyGammaProgram.addPermutation("BLOOM_COMPOSITE", "1");
-            if (bloom_halation_perm)
-            {
-                gCGTonemapLegacyGammaProgram.addPermutation("BLOOM_HALATION", "1");
-            }
+            add_bloom_halation_permutation(&gCGTonemapLegacyGammaProgram);
         }
         gCGTonemapLegacyGammaProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gCGTonemapLegacyGammaProgram.createShader();
@@ -3426,10 +3384,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         else
         {
             gCGTonemapColorgradeProgram.addPermutation("BLOOM_COMPOSITE", "1");
-            if (bloom_halation_perm)
-            {
-                gCGTonemapColorgradeProgram.addPermutation("BLOOM_HALATION", "1");
-            }
+            add_bloom_halation_permutation(&gCGTonemapColorgradeProgram);
         }
         gCGTonemapColorgradeProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gCGTonemapColorgradeProgram.createShader();
@@ -3458,10 +3413,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         else
         {
             gCGTonemapColorgradeLegacyGammaProgram.addPermutation("BLOOM_COMPOSITE", "1");
-            if (bloom_halation_perm)
-            {
-                gCGTonemapColorgradeLegacyGammaProgram.addPermutation("BLOOM_HALATION", "1");
-            }
+            add_bloom_halation_permutation(&gCGTonemapColorgradeLegacyGammaProgram);
         }
         gCGTonemapColorgradeLegacyGammaProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gCGTonemapColorgradeLegacyGammaProgram.createShader();
