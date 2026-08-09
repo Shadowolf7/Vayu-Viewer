@@ -102,6 +102,7 @@ option(USE_OPENAL "Enable support for the OpenAL audio engine" OFF)
 option(USE_SSE4_2 "Use SSE4.2/x86-64-v2 instruction sets (x86_64 only)" OFF)
 option(USE_AVX "Use AVX/x86-64-v2+avx instruction sets (x86_64 only)" OFF)
 option(USE_AVX2 "Use AVX2/x86_64-v3 instruction sets (x86_64 only)" ON)
+option(USE_MARCH_NATIVE "Use -march=native/-mtune=native for this machine's exact CPU (Linux only; overrides USE_AVX2/USE_AVX/USE_SSE4_2; not portable to other CPUs)" OFF)
 
 # Sanitizers (Mac and Linux Only)
 option(ENABLE_ASAN "Enable Address Sanitizer" OFF)

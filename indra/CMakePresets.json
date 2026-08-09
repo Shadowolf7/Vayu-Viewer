@@ -72,6 +72,27 @@
       ]
     },
     {
+      "name": "ninja-perf",
+      "displayName": "Ninja Multi-Config (Clang, FMOD, native march, LTO)",
+      "inherits": [
+        "ninja-os",
+        "linux"
+      ],
+      "cacheVariables": {
+        "USE_FMODSTUDIO": true,
+        "FMODSTUDIO_SDK_DIR": "/home/roger/Projects/Alchemy/fmodstudioapi20314linux",
+        "USE_LTO": true,
+        "USE_MARCH_NATIVE": true,
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++",
+        "VCPKG_TARGET_TRIPLET": "x64-linux-alchemy-clang-release-native",
+        "CMAKE_LINKER_TYPE": "DEFAULT",
+        "CMAKE_EXE_LINKER_FLAGS": "-fuse-ld=/home/roger/Projects/Vayu-Viewer/.claude/worktrees/perf-native-lto-fmod-clang/.tools/mold-fixed/bin/mold",
+        "CMAKE_SHARED_LINKER_FLAGS": "-fuse-ld=/home/roger/Projects/Vayu-Viewer/.claude/worktrees/perf-native-lto-fmod-clang/.tools/mold-fixed/bin/mold",
+        "CMAKE_MODULE_LINKER_FLAGS": "-fuse-ld=/home/roger/Projects/Vayu-Viewer/.claude/worktrees/perf-native-lto-fmod-clang/.tools/mold-fixed/bin/mold"
+      }
+    },
+    {
       "name": "vs2022-os",
       "displayName": "Visual Studio 2022",
       "inherits": [
@@ -247,6 +268,11 @@
     {
       "name": "ninja-release",
       "configurePreset": "ninja",
+      "configuration": "Release"
+    },
+    {
+      "name": "ninja-perf-release",
+      "configurePreset": "ninja-perf",
       "configuration": "Release"
     },
     {
@@ -457,6 +483,19 @@
         {
           "type": "build",
           "name": "ninja-release"
+        }
+      ]
+    },
+    {
+      "name": "ninja-perf-release",
+      "steps": [
+        {
+          "type": "configure",
+          "name": "ninja-perf"
+        },
+        {
+          "type": "build",
+          "name": "ninja-perf-release"
         }
       ]
     },
