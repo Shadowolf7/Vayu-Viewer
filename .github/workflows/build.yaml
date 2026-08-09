@@ -24,7 +24,7 @@ on:
   pull_request:
   push:
     branches: ["main", "release/*", "beta/*", "project/*"]
-    tags: ["Alchemy*"]
+    tags: ["Vayu*"]
 
 permissions:
   contents: read
@@ -43,12 +43,12 @@ jobs:
       viewer_channel: ${{ steps.setvar.outputs.viewer_channel }}
       is_private_build: ${{ steps.setvar.outputs.is_private_build }}
     env:
-      # Build with a tag like "Alchemy#abcdef0" to generate a release page
+      # Build with a tag like "Vayu#abcdef0" to generate a release page
       # (used for builds we are planning to deploy).
       # When you want to use a string variable as a workflow YAML boolean, it's
       # important to ensure it's the empty string when false. If you omit || '',
       # its value when false is "false", which is interpreted as true.
-      RELEASE_RUN: ${{ (github.event.inputs.release_run || github.ref_type == 'tag' && startsWith(github.ref_name, 'Alchemy')) && 'Y' || '' }}
+      RELEASE_RUN: ${{ (github.event.inputs.release_run || github.ref_type == 'tag' && startsWith(github.ref_name, 'Vayu')) && 'Y' || '' }}
       FROM_FORK: ${{ github.event.pull_request.head.repo.fork }}
     steps:
       - name: Checkout code
@@ -72,7 +72,7 @@ jobs:
         shell: bash
         env:
           BUILD_VCS_BRANCH: ${{ steps.which-branch.outputs.branch }}
-          VIEWER_CHANNEL_BASE: "Alchemy"
+          VIEWER_CHANNEL_BASE: "Vayu"
         run: |
           echo "release_run=$RELEASE_RUN" >> "$GITHUB_OUTPUT"
 
