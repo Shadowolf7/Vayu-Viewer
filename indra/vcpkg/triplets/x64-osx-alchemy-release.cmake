@@ -19,8 +19,18 @@ set(VCPKG_OSX_DEPLOYMENT_TARGET 14.0)
 # driver rejects outright ("unsupported argument 'x86-64-v3' to option
 # '-march='"). The individual feature flags are recognized on every clang
 # target, including Darwin.
-set(VCPKG_C_FLAGS "-msse4.2 -mavx -mavx2 -mfma -mbmi -mbmi2 -mf16c -mlzcnt -mmovbe")
-set(VCPKG_CXX_FLAGS "-msse4.2 -mavx -mavx2 -mfma -mbmi -mbmi2 -mf16c -mlzcnt -mmovbe")
+#
+# -arch x86_64 is included here too, not just via VCPKG_OSX_ARCHITECTURES
+# above: that variable only reaches CMAKE_OSX_ARCHITECTURES, which CMake
+# applies as a per-target property on normal compiled targets. Some ports
+# (e.g. libpng's symbols.out generation) invoke the compiler directly from
+# a `cmake -P` script-mode custom command with no target to attach that
+# property to, so on GitHub's Apple Silicon runners (macos-26) it silently
+# falls back to the host's native arm64 — which then rejects these x86-only
+# -m flags. Forcing -arch x86_64 into the flags themselves makes every
+# compiler invocation target x64 regardless of how the port builds.
+set(VCPKG_C_FLAGS "-arch x86_64 -msse4.2 -mavx -mavx2 -mfma -mbmi -mbmi2 -mf16c -mlzcnt -mmovbe")
+set(VCPKG_CXX_FLAGS "-arch x86_64 -msse4.2 -mavx -mavx2 -mfma -mbmi -mbmi2 -mf16c -mlzcnt -mmovbe")
 
 if(PORT MATCHES "hunspell")
     set(VCPKG_LIBRARY_LINKAGE dynamic)
