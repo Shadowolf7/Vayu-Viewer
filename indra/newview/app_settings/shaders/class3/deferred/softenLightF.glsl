@@ -84,6 +84,7 @@ void applyLegacyEnv(inout vec3 color, vec3 legacyenv, vec4 spec, vec3 pos, vec3 
 float getDepth(vec2 pos_screen);
 
 vec3 linear_to_srgb(vec3 c);
+float unpackRoughness(vec2 p);
 vec3 srgb_to_linear(vec3 c);
 
 uniform vec4 waterPlane;
@@ -117,6 +118,7 @@ vec3 pbrBaseLight(vec3 diffuseColor,
                   vec3 atten);
 
 GBufferInfo getGBuffer(vec2 screenpos);
+float horizonOcclusion(vec3 r, vec3 geometricNormal);
 vec3 clampHDRRange(vec3 color);
 
 void adjustIrradiance(inout vec3 irradiance, float ambocc)
@@ -126,6 +128,33 @@ void adjustIrradiance(inout vec3 irradiance, float ambocc)
 
 #if defined(HAS_SSAO)
     irradiance = mix(ssao_effect_mat * min(irradiance.rgb*ssao_irradiance_scale, vec3(ssao_irradiance_max)), irradiance.rgb, ambocc);
+#endif
+}
+
+// The screen-space occlusion as a scalar visibility, on the response curve adjustIrradiance
+// gives the diffuse lobe.
+//
+// The diffuse path spends this buffer through ssao_irradiance_scale and the value factor of
+// ssao_effect_mat, which is what "SSAO strength" means to anyone turning those knobs. Handing
+// the specular lobe the raw buffer instead left reflections at full occlusion however far down
+// the strength was dialled -- one buffer, two different curves, and only one of them responding
+// to the settings.
+//
+// The value factor is the matrix's row sum: it takes grey to grey scaled by exactly that, which
+// is the whole of what it does to magnitude. Its other factor is saturation, which is chroma and
+// has no place in a visibility scalar.
+//
+// ssao_irradiance_max is deliberately not folded in either. It bounds a radiometric quantity in
+// the diffuse expression -- there is nothing for it to bound here, and the value it would have
+// to be compared against is radiance rather than irradiance.
+float ssaoVisibility(float ambocc)
+{
+#if defined(HAS_SSAO)
+    float value_factor = dot(ssao_effect_mat * vec3(1.0), vec3(1.0 / 3.0));
+    float occluded = clamp(ssao_irradiance_scale * value_factor, 0.0, 1.0);
+    return clamp(mix(occluded, 1.0, ambocc), 0.0, 1.0);
+#else
+    return 1.0;
 #endif
 }
 
@@ -188,7 +217,7 @@ void main()
     if (GET_GBUFFER_FLAG(gb.gbufferFlag, GBUFFER_FLAG_HAS_PBR))
     {
         vec3 orm = spec.rgb;
-        float perceptualRoughness = orm.g;
+        float perceptualRoughness = unpackRoughness(spec.ga);
         float metallic = orm.b;
         float ao = orm.r;
 
@@ -199,14 +228,28 @@ void main()
 
         sampleReflectionProbes(irradiance, radiance, tc, pos.xyz, gb.normal, gloss, false, amblit_linear);
 
-        adjustIrradiance(irradiance, ambocc);
+        // A normal map can aim the reflection below the surface it sits on, where the probe
+        // returns radiance arriving through the geometry. The forward path tests against
+        // vary_normal; here the geometric normal comes out of the GBuffer channel that used to
+        // hold environment intensity.
+        radiance *= horizonOcclusion(reflect(normalize(pos.xyz), gb.normal), gb.geoNormal);
+
+        // One ambient visibility for the whole shading model, rather than adjustIrradiance
+        // multiplying the screen-space half into irradiance before the fact. The two terms
+        // measure the same thing -- how much of the ambient hemisphere this fragment can see --
+        // at two different scales, so they combine by taking the stronger rather than by
+        // multiplying, which would count the overlap they share twice.
+        //
+        // adjustIrradiance stays on the legacy branch below, where its saturation matrix and
+        // absolute clamp are part of the intended look rather than an obstacle to a physical one.
+        float visibility = min(ao, ssaoVisibility(ambocc));
 
         vec3 diffuseColor = vec3(0.0);
         vec3 specularColor = vec3(0.0);
         calcDiffuseSpecular(baseColor.rgb, metallic, diffuseColor, specularColor);
 
         vec3 v = -normalize(pos.xyz);
-        color = pbrBaseLight(diffuseColor, specularColor, metallic, v, gb.normal, perceptualRoughness, light_dir, sunlit_linear, scol, radiance, irradiance, colorEmissive, ao, additive, atten);
+        color = pbrBaseLight(diffuseColor, specularColor, metallic, v, gb.normal, perceptualRoughness, light_dir, sunlit_linear, scol, radiance, irradiance, colorEmissive, visibility, additive, atten);
     }
     else if (GET_GBUFFER_FLAG(gb.gbufferFlag, GBUFFER_FLAG_HAS_HDRI))
     {

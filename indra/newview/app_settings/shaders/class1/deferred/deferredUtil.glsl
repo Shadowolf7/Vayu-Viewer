@@ -84,13 +84,30 @@ uniform vec2 screen_res;
 const float M_PI = 3.14159265;
 const float ONE_OVER_PI = 0.3183098861;
 
+// A floor on perceptual roughness. This is what bounds the specular peak of a punctual light,
+// which is otherwise unbounded -- a delta light has no solid angle, and D goes as
+// 1/(pi*alpha^2), so at alpha -> 0 a single pixel takes an arbitrarily large value and flickers
+// as the camera moves.
+//
+// It cannot be lowered on the strength of the specular antialiasing in globalF.glsl. That
+// measures normal VARIANCE, so it widens roughness exactly where a minified normal map lost
+// detail and not at all on a flat polished surface -- which is the case this floor exists for.
+// The two cover different surfaces; neither substitutes for the other.
+//
+// The sun is the exception and does not need it: sunDiscRoughness widens by the solar disc's
+// real angular size, which is a physical bound rather than an invented one.
 const float MIN_PBR_ROUGHNESS = 0.045;
+
+// PUNCTUAL_LIGHT_SCALE and MAX_PUNCTUAL_RADIANCE are injected by llshadermgr.cpp alongside the
+// GBuffer flags. Both have to hold across separately compiled objects, which a global const
+// cannot do.
 
 vec3 srgb_to_linear(vec3 cs);
 vec3 linear_to_srgb(vec3 cs);
 vec3 atmosFragLightingLinear(vec3 light, vec3 additive, vec3 atten);
 
 vec4 decodeNormal(vec4 norm);
+vec3 unpackGeoNormal(float v);
 
 vec3 clampHDRRange(vec3 color)
 {
@@ -98,7 +115,12 @@ vec3 clampHDRRange(vec3 color)
     // There are situations where the color range will go to something insane - potentially producing infs and NaNs even.
     // This is a safety measure to prevent that.
     // -Geenz 2025-03-05
-    color = mix(color, vec3(1), isinf(color));
+    // Infinity becomes the largest value the frame can carry, not 1.0. Substituting 1.0 turns
+    // the brightest pixel in a linear frame into mid grey, so an overflow reads as a dark hole
+    // exactly where something should be searing -- a failure that inverts the error rather than
+    // bounding it. NaN still goes to black, which is the only safe answer for a value that
+    // carries no magnitude at all.
+    color = mix(color, vec3(MAX_PUNCTUAL_RADIANCE), isinf(color));
     color = mix(color, vec3(0.0), isnan(color));
     return color;
 }
@@ -233,6 +255,17 @@ vec4 getNormRaw(vec2 screenpos)
 {
     vec4 norm = texture(normalMap, screenpos.xy);
     return norm;
+}
+
+// The un-perturbed surface normal, out of the blue channel the normal attachment shares between
+// environment intensity and a packed geometric normal. A legacy fragment stored the former and
+// has no geometric normal to give, so it gets the shading normal back and any test against it
+// degenerates to a no-op rather than needing a guard at every call site.
+vec3 getGeoNorm(vec2 screenpos)
+{
+    vec4 raw = getNormRaw(screenpos);
+    return GET_GBUFFER_FLAG(raw.w, GBUFFER_FLAG_HAS_PBR) ? unpackGeoNormal(raw.b)
+                                                         : decodeNormal(raw).xyz;
 }
 
 // Convert a stored screen-depth sample to its NDC z under the active depth convention.
@@ -472,27 +505,174 @@ float computeSpecularAO(float NoV, float ao, float roughness)
     return clamp(pow(NoV + ao, exp2(-16.0 * roughness - 1.0)) - 1.0 + ao, 0.0, 1.0);
 }
 
+// Ambient occlusion as a colour rather than a scalar (Jimenez et al. 2016, "Practical Real-Time
+// Strategies for Accurate Indirect Occlusion"; this is the polynomial fit Filament ships).
+//
+// Multiplying irradiance by a single occlusion figure models light that entered the cavity and
+// never came back out. Real light entering a cavity bounces, and every bounce is a multiply by
+// the surface's own albedo, so what leaves is tinted and there is more of it than one multiply
+// allows. The scalar form therefore drives a saturated surface toward neutral black in its own
+// creases -- red cloth goes grey in the folds instead of a deeper red -- and the error is worst
+// where the occlusion is strongest, which is where the eye is looking.
+//
+// Per channel, so a dark channel stays dark and a bright one recovers. Never darker than the
+// scalar it replaces.
+vec3 gtaoMultiBounce(float visibility, vec3 albedo)
+{
+    vec3 a =  2.0404 * albedo - 0.3324;
+    vec3 b = -4.7951 * albedo + 0.6417;
+    vec3 c =  2.7552 * albedo + 0.6903;
+
+    return max(vec3(visibility), ((visibility * a + b) * visibility + c) * visibility);
+}
+
+// Clamp radiance to a ceiling without turning it a different colour on the way.
+//
+// A per-channel clamp lets one channel saturate while the others keep climbing, so a highlight
+// pushed past the ceiling drifts toward whichever primary saturated first -- a bright warm
+// specular goes orange, then red. Scaling by the largest channel holds the ratios, so the
+// colour is preserved exactly and only the magnitude gives.
+vec3 clampRadiance(vec3 c)
+{
+    c = max(c, vec3(0));
+    float peak = max(max(c.r, c.g), c.b);
+    return peak > MAX_PUNCTUAL_RADIANCE ? c * (MAX_PUNCTUAL_RADIANCE / peak) : c;
+}
+
+// Multiple-scattering compensation for the punctual specular lobe (Turquin 2019, "Practical
+// multiple scattering compensation for microfacet models").
+//
+// Single-scatter GGX returns only the light that leaves the microsurface after one bounce, and
+// the rest is dropped rather than redistributed. The loss grows with roughness and with F0, so
+// it is worst on rough metal -- the same deficit pbrIbl compensates for, and it has to be
+// compensated on this side too or a rough metal brightens correctly under a probe and stays
+// dark under a lamp.
+//
+// brdf.x + brdf.y is the LUT's directional albedo at F0 = 1, which is exactly the single-
+// scatter energy the lobe did return. It reaches 1 at roughness 0, so a mirror gets a
+// compensation of 1 and nothing changes there.
+//
+// Constant across the lights hitting a fragment, so callers evaluate it once and apply it to
+// the accumulated specular rather than paying a LUT fetch per light.
+vec3 pbrEnergyCompensation(vec3 specularColor, float perceptualRoughness, float nv)
+{
+    perceptualRoughness = max(perceptualRoughness, MIN_PBR_ROUGHNESS);
+    vec2 brdf = BRDF(clamp(nv, 0.0, 1.0), 1.0 - perceptualRoughness);
+    float Ess = max(brdf.x + brdf.y, 1e-4);
+    return 1.0 + specularColor * (1.0 / Ess - 1.0);
+}
+
+// Bend a reflection lookup from the mirror direction toward the normal as the surface
+// roughens (Lagarde and de Rousiers 2014, "Moving Frostbite to PBR", listing 21).
+//
+// The mirror direction is where a perfectly smooth surface reflects from, but a GGX lobe on a
+// rough surface is not centred there -- it leans toward the normal, and increasingly so with
+// roughness. Sampling the prefiltered probe along the mirror direction therefore fetches from
+// slightly the wrong place on exactly the surfaces whose lobe is widest, which reads as
+// reflections sliding across curvature.
+vec3 getSpecularDominantDir(vec3 n, vec3 r, float perceptualRoughness)
+{
+    float smoothness = 1.0 - perceptualRoughness;
+    float lerpFactor = smoothness * (sqrt(smoothness) + perceptualRoughness);
+    return normalize(mix(n, r, lerpFactor));
+}
+
+// Attenuate a reflection that a normal map has aimed into the surface it sits on.
+//
+// Perturbing the shading normal can point the reflection vector below the geometric horizon,
+// where the probe still returns whatever radiance lies that way -- light arriving through the
+// ground the surface is resting on. Filament's form: fade quadratically as the reflection
+// approaches the geometric plane, and cut it entirely once past.
+float horizonOcclusion(vec3 r, vec3 geometricNormal)
+{
+    // Both normalized here rather than trusted from the caller. The term is a dot product read
+    // as a cosine, so an unnormalized reflection vector scales it by that vector's length -- and
+    // the natural thing to hand this is an eye-space reflect(), whose length is the distance to
+    // the camera. That turns a fixed geometric relationship into a distance-dependent one.
+    vec3 rn = normalize(r);
+    vec3 gn = normalize(geometricNormal);
+
+    // Clamped low as well as high, before the square. Squaring is only a falloff shape while the
+    // value is in [0,1]; below zero it turns the sign around and grows, so a reflection further
+    // under the horizon would brighten rather than darken -- the failure is silent, and it is
+    // worst exactly where the term was supposed to bite hardest.
+    float horizon = clamp(1.0 + dot(rn, gn), 0.0, 1.0);
+    return horizon * horizon;
+}
+
+// Widen a specular lobe to account for the sun being a disc rather than a point (Karis 2013,
+// "Real Shading in Unreal Engine 4" -- the sphere-light normalization).
+//
+// A delta light gives a smooth surface an infinitely small highlight, which is why one has to
+// be floored into existence by MIN_PBR_ROUGHNESS. The sun subtends about half a degree, so its
+// highlight has a real angular size; giving it one lets the roughness floor stay low without
+// the sun's own reflection aliasing.
+float sunDiscRoughness(float perceptualRoughness)
+{
+    // Angular radius of the solar disc in radians -- about 0.27 degrees.
+    const float SUN_ANGULAR_RADIUS = 0.00465;
+    float alpha = perceptualRoughness * perceptualRoughness;
+    return sqrt(clamp(alpha + SUN_ANGULAR_RADIUS, 0.0, 1.0));
+}
+
 // set colorDiffuse and colorSpec to the results of GLTF PBR style IBL
 void pbrIbl(vec3 diffuseColor,
             vec3 specularColor,
             vec3 radiance, // radiance map sample
             vec3 irradiance, // irradiance map sample
-            float ao,       // ambient occlusion factor
+            float ao,       // ambient visibility: the material's own occlusion combined with
+                            // whatever screen-space term the caller has, already on that
+                            // caller's strength curve. One number, spent once per lobe.
             float nv,       // normal dot view vector
             float perceptualRough,
             out vec3 diffuseOut,
             out vec3 specularOut)
 {
+    nv = clamp(nv, 0.0, 1.0);
+
     // retrieve a scale and bias to F0. See [1], Figure 3
-    vec2 brdf = BRDF(clamp(nv, 0, 1), 1.0-perceptualRough);
-    vec3 diffuseLight = irradiance;
-    vec3 specularLight = radiance;
+    vec2 brdf = BRDF(nv, 1.0-perceptualRough);
 
-    vec3 diffuse = diffuseLight * diffuseColor;
-    vec3 specular = specularLight * (specularColor * brdf.x + brdf.y);
+    // Multiple-scattering IBL, Fdez-Aguera 2019, "A Multiple-Scattering Microfacet Model for
+    // Real-Time Image-Based Lighting".
+    //
+    // The split-sum approximation integrates one bounce off the microsurface and discards
+    // everything that leaves after a second or later one. That loss grows with roughness and
+    // with F0, so it is worst exactly where it is most visible: rough metal, which reads far
+    // too dark under a bright probe. FmsEms is the missing energy returned.
+    //
+    // It also settles how the two lobes divide the incoming light. k_D is what the specular
+    // lobe did not take, derived per-pixel from the surface's own directional albedo, which
+    // is why calcDiffuseSpecular hands the full base colour to the diffuse term instead of
+    // pre-splitting it by a constant.
+    vec3 Fr = max(vec3(1.0 - perceptualRough), specularColor) - specularColor;
+    vec3 k_S = specularColor + Fr * pow(1.0 - nv, 5.0);
+    vec3 FssEss = k_S * brdf.x + brdf.y;
 
-    diffuseOut = diffuse * ao;
-    specularOut = specular * computeSpecularAO(nv, ao, perceptualRough * perceptualRough);
+    float Ems = 1.0 - (brdf.x + brdf.y);
+    vec3 F_avg = specularColor + (1.0 - specularColor) / 21.0;
+    // The denominator is bounded away from zero for any real LUT sample; the guard costs
+    // nothing and keeps a degenerate one (a white metal against a fully absorbing tap) from
+    // reaching the rest of the frame as an inf.
+    vec3 FmsEms = Ems * FssEss * F_avg / max(vec3(1.0) - F_avg * Ems, vec3(1e-4));
+    vec3 k_D = diffuseColor * (1.0 - FssEss + FmsEms);
+
+    // Both lobes off the one visibility.
+    //
+    // The screen-space term used to be multiplied into irradiance before this function was
+    // called, which made it a different kind of quantity from the material's own occlusion
+    // instead of the same measurement at a different scale. Three things followed from that.
+    // It was bounded in absolute radiometric units, so how hard a corner darkened depended on
+    // how bright the sky was rather than on the geometry. It went through a saturation matrix,
+    // so occluded ambient lost its hue -- chroma surgery on the term that carries all of the
+    // ambient colour. And it never met the multi-bounce fit, which is the correction it needed
+    // most, being the larger of the two and the one that makes creases look dirty.
+    //
+    // Whatever the caller combines is what both lobes get. The specular side had no
+    // screen-space occlusion at all before, so a corner darkened diffusely still returned a
+    // full-strength reflection of the sky.
+    diffuseOut = (FmsEms + k_D) * irradiance * gtaoMultiBounce(ao, diffuseColor);
+    specularOut = radiance * FssEss * computeSpecularAO(nv, ao, perceptualRough * perceptualRough);
 }
 
 
@@ -530,19 +710,26 @@ vec3 specularReflection(PBRInfo pbrInputs)
     return pbrInputs.reflectance0 + (pbrInputs.reflectance90 - pbrInputs.reflectance0) * pow(clamp(1.0 - pbrInputs.VdotH, 0.0, 1.0), 5.0);
 }
 
-// This calculates the specular geometric attenuation (aka G()),
-// where rougher material will reflect less light back to the viewer.
-// This implementation is based on [1] Equation 4, and we adopt their modifications to
-// alphaRoughness as input as originally proposed in [2].
-float geometricOcclusion(PBRInfo pbrInputs)
+// Specular visibility (aka Vis), the geometric attenuation G with the microfacet BRDF's
+// 1/(4 NdotL NdotV) denominator folded in. Height-correlated Smith, per Heitz 2014
+// "Understanding the Masking-Shadowing Function in Microfacet-Based BRDFs"; this is the form
+// glTF 2.0 Appendix B specifies.
+//
+// Correlating the two directions matters: a separable Smith treats masking and shadowing as
+// independent events, which double-counts occlusion and over-darkens grazing angles on rough
+// surfaces. Folding the denominator in also removes a division by a NdotL*NdotV product that
+// approaches zero at exactly those angles.
+float visibilityOcclusion(PBRInfo pbrInputs)
 {
     float NdotL = pbrInputs.NdotL;
     float NdotV = pbrInputs.NdotV;
-    float r = pbrInputs.alphaRoughness;
+    float a2 = pbrInputs.alphaRoughness * pbrInputs.alphaRoughness;
 
-    float attenuationL = 2.0 * NdotL / (NdotL + sqrt(r * r + (1.0 - r * r) * (NdotL * NdotL)));
-    float attenuationV = 2.0 * NdotV / (NdotV + sqrt(r * r + (1.0 - r * r) * (NdotV * NdotV)));
-    return attenuationL * attenuationV;
+    float lambdaV = NdotL * sqrt(NdotV * NdotV * (1.0 - a2) + a2);
+    float lambdaL = NdotV * sqrt(NdotL * NdotL * (1.0 - a2) + a2);
+
+    float v = lambdaV + lambdaL;
+    return v > 0.0 ? 0.5 / v : 0.0;
 }
 
 // The following equation(s) model the distribution of microfacet normals across the area being drawn (aka D())
@@ -570,20 +757,21 @@ void pbrPunctual(vec3 diffuseColor, vec3 specularColor,
 
     float alphaRoughness = perceptualRoughness * perceptualRoughness;
 
-    // Compute reflectance.
-    float reflectance = max(max(specularColor.r, specularColor.g), specularColor.b);
-
-    // For typical incident reflectance range (between 4% to 100%) set the grazing reflectance to 100% for typical fresnel effect.
-    // For very low reflectance range on highly diffuse objects (below 4%), incrementally reduce grazing reflecance to 0%.
-    float reflectance90 = clamp(reflectance * 25.0, 0.0, 1.0);
+    // Grazing reflectance is 1 for every material, per glTF 2.0 Appendix B: at 90 degrees a
+    // smooth surface reflects all of it regardless of what F0 says about normal incidence.
+    // Deriving f90 from F0 instead only diverges where F0 is below 4%, which for a
+    // metallic-roughness material means a metal with a near-black base colour -- and dimming
+    // its rim is the opposite of what the physics gives.
     vec3 specularEnvironmentR0 = specularColor.rgb;
-    vec3 specularEnvironmentR90 = vec3(1.0, 1.0, 1.0) * reflectance90;
+    vec3 specularEnvironmentR90 = vec3(1.0);
 
     vec3 h = normalize(l+v);                        // Half vector between both l and v
-    vec3 reflection = -normalize(reflect(v, n));
-    reflection.y *= -1.0f;
 
-    float NdotL = clamp(dot(n, l), 0.001, 1.0);
+    // Zero, not an epsilon: a surface turned away from the light receives nothing. The floor
+    // this replaces existed to keep NdotL out of a denominator, and visibilityOcclusion no
+    // longer has one -- with NdotL at zero its own denominator is carried by the NdotV term,
+    // which the guard there covers.
+    float NdotL = clamp(dot(n, l), 0.0, 1.0);
     float NdotV = clamp(abs(dot(n, v)), 0.001, 1.0);
     float NdotH = clamp(dot(n, h), 0.0, 1.0);
     float LdotH = clamp(dot(l, h), 0.0, 1.0);
@@ -606,12 +794,12 @@ void pbrPunctual(vec3 diffuseColor, vec3 specularColor,
 
     // Calculate the shading terms for the microfacet specular shading model
     vec3 F = specularReflection(pbrInputs);
-    float G = geometricOcclusion(pbrInputs);
+    float Vis = visibilityOcclusion(pbrInputs);
     float D = microfacetDistribution(pbrInputs);
 
     // Calculation of analytical lighting contribution
     vec3 diffuseContrib = (1.0 - F) * diffuse(pbrInputs);
-    vec3 specContrib = F * G * D / (4.0 * NdotL * NdotV);
+    vec3 specContrib = F * Vis * D;
 
     nl = NdotL;
 
@@ -648,14 +836,15 @@ vec3 pbrCalcPointLightOrSpotLight(vec3 diffuseColor, vec3 specularColor,
         // spot*spot => GL_SPOT_EXPONENT=2
         float spot_atten = spot*spot;
 
-        vec3 intensity = spot_atten * dist_atten * lightColor * 3.0; //magic number to balance with legacy materials
+        vec3 intensity = spot_atten * dist_atten * lightColor * PUNCTUAL_LIGHT_SCALE;
 
         float nl = 0;
         vec3 diffPunc = vec3(0);
         vec3 specPunc = vec3(0);
 
         pbrPunctual(diffuseColor, specularColor, perceptualRoughness, metallic, n.xyz, v, lv, nl, diffPunc, specPunc);
-        color = intensity * clamp(nl * (diffPunc + specPunc), vec3(0), vec3(10));
+        specPunc *= pbrEnergyCompensation(specularColor, perceptualRoughness, dot(n.xyz, v));
+        color = intensity * clampRadiance(nl * (diffPunc + specPunc));
     }
     float final_scale = 1.0;
     if (classic_mode > 0)
@@ -663,11 +852,18 @@ vec3 pbrCalcPointLightOrSpotLight(vec3 diffuseColor, vec3 specularColor,
     return color * final_scale;
 }
 
+// Split a glTF metallic-roughness base colour into the two lobes' albedos.
+//
+// c_diff = lerp(baseColor, black, metallic), per glTF 2.0 Appendix B. Only the metallic
+// factor takes from the diffuse lobe here. The dielectric share the specular lobe reflects is
+// not a constant 4%: it depends on the view angle, and both consumers already account for it
+// where the angle is known -- pbrPunctual weights the diffuse term by (1 - F), and pbrIbl
+// derives k_D from the surface's directional albedo. Scaling by (1 - f0) as well would charge
+// dielectrics for that reflection twice and leave every one of them ~4% dark.
 void calcDiffuseSpecular(vec3 baseColor, float metallic, inout vec3 diffuseColor, inout vec3 specularColor)
 {
     vec3 f0 = vec3(0.04);
-    diffuseColor = baseColor*(vec3(1.0)-f0);
-    diffuseColor *= 1.0 - metallic;
+    diffuseColor = baseColor * (1.0 - metallic);
     specularColor = mix(f0, baseColor, metallic);
 }
 
@@ -687,7 +883,11 @@ vec3 pbrBaseLight(vec3 diffuseColor, vec3 specularColor, float metallic, vec3 v,
     float nl = 0;
     vec3 diffPunc = vec3(0);
     vec3 specPunc = vec3(0);
-    pbrPunctual(diffuseColor, specularColor, perceptualRoughness, metallic, norm, v, normalize(light_dir), nl, diffPunc, specPunc);
+    // The sun is a disc, not a delta light. Widening its lobe by the disc's own angular size
+    // is what gives a polished surface a sun highlight with a real edge, and is why
+    // MIN_PBR_ROUGHNESS no longer has to invent one for every light at once.
+    pbrPunctual(diffuseColor, specularColor, sunDiscRoughness(perceptualRoughness), metallic, norm, v, normalize(light_dir), nl, diffPunc, specPunc);
+    specPunc *= pbrEnergyCompensation(specularColor, perceptualRoughness, NdotV);
 
     // Depending on the sky, we combine these differently.
     if (classic_mode > 0)
@@ -707,14 +907,21 @@ vec3 pbrBaseLight(vec3 diffuseColor, vec3 specularColor, float metallic, vec3 v,
         sun_contrib = srgb_to_linear(linear_to_srgb(sun_contrib) * sunlit * 0.7) * M_PI;
 
         // Manually recombine everything here.  We have to separate the shading to ensure that lighting is able to more closely match blinn-phong.
-        vec3 finalAmbient = irradiance.rgb * diffuseColor.rgb; // BINGO
-        vec3 finalSun = clamp(sun_contrib * ((diffPunc.rgb + specPunc.rgb) * scol), vec3(0), vec3(10)); // QUESTIONABLE BINGO?
+        //
+        // Occlusion has to be applied by hand on this path: it discards iblDiff and rebuilds the
+        // ambient term from raw irradiance, so it sees neither the material's occlusion nor the
+        // caller's screen-space one. It used to receive the latter anyway, because the caller
+        // multiplied it into irradiance before handing it over -- moving that out is what makes
+        // this explicit rather than accidental, and it picks up the material occlusion that this
+        // branch has never applied.
+        vec3 finalAmbient = irradiance.rgb * diffuseColor.rgb * gtaoMultiBounce(ao, diffuseColor); // BINGO
+        vec3 finalSun = clampRadiance(sun_contrib * ((diffPunc.rgb + specPunc.rgb) * scol)); // QUESTIONABLE BINGO?
         color.rgb = srgb_to_linear(linear_to_srgb(finalAmbient) + (linear_to_srgb(finalSun) * 1.1));
         //color.rgb = sun_contrib * diffuseColor.rgb;
     }
     else
     {
-        color += clamp(nl * (diffPunc + specPunc), vec3(0), vec3(10)) * sunlit * 3.0 * scol;
+        color += clampRadiance(nl * (diffPunc + specPunc)) * sunlit * PUNCTUAL_LIGHT_SCALE * scol;
     }
 
     color.rgb += iblSpec.rgb;

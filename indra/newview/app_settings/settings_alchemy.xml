@@ -1598,6 +1598,17 @@
             <key>Value</key>
             <real>2.5</real>
         </map>
+        <key>RenderBloomFireflyClamp</key>
+        <map>
+            <key>Comment</key>
+            <string>Maximum radiance a single pixel may contribute to bloom. Bounds sub-pixel specular glints so they cannot become large flickering halos. Does not affect the sharp highlight in the scene itself.</string>
+            <key>Persist</key>
+            <integer>1</integer>
+            <key>Type</key>
+            <string>F32</string>
+            <key>Value</key>
+            <real>24.0</real>
+        </map>
         <key>RenderBloomKnee</key>
         <map>
             <key>Comment</key>
@@ -2525,17 +2536,6 @@
             <string>Boolean</string>
             <key>Value</key>
             <integer>0</integer>
-        </map>
-        <key>RenderReflectionProbeIrradianceResolution</key>
-        <map>
-            <key>Comment</key>
-            <string>Resolution of reflection probe irrradiance maps.  Will be set to the next highest power of two clamped to [16, 256].  Note that changing this value may consume a massive amount of video memory.</string>
-            <key>Persist</key>
-            <integer>1</integer>
-            <key>Type</key>
-            <string>U32</string>
-            <key>Value</key>
-            <integer>16</integer>
         </map>
         <key>RenderTonemapACESWhite</key>
         <map>

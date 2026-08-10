@@ -105,6 +105,11 @@ void mirrorClip(vec3 pos);
 void waterClip(vec3 pos);
 
 void calcDiffuseSpecular(vec3 baseColor, float metallic, inout vec3 diffuseColor, inout vec3 specularColor);
+float filterSpecularRoughness(float perceptualRoughness, vec3 n);
+vec3 pbrEnergyCompensation(vec3 specularColor, float perceptualRoughness, float nv);
+vec3 clampRadiance(vec3 c);
+vec3 clampHDRRange(vec3 color);
+float horizonOcclusion(vec3 r, vec3 geometricNormal);
 
 vec3 pbrBaseLight(vec3 diffuseColor,
                   vec3 specularColor,
@@ -179,7 +184,14 @@ void main()
     vec3 vB = sign * cross(vN, vT);
     vec3 norm = normalize( vNt.x * vT + vNt.y * vB + vNt.z * vN );
 
-    norm *= gl_FrontFacing ? 1.0 : -1.0;
+    // Held in a variable because the geometric normal below has to turn with it. Flipping only
+    // the shading normal leaves the two pointing into opposite hemispheres on a back face, and
+    // the horizon test reads that as a reflection fully underground.
+    //
+    // The tangent basis above is built from the raw vary_normal on purpose: mikktspace flips the
+    // result, not the inputs.
+    float facing = gl_FrontFacing ? 1.0 : -1.0;
+    norm *= facing;
 
     float scol = 1.0;
     vec3 sunlit;
@@ -203,6 +215,10 @@ void main()
     float metallic = orm.b * metallicFactor;
     float ao = orm.r;
 
+    // The deferred path filters roughness once into the GBuffer; this one shades in place, so
+    // it does the same correction against its own normal here.
+    perceptualRoughness = filterSpecularRoughness(perceptualRoughness, norm);
+
     // emissiveColor is the emissive color factor from GLTF and is already in linear space
     vec3 colorEmissive = emissiveColor;
     // emissiveMap here is a vanilla RGB texture encoded as sRGB, manually convert to linear
@@ -212,7 +228,17 @@ void main()
     float gloss      = 1.0 - perceptualRoughness;
     vec3  irradiance = amblit;
     vec3  radiance  = vec3(0);
-    sampleReflectionProbes(irradiance, radiance, vary_position.xy*0.5+0.5, pos.xyz, norm.xyz, gloss, true, amblit);
+    // frag, not a rescaled vary_position: the tc argument is a screen UV. It reaches
+    // tapScreenSpaceReflection, where it drives the screen-edge vignette and the per-pixel
+    // ray jitter, and vary_position is an eye-space metre offset -- outside [0,1] for all but
+    // a sliver of the frame, so the vignette never fades and the jitter stops decorrelating.
+    sampleReflectionProbes(irradiance, radiance, frag, pos.xyz, norm.xyz, gloss, true, amblit);
+
+    // A normal map can aim the reflection below the surface it sits on, where the probe happily
+    // returns radiance arriving through the geometry. vary_normal is the untouched interpolated
+    // vertex normal, so it is the geometric horizon to test against -- the deferred path has no
+    // equivalent, because the GBuffer only ever stored the perturbed normal.
+    radiance *= horizonOcclusion(reflect(normalize(pos.xyz), norm.xyz), vary_normal * facing);
 
     vec3 diffuseColor = vec3(0.0);
     vec3 specularColor = vec3(0.0);
@@ -220,6 +246,8 @@ void main()
 
     vec3 v = -normalize(pos.xyz);
 
+    // The material's occlusion alone: the SSAO buffer is built from the opaque depth pass, so it
+    // describes the surface behind this one, not this one.
     color = pbrBaseLight(diffuseColor, specularColor, metallic, v, norm.xyz, perceptualRoughness, light_dir, sunlit_linear, scol, radiance, irradiance, colorEmissive, ao, additive, atten);
 
     vec3 light = vec3(0);
@@ -243,7 +271,11 @@ void main()
     float final_scale = 1;
     if (classic_mode > 0)
         final_scale = 1.1;
-    frag_color = max(vec4(color.rgb * final_scale,a), vec4(0));
+    // Scrubbed the same way softenLightF scrubs the opaque result. max() alone does not do it:
+    // it passes an infinity through unchanged, and its answer for a NaN is undefined. This path
+    // runs the same unbounded punctual lobe the opaque one does, so it can produce the same
+    // values -- and whatever it writes goes on to the bloom pyramid.
+    frag_color = max(vec4(clampHDRRange(color.rgb * final_scale), a), vec4(0));
 #endif // FOR_IMPOSTOR
 }
 

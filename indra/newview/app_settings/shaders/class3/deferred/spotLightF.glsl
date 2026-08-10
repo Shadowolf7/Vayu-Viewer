@@ -79,6 +79,10 @@ float evalBlinnPhongSpec(float nh, float glossiness);
 float calcSpecularAAVariance(vec3 n, vec3 v);
 float filterGlossiness(float glossiness, float variance);
 #endif
+void calcDiffuseSpecular(vec3 baseColor, float metallic, inout vec3 diffuseColor, inout vec3 specularColor);
+vec3 pbrEnergyCompensation(vec3 specularColor, float perceptualRoughness, float nv);
+vec3 clampRadiance(vec3 c);
+float unpackRoughness(vec2 p);
 float calcLegacyDistanceAttenuation(float distance, float falloff);
 bool clipProjectedLightVars(vec3 center, vec3 pos, out float dist, out float l_dist, out vec3 lv, out vec4 proj_tc );
 vec4 getNorm(vec2 screenpos);
@@ -171,15 +175,20 @@ void main()
     if (GET_GBUFFER_FLAG(gb.gbufferFlag, GBUFFER_FLAG_HAS_PBR))
     {
         vec3 orm = spec.rgb;
-        float perceptualRoughness = orm.g;
+        float perceptualRoughness = unpackRoughness(spec.ga);
         float metallic = orm.b;
-        vec3 f0 = vec3(0.04);
         vec3 baseColor = diffuse.rgb;
 
-        vec3 diffuseColor = baseColor.rgb*(vec3(1.0)-f0);
-        diffuseColor *= 1.0 - metallic;
+        // The shared split, not a copy of it. Carrying an inlined duplicate is how the
+        // deferred local lights came to disagree with the sun and IBL about a dielectric's
+        // diffuse albedo -- same surface, different answer depending on what was lighting it.
+        vec3 diffuseColor;
+        vec3 specularColor;
+        calcDiffuseSpecular(baseColor, metallic, diffuseColor, specularColor);
 
-        vec3 specularColor = mix(f0, baseColor.rgb, metallic);
+        // Hoisted: the compensation depends only on the surface and the view, so it is one LUT
+        // fetch per fragment rather than one per light or per lobe.
+        vec3 energyComp = pbrEnergyCompensation(specularColor, perceptualRoughness, dot(n.xyz, v));
         vec3 diffPunc = vec3(0);
         vec3 specPunc = vec3(0);
 
@@ -192,23 +201,38 @@ void main()
 
             lv = normalize(lv);
 
-            if (nl > 0.0)
+            // Tested against the raw dot product, not against nl. calcHalfVectors clamps nl to
+            // a positive epsilon so the legacy path can divide by it, which made this condition
+            // and pointLightF's mirror image of it constant -- there was no facing test left
+            // here at all, only pbrPunctual's own internal one further down.
+            if (dot(n.xyz, lv) > 0.0)
             {
                 amb_da += (nl*0.5 + 0.5) * proj_ambiance;
 
                 dlit = getProjectedLightDiffuseColor( l_dist, proj_tc.xy );
 
-                vec3 intensity = dist_atten * dlit * 3.25 * shadow; // Legacy attenuation, magic number to balance with legacy materials
+                vec3 intensity = dist_atten * dlit * PUNCTUAL_LIGHT_SCALE * shadow; // see deferredUtil.glsl -- must match every other site
 
-                pbrPunctual(diffuseColor, specularColor, perceptualRoughness, metallic, n.xyz, v, normalize(lv), nl, diffPunc, specPunc);
+                pbrPunctual(diffuseColor, specularColor, perceptualRoughness, metallic, n.xyz, v, lv, nl, diffPunc, specPunc);
 
-                final_color += intensity * clamp(nl * (diffPunc + specPunc), vec3(0), vec3(10));
+                final_color += intensity * clampRadiance(nl * (diffPunc + specPunc * energyComp));
+
+                // How much direct light this pixel already received, which is what bounds the
+                // ambiance below. Declared and passed but never assigned, so that bound never
+                // applied and the projector's fill stacked on top of its own full-strength
+                // beam. The legacy branch has always assigned it.
+                lit = clamp(nl * dist_atten, 0.0, 1.0);
             }
 
-            amb_rgb = getProjectedLightAmbiance( amb_da, dist_atten, lit, nl, 1.0, proj_tc.xy ) * 3.25; //magic number to balance with legacy ambiance
-            pbrPunctual(diffuseColor, specularColor, perceptualRoughness, metallic, n.xyz, v, normalize(lv), nl, diffPunc, specPunc);
+            amb_rgb = getProjectedLightAmbiance( amb_da, dist_atten, lit, nl, 1.0, proj_tc.xy ) * PUNCTUAL_LIGHT_SCALE; //magic number to balance with legacy ambiance
 
-            final_color += amb_rgb * clamp(nl * (diffPunc + specPunc), vec3(0), vec3(10));
+            // Ambiance is the projector's non-directional fill -- it exists to reach the
+            // surfaces the cookie does not. Weighting it by the punctual lobe (a second,
+            // argument-for-argument identical pbrPunctual call, whose result was already
+            // sitting in diffPunc/specPunc) put an NdotL on it, so it fell to nothing on
+            // exactly those surfaces, and charged a full GGX evaluation per fragment to do it.
+            // Against the diffuse albedo, as the legacy branch below does it.
+            final_color += diffuseColor.rgb * amb_rgb;
         }
     }
     else

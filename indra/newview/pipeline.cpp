@@ -353,6 +353,11 @@ bool addDeferredAttachments(LLRenderTarget& target)
         emissive = GL_RGB8;
     }
 
+    // Tell the shader compiler how much room the packed geometric normal has in the normal
+    // attachment's blue channel. Shaders rebuild when RenderHDREnabled changes (handleEnableHDR),
+    // so this is latched before anything compiles against it.
+    LLRender::sGBufferNormHDR = hdr;
+
     bool valid = true;
     valid      = valid && target.addColorAttachment(orm);    // frag-data[1] specular OR PBR ORM
     valid      = valid && target.addColorAttachment(norm);
@@ -1603,10 +1608,20 @@ void LLPipeline::createLUTBuffers()
         gDeferredGenBrdfLutProgram.bind();
         llassert_always(LLGLSLShader::sCurBoundShaderPtr != nullptr);
 
+        // State this draw needs, rather than inheriting whatever the caller left live. It
+        // runs outside any render pass, so nothing upstream has established it, and the
+        // failure is silent in both directions: culling would drop the quad and leave the
+        // table as whatever the allocation happened to contain, and a blend function would
+        // fold that same garbage into the integral. Every PBR surface reads this texture.
+        LLGLDisable cull_face(GL_CULL_FACE);
+        LLGLDisable blend(GL_BLEND);
+
+        // Counter-clockwise, so the quad is front-facing under the default winding. The
+        // guard above already covers it -- this is so the draw does not depend on the guard.
         gGL.begin(LLRender::TRIANGLE_STRIP);
         gGL.vertex2f(-1, -1);
-        gGL.vertex2f(-1, 1);
         gGL.vertex2f(1, -1);
+        gGL.vertex2f(-1, 1);
         gGL.vertex2f(1, 1);
         gGL.end();
         gGL.flush();
@@ -8198,6 +8213,7 @@ void LLPipeline::generateBloomHDR(LLRenderTarget* src)
 
     static LLCachedControl<F32> bloom_threshold(gSavedSettings, "RenderBloomThreshold", 1.0f);
     static LLCachedControl<F32> bloom_knee(gSavedSettings, "RenderBloomKnee", 0.5f);
+    static LLCachedControl<F32> bloom_firefly_clamp(gSavedSettings, "RenderBloomFireflyClamp", 24.f);
     static LLCachedControl<F32> bloom_scatter(gSavedSettings, "RenderBloomScatter", 0.7f);
     static LLCachedControl<F32> alpha_glow_boost(gSavedSettings, "RenderBloomAlphaGlowBoost", 2.0f);
 
@@ -8220,6 +8236,9 @@ void LLPipeline::generateBloomHDR(LLRenderTarget* src)
         gBloomExtractProgram.bindTexture(LLShaderMgr::DIFFUSE_MAP, src);
         gBloomExtractProgram.uniform1f(LLShaderMgr::BLOOM_THRESHOLD, no_post ? 99999.f :bloom_threshold());
         gBloomExtractProgram.uniform1f(LLShaderMgr::BLOOM_KNEE, llmax(bloom_knee(), 0.0f));
+        // no_post already disables extraction via the threshold; keep the clamp out of its way.
+        gBloomExtractProgram.uniform1f(LLShaderMgr::BLOOM_FIREFLY_CLAMP,
+                                       no_post ? 1e9f : llmax(bloom_firefly_clamp(), 0.f));
         gBloomExtractProgram.uniform1f(LLShaderMgr::BLOOM_ALPHA_GLOW_BOOST, llmax(alpha_glow_boost(), 0.0f));
 
         // Reuse the warmth weights from legacy glow so the halation red-bias
@@ -9181,7 +9200,13 @@ void LLPipeline::bindLightFunc(LLGLSLShader& shader)
     channel = shader.enableTexture(LLShaderMgr::DEFERRED_BRDF_LUT);
     if (channel > -1)
     {
-        mPbrBrdfLut.bindTexture(0, channel);
+        // Clamp, not the render target's default mirrored repeat. This is a lookup table over
+        // (NdotV, roughness), and both axes are only meaningful on [0,1]; inside that range
+        // mirroring and clamping agree, so the distinction is invisible until a coordinate
+        // leaves it. Then they disagree in the worst direction -- a roughness past 1 mirrors
+        // back to a SMALLER roughness and the surface reads glossier the rougher it gets,
+        // where clamping saturates at the roughest entry the table holds.
+        mPbrBrdfLut.bindTexture(0, channel, ALSamplers::BilinearClamp);
     }
 }
 
@@ -9934,9 +9959,11 @@ void LLPipeline::renderDeferredLighting()
                     if (count == max_count || total_count == num_fullscreen_lights)
                     {
                         U32 idx = count - 1;
+                        // The program is chosen by batch size, so its LIGHT_COUNT already is the
+                        // count and both of its loops run to that; there is no light_count
+                        // uniform to feed.
                         LLGLSLShader& multi_light_shader = *gDeferredMultiLightProgram[idx].selectVariant();
                         bindDeferredShader(multi_light_shader);
-                        multi_light_shader.uniform1i(LLShaderMgr::MULTI_LIGHT_COUNT, count);
                         multi_light_shader.uniform4fv(LLShaderMgr::MULTI_LIGHT, count, light[0].mV);
                         multi_light_shader.uniform4fv(LLShaderMgr::MULTI_LIGHT_COL, count, col[0].mV);
                         multi_light_shader.uniform1f(LLShaderMgr::MULTI_LIGHT_FAR_Z, far_z);
@@ -10426,10 +10453,11 @@ void LLPipeline::bindReflectionProbes(LLGLSLShader& shader)
         bound = true;
     }
 
-    channel = shader.enableTexture(LLShaderMgr::IRRADIANCE_PROBES);
-    if (channel > -1 && mReflectionMapManager.mIrradianceMaps.notNull())
+    channel = shader.enableTexture(LLShaderMgr::SH_COEFFS);
+    if (channel > -1 && mReflectionMapManager.mSHCoeffs.isComplete())
     {
-        mReflectionMapManager.mIrradianceMaps->bind(channel);
+        // Point sampled: these are coefficients indexed by texelFetch, not a filterable image.
+        mReflectionMapManager.mSHCoeffs.bindTexture(0, channel, ALSamplers::PointClamp);
         bound = true;
     }
 

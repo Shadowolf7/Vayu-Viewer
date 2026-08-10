@@ -108,7 +108,7 @@ public:
         SCENE_MAP,                          //  "sceneMap"
         SCENE_DEPTH,                        //  "sceneDepth"
         REFLECTION_PROBES,                  //  "reflectionProbes"
-        IRRADIANCE_PROBES,                  //  "irradianceProbes"
+        SH_COEFFS,                          //  "shCoeffs"
         HERO_PROBE,                         //  "heroProbes"
         CLOUD_NOISE_MAP,                    //  "cloud_noise_texture"
         CLOUD_NOISE_MAP_NEXT,               //  "cloud_noise_texture_next"
@@ -150,6 +150,7 @@ public:
 
         BLOOM_THRESHOLD,                    //  "bloom_threshold"
         BLOOM_KNEE,                         //  "bloom_knee"
+        BLOOM_FIREFLY_CLAMP,                //  "bloom_firefly_clamp"
         BLOOM_TEXEL_SIZE,                   //  "bloom_texel_size"
         BLOOM_SCATTER,                      //  "bloom_scatter"
         BLOOM_STRENGTH,                     //  "bloom_strength"
