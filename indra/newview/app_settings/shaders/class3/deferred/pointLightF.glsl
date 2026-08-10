@@ -27,7 +27,6 @@
 
 out vec4 frag_color;
 
-uniform sampler2D lightFunc;
 
 uniform vec3 env_mat[3];
 
@@ -60,6 +59,8 @@ void calcHalfVectors(vec3 lv, vec3 n, vec3 v, out vec3 h, out vec3 l, out float 
 float evalBlinnPhongSpec(float nh, float glossiness);
 float calcSpecularAAVariance(vec3 n, vec3 v);
 float filterGlossiness(float glossiness, float variance);
+#else
+float blinnPhongLobe(float nh, float glossiness);
 #endif
 void calcDiffuseSpecular(vec3 baseColor, float metallic, inout vec3 diffuseColor, inout vec3 specularColor);
 vec3 pbrEnergyCompensation(vec3 specularColor, float perceptualRoughness, float nv);
@@ -178,12 +179,19 @@ void main()
 #ifdef SPECULAR_AA
                 float specSample = evalBlinnPhongSpec(nh, filterGlossiness(spec.a, specAAVariance));
 #else
-                float specSample = texture(lightFunc, vec2(nh, spec.a)).r;
+                float specSample = blinnPhongLobe(nh, spec.a);
 #endif
                 float scol = fres*specSample*gt/(nh*nl);
                 final_color += lit*scol*color.rgb*spec.rgb;
             }
         }
+
+        // Bounded the same way the PBR branch above is. The specular term divides by two
+        // cosines that calcHalfVectors only floors at 1e-6, and the Blinn-Phong LUT carries a
+        // normalization of its own on top -- at grazing angles that product runs past what a
+        // half-float target can hold, and an inf here spreads to the whole frame through bloom.
+        // Colour-preserving, so a highlight that hits the ceiling dims rather than changing hue.
+        final_color = clampRadiance(final_color);
 
         if (dot(final_color, final_color) <= 0.0)
         {

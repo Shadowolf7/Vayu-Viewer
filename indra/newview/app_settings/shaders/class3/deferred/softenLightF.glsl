@@ -35,8 +35,6 @@ const float M_PI = 3.14159265;
 uniform sampler2D lightMap;
 #endif
 
-uniform sampler2D     lightFunc;
-
 #if defined(HAS_SSAO)
 uniform float ssao_irradiance_scale;
 uniform float ssao_irradiance_max;
@@ -94,6 +92,7 @@ uniform int cube_snapshot;
 uniform float sky_hdr_scale;
 
 void calcHalfVectors(vec3 lv, vec3 n, vec3 v, out vec3 h, out vec3 l, out float nh, out float nl, out float nv, out float vh, out float lightDist);
+float blinnPhongLobe(float nh, float glossiness);
 void calcDiffuseSpecular(vec3 baseColor, float metallic, inout vec3 diffuseColor, inout vec3 specularColor);
 #ifdef SPECULAR_AA
 float evalBlinnPhongSpec(float nh, float glossiness);
@@ -283,6 +282,16 @@ void main()
 
         adjustIrradiance(irradiance, ambocc);
 
+        // The environment lobes get the same ambient visibility the diffuse one does.
+        // adjustIrradiance spends the screen-space buffer on irradiance alone, so a legacy
+        // surface down in a crevice had its diffuse ambient occluded while its reflection
+        // carried on at full strength -- the brighter of the two terms, and the one the eye
+        // reads as contact. On the response curve the settings describe, not the raw buffer;
+        // see ssaoVisibility.
+        float envVisibility = ssaoVisibility(ambocc);
+        glossenv *= envVisibility;
+        legacyenv *= envVisibility;
+
         // apply lambertian IBL only (see pbrIbl)
         color.rgb = irradiance;
 
@@ -324,7 +333,7 @@ void main()
 #ifdef SPECULAR_AA
                 float specSample = evalBlinnPhongSpec(nh, filterGlossiness(spec.a, specAAVariance));
 #else
-                float specSample = texture(lightFunc, vec2(nh, spec.a)).r;
+                float specSample = blinnPhongLobe(nh, spec.a);
 #endif
                 scol *= fres*specSample*gt/(nh*nl);
                 color.rgb += lit*scol*sunlit_linear.rgb*spec.rgb;

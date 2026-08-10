@@ -29,7 +29,6 @@ out vec4 frag_color;
 
 uniform samplerCube environmentMap;
 uniform sampler2D lightMap;
-uniform sampler2D lightFunc;
 
 uniform mat4 proj_mat; //screen space to light space
 uniform float proj_near; //near clip for projection
@@ -78,6 +77,8 @@ void calcHalfVectors(vec3 lv, vec3 n, vec3 v, out vec3 h, out vec3 l, out float 
 float evalBlinnPhongSpec(float nh, float glossiness);
 float calcSpecularAAVariance(vec3 n, vec3 v);
 float filterGlossiness(float glossiness, float variance);
+#else
+float blinnPhongLobe(float nh, float glossiness);
 #endif
 void calcDiffuseSpecular(vec3 baseColor, float metallic, inout vec3 diffuseColor, inout vec3 specularColor);
 vec3 pbrEnergyCompensation(vec3 specularColor, float perceptualRoughness, float nv);
@@ -279,7 +280,7 @@ void main()
 #ifdef SPECULAR_AA
                 float specSample = evalBlinnPhongSpec(nh, filterGlossiness(spec.a, specAAVariance));
 #else
-                float specSample = texture(lightFunc, vec2(nh, spec.a)).r;
+                float specSample = blinnPhongLobe(nh, spec.a);
 #endif
                 float scol = fres*specSample*gt/(nh*nl);
                 vec3 speccol = dlit*scol*spec.rgb*shadow;
