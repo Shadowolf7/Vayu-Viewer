@@ -182,58 +182,6 @@ void calcHalfVectors(vec3 lv, vec3 n, vec3 v,
     lightDist = length(lv);
 }
 
-// Analytic Blinn-Phong specular term and screen-space AA variance for the legacy direct-light
-// path. Unconditionally defined here even though the call sites (materialF.glsl etc.) gate their
-// use behind #ifdef SPECULAR_AA -- this file is compiled exactly ONCE (see the fixed-attribs pass
-// in llviewershadermgr.cpp around line 958) and attached BY REFERENCE into every deferred program
-// via attachFragmentObject's filename-keyed cache, so it can't vary per-program the way a
-// permutation define normally would. A program that never calls these (SPECULAR_AA not defined at
-// ITS OWN compile) still links fine -- the linker just drops the unreferenced functions from that
-// program -- so leaving them unconditional here costs nothing on the disabled path; gating them
-// here instead breaks linking for every program that DOES want them (unresolved reference).
-//
-// Same math LLPipeline::createLUTBuffers() (pipeline.cpp) uses to build the lightFunc LUT this
-// replaces, evaluated per-pixel instead of precomputed into a 1024x256 texture. Removes the LUT's
-// linear-in-nh quantization, which at high glossiness compresses the entire visible highlight ramp
-// into ~1 texel (glossiness=1 -> exponent 368 -> pow(nh,368) is ~0 until nh is within a fraction of
-// a percent of 1.0).
-uniform float specular_exponent; // RenderSpecularExponent, mirrors createLUTBuffers()'s specExp
-float evalBlinnPhongSpec(float nh, float glossiness)
-{
-    float n = glossiness * glossiness * specular_exponent;
-    float spec = pow(nh, n);
-    // full normalization curve, matches createLUTBuffers() exactly (not an approximation)
-    spec *= ((n + 2.0) * (n + 4.0)) / (8.0 * 3.14159265 * (pow(2.0, -n * 0.5) + n));
-    return spec;
-}
-
-// Screen-space curvature/view-divergence estimate for the legacy specular term. MUST be called
-// once, immediately after `n` (and the view vector) are first established, in uniform control
-// flow, before any runtime branch or discard -- derivatives inside divergent control flow are
-// undefined (see shadowUtil.glsl's RPDB comment for the same constraint elsewhere in this tree).
-float calcSpecularAAVariance(vec3 n, vec3 v)
-{
-    vec3 dndx = dFdx(n);
-    vec3 dndy = dFdy(n);
-    vec3 dvdx = dFdx(v);
-    vec3 dvdy = dFdy(v);
-    // Both terms matter: dn covers curved/faceted geometry, dv covers perspective divergence
-    // across a large flat surface under a directional light (h = normalize(l+v), l constant) --
-    // a flat panel needs the dv term, curvature alone (dn) won't catch it.
-    return dot(dndx, dndx) + dot(dndy, dndy) + dot(dvdx, dvdx) + dot(dvdy, dvdy);
-}
-
-// Pure scalar combine, safe anywhere including divergent control flow. glossiness is this
-// codebase's normalized [0,1] value (specular_color.a / spec.a). Broadens (reduces) glossiness
-// in proportion to per-pixel variance, scaled by a tunable uniform so it can be dialed in
-// in-world without a shader recompile -- unlike the boolean enable, which is now baked in at
-// compile time, the strength stays a live-tunable uniform.
-uniform float specular_aa_scale; // RenderSpecularAAScale
-float filterGlossiness(float glossiness, float variance)
-{
-    return glossiness * inversesqrt(1.0 + specular_aa_scale * variance * glossiness * glossiness);
-}
-
 // In:
 //   light_center
 //   pos

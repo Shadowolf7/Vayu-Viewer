@@ -1084,9 +1084,6 @@ public:
     static S32 RenderShadowSplits;
     static bool RenderDeferredSSAO;
     static F32 RenderShadowResolutionScale;
-    static bool RenderSpecularAA;
-    static F32 RenderSpecularAAScale;
-    static F32 RenderSpecularExponent;
     static bool RenderDelayCreation;
     static bool RenderAnimateRes;
     static bool FreezeTime;

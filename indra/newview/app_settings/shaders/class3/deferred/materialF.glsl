@@ -49,13 +49,7 @@ uniform int sun_up_factor;
 vec4 applySkyAndWaterFog(vec3 pos, vec3 additive, vec3 atten, vec4 color);
 void calcAtmosphericVarsLinear(vec3 inPositionEye, vec3 norm, vec3 light_dir, out vec3 sunlit, out vec3 amblit, out vec3 atten, out vec3 additive);
 void calcHalfVectors(vec3 lv, vec3 n, vec3 v, out vec3 h, out vec3 l, out float nh, out float nl, out float nv, out float vh, out float lightDist);
-#ifdef SPECULAR_AA
-float evalBlinnPhongSpec(float nh, float glossiness);
-float calcSpecularAAVariance(vec3 n, vec3 v);
-float filterGlossiness(float glossiness, float variance);
-#else
 float blinnPhongLobe(float nh, float glossiness);
-#endif
 
 vec3 srgb_to_linear(vec3 cs);
 vec3 linear_to_srgb(vec3 cs);
@@ -105,30 +99,8 @@ uniform vec2 screen_res;
 float getAmbientClamp();
 void waterClip(vec3 pos);
 
-// Local to this file (not deferredUtil.glsl): SPECULAR_AA is a per-program permutation, but
-// deferredUtil.glsl is compiled once with a fixed define set shared across every deferred
-// program (see llviewershadermgr.cpp's sGlobalDefines / variantObjectKey), so an #ifdef on a
-// per-program flag can't live there -- it would resolve the same way for every caller. This
-// file IS recompiled per-program, so the #ifdef below correctly follows this program's own
-// SPECULAR_AA state. Still used below for sun/moon lighting.
-float resolveSpecularSample(float nh, float glossiness, float variance)
-{
-#ifdef SPECULAR_AA
-    return evalBlinnPhongSpec(nh, filterGlossiness(glossiness, variance));
-#else
-    return blinnPhongLobe(nh, glossiness);
-#endif
-}
-
 // The shared legacy punctual model, not a copy of it -- the same function the deferred legacy
 // branch is built from, so a blended surface is lit like the opaque one behind it.
-//
-// This replaces the old per-file calcPointLightOrSpotLight, which routed through
-// resolveSpecularSample above and so respected SPECULAR_AA. calcLegacyPointLightOrSpotLight is a
-// shared deferredUtil.glsl function (compiled once, can't gate on a per-program permutation) and
-// always evaluates via blinnPhongLobe directly -- so RenderSpecularAA no longer has any effect on
-// point/spot-lit alpha-blended legacy materials specifically. Sun/moon lighting below still goes
-// through resolveSpecularSample and is unaffected.
 vec3 calcLegacyPointLightOrSpotLight(vec3 diffuse, vec4 spec,
                     vec3 n, vec3 p, vec3 v,
                     vec3 lp, vec3 ld, vec3 lightColor,
@@ -283,14 +255,6 @@ void main()
 
     vec3 pos = vary_position;
 
-    // Computed once, before any *per-pixel* branch (glossiness>0.0 below), per deferredUtil.glsl's
-    // placement rule for dFdx/dFdy. SPECULAR_AA is now a compile-time permutation rather than a
-    // runtime uniform branch, so the disabled build never contains calcSpecularAAVariance at all.
-    float specAAVariance = 0.0;
-#ifdef SPECULAR_AA
-    specAAVariance = calcSpecularAAVariance(norm.xyz, -normalize(pos.xyz));
-#endif
-
     float shadow = getShadow(pos, norm);
 
     vec4 diffuse = diffcol;
@@ -355,8 +319,7 @@ void main()
             float gtdenom = 2 * nh;
             float gt = max(0,(min(gtdenom * nv / vh, gtdenom * nl / vh)));
 
-            float specSample = resolveSpecularSample(nh, glossiness, specAAVariance);
-            float scol = shadow*fres*specSample*gt/(nh*nl);
+            float scol = shadow*fres*blinnPhongLobe(nh, glossiness)*gt/(nh*nl);
             color.rgb += lit*scol*sunlit_linear.rgb*spec.rgb;
         }
 

@@ -280,7 +280,6 @@ void LLFloaterPreferenceGraphicsAdvanced::disableUnavailableSettings()
     LLTextBox* shadows_text = getChild<LLTextBox>("RenderShadowDetailText");
     LLCheckBoxCtrl* ctrl_ssao = getChild<LLCheckBoxCtrl>("UseSSAO");
     LLCheckBoxCtrl* ctrl_dof = getChild<LLCheckBoxCtrl>("UseDoF");
-    LLCheckBoxCtrl* ctrl_specular_aa = getChild<LLCheckBoxCtrl>("UseSpecularAA");
     LLSliderCtrl* cas_slider = getChild<LLSliderCtrl>("RenderSharpness");
 
     // disabled windlight
@@ -296,9 +295,6 @@ void LLFloaterPreferenceGraphicsAdvanced::disableUnavailableSettings()
 
         ctrl_dof->setEnabled(false);
         ctrl_dof->setValue(false);
-
-        ctrl_specular_aa->setEnabled(false);
-        ctrl_specular_aa->setValue(false);
     }
 
     // disabled deferred
@@ -313,9 +309,6 @@ void LLFloaterPreferenceGraphicsAdvanced::disableUnavailableSettings()
 
         ctrl_dof->setEnabled(false);
         ctrl_dof->setValue(false);
-
-        ctrl_specular_aa->setEnabled(false);
-        ctrl_specular_aa->setValue(false);
     }
 
     // disabled deferred SSAO

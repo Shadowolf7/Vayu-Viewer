@@ -49,13 +49,7 @@ uniform float far_z;
 in vec4 vary_fragcoord;
 
 void calcHalfVectors(vec3 lv, vec3 n, vec3 v, out vec3 h, out vec3 l, out float nh, out float nl, out float nv, out float vh, out float lightDist);
-#ifdef SPECULAR_AA
-float evalBlinnPhongSpec(float nh, float glossiness);
-float calcSpecularAAVariance(vec3 n, vec3 v);
-float filterGlossiness(float glossiness, float variance);
-#else
 float blinnPhongLobe(float nh, float glossiness);
-#endif
 void calcDiffuseSpecular(vec3 baseColor, float metallic, inout vec3 diffuseColor, inout vec3 specularColor);
 vec3 pbrEnergyCompensation(vec3 specularColor, float perceptualRoughness, float nv);
 vec3 clampRadiance(vec3 c);
@@ -87,17 +81,6 @@ void main()
     vec3 final_color = vec3(0, 0, 0);
     vec2 tc          = getScreenCoord(vary_fragcoord);
     vec3 pos         = getPosition(tc).xyz;
-
-    // Computed here, using a cheap normal-only sample (getNorm), before the discard below and
-    // outside the per-light loop further down -- variance depends only on this fragment's normal
-    // and view direction, not which light is being evaluated, and dFdx/dFdy inside divergent
-    // control flow (including past a discard some quad-mates take and others don't) are
-    // undefined, see deferredUtil.glsl. SPECULAR_AA is a compile-time permutation, so the disabled
-    // build never contains calcSpecularAAVariance (or the extra getNorm sample it needs) at all.
-    float specAAVariance = 0.0;
-#ifdef SPECULAR_AA
-    specAAVariance = calcSpecularAAVariance(getNorm(tc).xyz, -normalize(pos));
-#endif
 
     if (pos.z < far_z)
     {
@@ -193,12 +176,7 @@ void main()
 
                         if (nh > 0.0)
                         {
-#ifdef SPECULAR_AA
-                            float specSample = evalBlinnPhongSpec(nh, filterGlossiness(spec.a, specAAVariance));
-#else
-                            float specSample = blinnPhongLobe(nh, spec.a);
-#endif
-                            float scol = fres * specSample * gt / (nh * nl);
+                            float scol = fres * blinnPhongLobe(nh, spec.a) * gt / (nh * nl);
                             col += lit * scol * light_col[i].rgb * spec.rgb;
                         }
                     }

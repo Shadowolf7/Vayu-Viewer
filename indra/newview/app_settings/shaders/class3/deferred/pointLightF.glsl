@@ -55,13 +55,7 @@ uniform vec4 viewport;
 #endif
 
 void calcHalfVectors(vec3 lv, vec3 n, vec3 v, out vec3 h, out vec3 l, out float nh, out float nl, out float nv, out float vh, out float lightDist);
-#ifdef SPECULAR_AA
-float evalBlinnPhongSpec(float nh, float glossiness);
-float calcSpecularAAVariance(vec3 n, vec3 v);
-float filterGlossiness(float glossiness, float variance);
-#else
 float blinnPhongLobe(float nh, float glossiness);
-#endif
 void calcDiffuseSpecular(vec3 baseColor, float metallic, inout vec3 diffuseColor, inout vec3 specularColor);
 vec3 pbrEnergyCompensation(vec3 specularColor, float perceptualRoughness, float nv);
 vec3 clampRadiance(vec3 c);
@@ -104,14 +98,6 @@ void main()
     float nh, nl, nv, vh, lightDist;
     calcHalfVectors(lv, n, v, h, l, nh, nl, nv, vh, lightDist);
 
-    // Computed here, before the discard below -- dFdx/dFdy inside divergent control flow
-    // (including past an executed discard in some invocations of a quad) are undefined, see
-    // deferredUtil.glsl. SPECULAR_AA is a compile-time permutation, so the disabled build never
-    // contains calcSpecularAAVariance at all.
-    float specAAVariance = 0.0;
-#ifdef SPECULAR_AA
-    specAAVariance = calcSpecularAAVariance(n, v);
-#endif
 
     if (lightDist >= size)
     {
@@ -176,12 +162,7 @@ void main()
 
             if (nh > 0.0)
             {
-#ifdef SPECULAR_AA
-                float specSample = evalBlinnPhongSpec(nh, filterGlossiness(spec.a, specAAVariance));
-#else
-                float specSample = blinnPhongLobe(nh, spec.a);
-#endif
-                float scol = fres*specSample*gt/(nh*nl);
+                float scol = fres*blinnPhongLobe(nh, spec.a)*gt/(nh*nl);
                 final_color += lit*scol*color.rgb*spec.rgb;
             }
         }
