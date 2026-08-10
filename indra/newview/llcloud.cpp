@@ -132,7 +132,7 @@ void LLCloudGroup::updatePuffs(F32 dt)
     LLVector3 velocity;
     LLVector3d vel_d;
     // Update the positions of all of the puffs
-    for (U32 i = 0, count = mCloudPuffs.size(); i < count; i++)
+    for (U32 i = 0, count = (U32) mCloudPuffs.size(); i < count; i++)
     {
         LLCloudPuff &puff = mCloudPuffs[i];
         velocity = regionp->mWind.getCloudVelocity(regionp->getPosRegionFromGlobal(puff.mPositionGlobal));
