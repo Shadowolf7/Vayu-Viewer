@@ -240,7 +240,6 @@ LLGLSLShader            gDeferredFullbrightShinyProgram;
 LLGLSLShader            gHUDFullbrightShinyProgram;
 LLGLSLShader            gNormalMapGenProgram;
 LLGLSLShader            gDeferredGenBrdfLutProgram;
-LLGLSLShader            gDeferredGenSpecularLutProgram;
 LLGLSLShader            gDeferredBufferVisualProgram;
 LLGLSLShader            gBlitWithEffectsProgram;
 LLGLSLShader            gCGGammaProgram;
@@ -1312,7 +1311,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
 
         gNormalMapGenProgram.unload();
         gDeferredGenBrdfLutProgram.unload();
-        gDeferredGenSpecularLutProgram.unload();
         gDeferredBufferVisualProgram.unload();
 
         for (U32 i = 0; i < LLMaterial::SHADER_COUNT; ++i)
@@ -3181,20 +3179,6 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredGenBrdfLutProgram.mShaderFiles.push_back(make_pair("deferred/genbrdflutF.glsl", GL_FRAGMENT_SHADER));
         gDeferredGenBrdfLutProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gDeferredGenBrdfLutProgram.createShader();
-    }
-
-    if (success)
-    {
-        // Reuses genbrdflutV.glsl -- a plain fullscreen quad, nothing BRDF-specific in it.
-        // isDeferred pulls in deferredUtil.glsl at link time, which is where the fragment
-        // shader's evalBlinnPhongSpec() call actually resolves.
-        gDeferredGenSpecularLutProgram.mName = "Specular Gen Shader";
-        gDeferredGenSpecularLutProgram.mFeatures.isDeferred = true;
-        gDeferredGenSpecularLutProgram.mShaderFiles.clear();
-        gDeferredGenSpecularLutProgram.mShaderFiles.push_back(make_pair("deferred/genbrdflutV.glsl", GL_VERTEX_SHADER));
-        gDeferredGenSpecularLutProgram.mShaderFiles.push_back(make_pair("deferred/genspecularlutF.glsl", GL_FRAGMENT_SHADER));
-        gDeferredGenSpecularLutProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
-        success = gDeferredGenSpecularLutProgram.createShader();
     }
 
     if (success) {

@@ -856,7 +856,7 @@ public:
     // published there because LLGLSLShader::bind() is what releases them ahead of
     // non-declaring programs; see bindShadowMaps.
 
-    LLRenderTarget      mLightFunc;
+    U32                 mLightFunc;
     // The deferred lighting LUT wants mag=LINEAR + min=NEAREST, which no ALSampler mask
     // spells, so it resolves through ALSamplerCache's descriptor path -- a linear scan,
     // kept out of every deferred shader bind by memoising it here and revalidating against

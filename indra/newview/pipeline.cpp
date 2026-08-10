@@ -393,6 +393,7 @@ LLPipeline::LLPipeline() :
 {
     mNoiseMap = 0;
     mTrueNoiseMap = 0;
+    mLightFunc = 0;
 
     for(U32 i = 0; i < 8; i++)
     {
@@ -1318,7 +1319,11 @@ void LLPipeline::releaseGLBuffers()
 
 void LLPipeline::releaseLUTBuffers()
 {
-    mLightFunc.release();
+    if (mLightFunc)
+    {
+        LLImageGL::deleteTextures(1, &mLightFunc);
+        mLightFunc = 0;
+    }
 
     mPbrBrdfLut.release();
 
@@ -1538,47 +1543,62 @@ F32 lerpf(F32 a, F32 b, F32 w)
 
 void LLPipeline::createLUTBuffers()
 {
-    // GPU-rendered rather than CPU-baked: this used to reimplement the Blinn-Phong curve by
-    // hand here and again in evalBlinnPhongSpec() (deferredUtil.glsl), and the two copies had
-    // no way to notice if they drifted -- the same failure mode that split PUNCTUAL_LIGHT_SCALE
-    // into two disagreeing literals upstream. Rendering through gDeferredGenSpecularLutProgram,
-    // which calls the shader function directly, leaves exactly one definition of the curve.
-    U32 lightResX = gSavedSettings.getU32("RenderSpecularResX");
-    U32 lightResY = gSavedSettings.getU32("RenderSpecularResY");
-    F32 specExp = gSavedSettings.getF32("RenderSpecularExponent");
-
-    mLightFunc.allocate(lightResX, lightResY, GL_R16F);
-    mLightFunc.bindTarget();
-
-    if (gDeferredGenSpecularLutProgram.isComplete())
+    if (!mLightFunc)
     {
-        gDeferredGenSpecularLutProgram.bind();
-        llassert_always(LLGLSLShader::sCurBoundShaderPtr != nullptr);
+        U32 lightResX = gSavedSettings.getU32("RenderSpecularResX");
+        U32 lightResY = gSavedSettings.getU32("RenderSpecularResY");
+        F32* ls = nullptr;
+        try
+        {
+            ls = new F32[lightResX*lightResY];
+        }
+        catch (std::bad_alloc&)
+        {
+            LLError::LLUserWarningMsg::showOutOfMemory();
+            // might be better to set the error into mFatalMessage and rethrow
+            LL_ERRS() << "Bad memory allocation in createLUTBuffers! lightResX: "
+                << lightResX << " lightResY: " << lightResY << LL_ENDL;
+        }
+        F32 specExp = gSavedSettings.getF32("RenderSpecularExponent");
+        // Calculate the (normalized) blinn-phong specular lookup texture. (with a few tweaks)
+        for (U32 y = 0; y < lightResY; ++y)
+        {
+            for (U32 x = 0; x < lightResX; ++x)
+            {
+                ls[y*lightResX+x] = 0;
+                F32 sa = (F32) x/(lightResX-1);
+                F32 spec = (F32) y/(lightResY-1);
+                F32 n = spec * spec * specExp;
 
-        // Same rationale as the BRDF LUT draw below: this runs outside any render pass, so
-        // nothing upstream has established cull/blend state for it.
-        LLGLDisable cull_face(GL_CULL_FACE);
-        LLGLDisable blend(GL_BLEND);
+                // Nothing special here.  Just your typical blinn-phong term.
+                spec = powf(sa, n);
 
-        gDeferredGenSpecularLutProgram.uniform1f(LLShaderMgr::DEFERRED_SPECULAR_EXPONENT, specExp);
+                // Apply our normalization function.
+                // Note: This is the full equation that applies the full normalization curve, not an approximation.
+                // This is fine, given we only need to create our LUT once per buffer initialization.
+                spec *= (((n + 2) * (n + 4)) / (8 * F_PI * (powf(2, -n/2) + n)));
 
-        // Counter-clockwise, so the quad is front-facing under the default winding. The
-        // guard above already covers it -- this is so the draw does not depend on the guard.
-        gGL.begin(LLRender::TRIANGLE_STRIP);
-        gGL.vertex2f(-1, -1);
-        gGL.vertex2f(1, -1);
-        gGL.vertex2f(-1, 1);
-        gGL.vertex2f(1, 1);
-        gGL.end();
-        gGL.flush();
+                // Since we use R16F, we no longer have a dynamic range issue we need to work around here.
+                // Though some older drivers may not like this, newer drivers shouldn't have this problem.
+                ls[y*lightResX+x] = spec;
+            }
+        }
+
+        U32 pix_format = GL_R16F;
+#if LL_DARWIN
+        if(!gGLManager.mIsApple)
+        {
+            // Need to work around limited precision with 10.6.8 and older drivers
+            //
+            pix_format = GL_R32F;
+        }
+#endif
+        LLImageGL::generateTextures(1, &mLightFunc);
+        gGL.getTextureSlot(0)->bindManual(ALTextureSlot::TT_TEXTURE, mLightFunc);
+        LLImageGL::allocateTexture2D(ALTextureSlot::getInternalType(ALTextureSlot::TT_TEXTURE), pix_format, lightResX, lightResY, GL_RED, GL_FLOAT, ls);
+
+        delete [] ls;
     }
-    else
-    {
-        LL_WARNS("Shader") << gDeferredGenSpecularLutProgram.mName << " failed to load, cannot be used!" << LL_ENDL;
-    }
-
-    gDeferredGenSpecularLutProgram.unbind();
-    mLightFunc.flush();
 
     mPbrBrdfLut.allocate(512, 512, GL_RG16F);
     mPbrBrdfLut.bindTarget();
@@ -9167,7 +9187,7 @@ void LLPipeline::bindLightFunc(LLGLSLShader& shader)
             mLightFuncSampler           = gGL.getSampler(desc);
             mLightFuncSamplerGeneration = generation;
         }
-        gGL.getTextureSlot(channel)->bindManual(ALTextureSlot::TT_TEXTURE, mLightFunc.getTexture(),
+        gGL.getTextureSlot(channel)->bindManual(ALTextureSlot::TT_TEXTURE, mLightFunc,
                                             mLightFuncSampler);
     }
 
