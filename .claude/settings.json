@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__claude-in-chrome__read_page",
+      "mcp__claude-in-chrome__get_page_text",
+      "mcp__claude-in-chrome__navigate",
+      "Bash(claude mcp list)",
+      "Bash(cmake --build *)",
+      "Bash(cmake -S *)",
+      "Bash(pkg-config *)"
+    ]
+  }
+}

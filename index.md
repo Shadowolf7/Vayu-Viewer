@@ -8,6 +8,12 @@ layout: default
 
 Vayu is a third-party client for [Second Life](https://secondlife.com), forked from [Alchemy Viewer](https://www.alchemyviewer.org), which is itself forked from the official [Linden Lab viewer](https://github.com/secondlife/viewer). See [FEATURES.md](https://github.com/Shadowolf7/Vayu-Viewer/blob/develop/FEATURES.md) for what's already shipped.
 
+Please pardon the ugliness of this page, and the weird file names for the downloads. I've not used GitHub to build with before, and am learning as I go. In my excitement I got others excited also, so I've been pushing hard to have builds ready for consumption.
+
+My upstream, Alchemy, is moving at an incredible pace of development. All but the most superficial of work and features will be on hold due to the churn. I've already had two features made irrelevant.
+
+In essence, think of Vayu as Alchemy with a different shirt and a set of car keys.
+
 ## Download
 
 - **Windows** — [latest release](https://github.com/Shadowolf7/Vayu-Viewer/releases/latest): `_Setup.exe` to install, or `_Portable.zip` to run without installing
