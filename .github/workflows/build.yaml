@@ -718,10 +718,18 @@ jobs:
       - uses: actions/download-artifact@v8
         with:
           pattern: "*-installer"
+          # actions/download-artifact extracts flat to `path` (not into a
+          # per-artifact subdirectory) whenever a pattern resolves to exactly
+          # one match -- only >1 matches get their own named subdirectories.
+          # There's currently only one *-installer artifact (Windows), so
+          # without an explicit path this landed at the workspace root and
+          # the `Windows-installer/*.exe` glob below matched nothing.
+          path: Windows-installer
 
       - uses: actions/download-artifact@v8
         with:
           pattern: "*-releases"
+          path: Windows-releases
 
       - uses: actions/download-artifact@v8
         if: needs.setup.outputs.build_type == 'proprietary'
