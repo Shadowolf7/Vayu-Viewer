@@ -10,7 +10,11 @@ Vayu is a third-party client for [Second Life](https://secondlife.com), forked f
 
 ## Download
 
-Pre-built releases for Windows, macOS, or Linux are published on the [releases page](https://github.com/Shadowolf7/Vayu-Viewer/releases) once available.
+- **Windows** — [latest release](https://github.com/Shadowolf7/Vayu-Viewer/releases/latest): `_Setup.exe` to install, or `_Portable.zip` to run without installing
+- **Linux** — [latest release](https://github.com/Shadowolf7/Vayu-Viewer/releases/latest): `.tar.xz`
+- **macOS** — not yet available; builds aren't signed/notarized for distribution
+
+See the [releases page](https://github.com/Shadowolf7/Vayu-Viewer/releases) for all versions.
 
 ## Building from source
 
