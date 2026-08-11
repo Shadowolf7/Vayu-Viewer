@@ -333,7 +333,14 @@ if(LINUX)
   # Flags to support building with newer instruction sets.
   # Set up using x86_64 microarchitecture levels
   # https://en.wikipedia.org/wiki/X86-64#Microarchitecture_levels
-  if(USE_AVX2)
+  if(USE_MARCH_NATIVE)
+    # Ties the build to this exact CPU's instruction set - not portable to
+    # other machines. Only for local builds, never for distributed packages.
+    add_compile_options(
+      -march=native
+      -mtune=native
+    )
+  elseif(USE_AVX2)
     add_compile_options(
       -march=x86-64-v3
     )

@@ -324,6 +324,14 @@ Options are defined in [`indra/CMakeLists.txt`](../indra/CMakeLists.txt). The mo
 | `USE_OPENAL`     | ON      | OpenAL audio engine                    |
 | `USE_FMODSTUDIO` | OFF     | FMOD Studio audio engine (proprietary) |
 
+FMOD isn't fetched by vcpkg — it's a separately-downloaded SDK. Set `FMODSTUDIO_SDK_DIR` to point at it, e.g.:
+
+```
+cmake -S indra --preset ninja-os -DUSE_FMODSTUDIO=ON -DFMODSTUDIO_SDK_DIR=/path/to/fmodstudioapi20314linux
+```
+
+Without it, configure fails late — after vcpkg's dependency install completes — with `CMake Error at cmake/FMODSTUDIO.cmake:59 ... The "optimized" argument must be followed by a library.` (`indra/cmake/FMODSTUDIO.cmake` falls back to a Windows registry lookup that doesn't exist on Linux/macOS, leaving the library path empty.) On Windows only, an installed FMOD Studio SDK is found automatically via the registry.
+
 ### Profiling
 
 | Option                 | Default            | Description                               |
@@ -339,6 +347,7 @@ Options are defined in [`indra/CMakeLists.txt`](../indra/CMakeLists.txt). The mo
 |:--------------------------------------------------|:--------|:-------------------------------------------------------------------|
 | `USE_LTO`                                         | OFF     | Link Time Optimization                                             |
 | `USE_SSE4_2`, `USE_AVX`, `USE_AVX2`               | `USE_AVX2` ON, others OFF | Target SIMD instruction sets (x86_64 only, all three platforms) — `USE_AVX2` already implies FMA/BMI1/BMI2/F16C via the `x86-64-v3` microarchitecture level, no separate flags needed. Requires a Haswell-class Intel CPU (2013+) or Excavator/Zen-class AMD CPU (2015/2017+); set `USE_AVX2=OFF` for older hardware |
+| `USE_MARCH_NATIVE`                                | OFF     | Linux only. `-march=native`/`-mtune=native`, overriding `USE_AVX2`/`USE_AVX`/`USE_SSE4_2`. Ties the binary to this exact CPU — only for local builds you run yourself, never for distributed packages. Also requires a matching vcpkg triplet (e.g. `x64-linux-alchemy-clang-release-native`) so vcpkg-built deps match — set `VCPKG_TARGET_TRIPLET` accordingly in whatever preset enables this (a personal `CMakeUserPresets.json` entry is a good place, since the setting is inherently machine-specific) |
 | `ENABLE_ASAN`, `ENABLE_UBSAN`, `ENABLE_THREADSAN` | OFF     | Sanitizers (macOS and Linux only)                                  |
 | `<COMPILER>_DISABLE_FATAL_WARNINGS`               | OFF     | Don't treat warnings as errors. `<COMPILER>` is `VS`, `GCC`, or `CLANG` |
 | `DISABLE_RELEASE_DEBUG_LOGGING`                   | varies  | Strip debug-level logging from Release builds                      |
@@ -492,6 +501,29 @@ Double-check the package list for your distro under [Platform setup → Linux](#
 - `autoconf-archive` — required by several vcpkg ports
 - `libxkbcommon-dev`, `libwayland-dev`, `wayland-protocols` — required for SDL window and Wayland support
 - `libgstreamer-plugins-base1.0-dev` — required for the GStreamer media plugin
+
+### `mold` fails with "discarded COMDAT section probably due to an ODR violation" on LTO builds
+
+Seen with `USE_LTO=ON` linking targets that pull in vcpkg static libraries (e.g. `libboost_fiber.a`, `libfmt.a`) — typically a libstdc++ inline symbol like `std::system_error::system_error(std::error_code, char const*)`.
+
+This is a real `mold` regression, not a code or config problem: mold 2.41.0 (still the latest release as of this writing) mishandles COMDAT-group resolution when a link mixes LTO-compiled objects (our own code, compiled with `-flto=thin`) with precompiled non-LTO static libraries (everything vcpkg builds — the vcpkg triplets don't set `-flto`). It's a regression from 2.40.4, reported and fixed upstream — [rui314/mold#1613](https://github.com/rui314/mold/issues/1613), duplicate of [#1565](https://github.com/rui314/mold/issues/1565), fixed by commit [`920a5161`](https://github.com/rui314/mold/commit/920a5161) — but that fix hasn't shipped in a tagged release yet, so distro packages of mold don't have it.
+
+You can confirm it's the false positive rather than a real conflict: the two "conflicting" COMDAT copies are byte-identical (`ar x` the object out of each archive, then `objcopy -O binary --only-section=<section> ... | cmp`).
+
+Workarounds, in order of preference:
+
+1. **Build mold from source** at a commit including `920a5161` (or later) and point this build at it. **Putting it first on `PATH` does not work**, even though `find_program(mold)` at configure time respects `PATH` fine: Clang resolves the bare `-fuse-ld=mold` to `<clang's own InstalledDir>/ld.mold` (verify with `clang++ -fuse-ld=mold -### -o /tmp/x /dev/null`), not via a `PATH` search — so it silently keeps using the system package's `ld.mold` regardless of what a shell-level `PATH` override points at, `systemd-run`/`safe-build.sh` or not. The only proven fix is an absolute path baked into the link flags:
+   ```
+   -DCMAKE_LINKER_TYPE=DEFAULT \
+   -DCMAKE_EXE_LINKER_FLAGS=-fuse-ld=/absolute/path/to/fixed/mold \
+   -DCMAKE_SHARED_LINKER_FLAGS=-fuse-ld=/absolute/path/to/fixed/mold \
+   -DCMAKE_MODULE_LINKER_FLAGS=-fuse-ld=/absolute/path/to/fixed/mold
+   ```
+   `CMAKE_LINKER_TYPE=DEFAULT` is required, not optional: this repo's `00-Common.cmake` sets `CMAKE_LINKER_TYPE=MOLD` whenever it finds any `mold` on `PATH`, which injects its own bare `-fuse-ld=mold` into the link line. Since Clang takes the *last* `-fuse-ld=` flag, that injected one wins over an absolute-path `CMAKE_EXE_LINKER_FLAGS` unless `CMAKE_LINKER_TYPE` is forced to `DEFAULT` to suppress it — verify with `ninja -t commands <target> | grep -o -- '-fuse-ld=[^ ]*'`, which should show exactly one occurrence, before spending a full build cycle finding out it didn't take.
+
+   Scope the build to a local prefix (`-DCMAKE_INSTALL_PREFIX=...`) if you don't want to replace your system package — an out-of-tree `cmake --install` is enough. Point `CMAKE_EXE_LINKER_FLAGS` at the resulting binary from whatever preset needs it (a personal `CMakeUserPresets.json` entry is a natural place, since the path is local to whoever built it — not portable across machines or checkouts, and needs updating if mold is ever rebuilt elsewhere).
+2. **Use LLD instead of mold** for LTO builds: `-DCMAKE_LINKER_TYPE=LLD`. LLD's LTO support is unaffected by this bug.
+3. **Turn off `USE_LTO`** if neither is acceptable — not usually worth it, since LTO is the whole point of enabling it.
 
 ### Still stuck?
 
