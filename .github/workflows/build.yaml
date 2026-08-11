@@ -724,8 +724,14 @@ jobs:
           pattern: "*-releases"
 
       - uses: actions/download-artifact@v8
+        if: needs.setup.outputs.build_type == 'proprietary'
         with:
           name: "Linux-x64-app"
+
+      - uses: actions/download-artifact@v8
+        if: needs.setup.outputs.build_type != 'proprietary'
+        with:
+          name: "Linux-OS-x64-app"
 
       # forked from softprops/action-gh-release
       - name: Create GitHub release
