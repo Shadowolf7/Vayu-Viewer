@@ -16,8 +16,9 @@ In essence, think of Vayu as Alchemy with a different shirt and a set of car key
 
 ## Download
 
-- **Windows** — [latest release](https://github.com/Shadowolf7/Vayu-Viewer/releases/latest): `_Setup.exe` to install, or `_Portable.zip` to run without installing
-- **Linux** — [latest release](https://github.com/Shadowolf7/Vayu-Viewer/releases/latest): `.tar.xz`
+- **Windows** — [latest release](https://github.com/Shadowolf7/Vayu-Viewer/releases/download/Vayu_Alpha_4/Vayu_Develop_26_3_0_31458787956_x86_64_Setup.exe): `_Setup.exe` to install.
+~**Windows Portable** — [latest release](https://github.com/Shadowolf7/Vayu-Viewer/releases/download/Vayu_Alpha_4/Vayu_Develop_26_3_0_31458787956_x86_64_Portable.zip): `_Portable.zip` to run without installing.
+- **Linux** — [latest release](https://github.com/Shadowolf7/Vayu-Viewer/releases/download/Vayu_Alpha_4/Vayu_Develop_26_3_0_31458787956_x86_64.tar.xz): `.tar.xz`
 - **macOS** — not yet available; builds aren't signed/notarized for distribution
 
 See the [releases page](https://github.com/Shadowolf7/Vayu-Viewer/releases) for all versions.
