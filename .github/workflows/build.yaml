@@ -159,6 +159,14 @@ jobs:
             configuration: optdebug
 
     runs-on: ${{ matrix.runner }}
+    # macOS x64 Tests is a known, tracked failure (issue #56 — simdutf has no
+    # SIMD-accelerated implementation under Rosetta 2 emulation, so 6 tests
+    # that exercise it fail). CTest runs as a Ninja build target
+    # (BUILD_AND_RUN_TESTS-Release), so its failure is otherwise
+    # indistinguishable from a compile failure at the job level and blocks
+    # `release`/`sign-and-package-windows`, which need every `build` leg to
+    # succeed. Don't let this one known leg block shipping a release.
+    continue-on-error: ${{ matrix.runner == 'macos-26' && matrix.arch == 'x64' && matrix.build_variant == 'Tests' }}
     outputs:
       viewer_version: ${{ steps.build.outputs.viewer_version }}
       imagename: ${{ steps.build.outputs.imagename }}
