@@ -502,6 +502,22 @@ Double-check the package list for your distro under [Platform setup → Linux](#
 - `libxkbcommon-dev`, `libwayland-dev`, `wayland-protocols` — required for SDL window and Wayland support
 - `libgstreamer-plugins-base1.0-dev` — required for the GStreamer media plugin
 
+### vcpkg curl build fails with "try_run() invoked in cross-compiling mode"
+
+Seen when building the vendored `curl` overlay port (`indra/vcpkg/ports/curl`, pinned to 7.54.1 for Linden's HTTP/1.1 pipelining patch — see [#67](https://github.com/Shadowolf7/Vayu-Viewer/issues/67)) with the Clang preset:
+
+```
+CMake Error: try_run() invoked in cross-compiling mode, please set the following cache variables appropriately:
+   HAVE_FSETXATTR_5 (advanced)
+   HAVE_POSIX_STRERROR_R (advanced)
+   HAVE_POLL_FINE_EXITCODE (advanced)
+-- Configuring incomplete, errors occurred!
+```
+
+Root cause: `indra/vcpkg/triplets/x64-linux-clang-toolchain.cmake` sets `CMAKE_SYSTEM_NAME`/`CMAKE_SYSTEM_PROCESSOR` explicitly (needed so vcpkg builds every port with Clang instead of falling back to the system compiler — see [#30](https://github.com/Shadowolf7/Vayu-Viewer/issues/30)). Setting `CMAKE_SYSTEM_NAME` in a toolchain file makes CMake assume cross-compiling regardless of whether the value actually matches the host, which breaks any port whose CMake build uses `try_run()` for feature detection — curl 7.54.1's does. Most ports never hit this because they don't call `try_run()`.
+
+Fixed by explicitly forcing `set(CMAKE_CROSSCOMPILING OFF CACHE BOOL "")` in that same toolchain file (safe here since it's only ever used for this native x64 Linux build, never a real cross-target). If you see this error, confirm that line is still present — it's easy to lose if the toolchain file gets rewritten.
+
 ### `mold` fails with "discarded COMDAT section probably due to an ODR violation" on LTO builds
 
 Seen with `USE_LTO=ON` linking targets that pull in vcpkg static libraries (e.g. `libboost_fiber.a`, `libfmt.a`) — typically a libstdc++ inline symbol like `std::system_error::system_error(std::error_code, char const*)`.

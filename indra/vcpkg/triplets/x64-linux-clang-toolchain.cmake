@@ -17,3 +17,11 @@ set(CMAKE_CXX_COMPILER clang++)
 # see it empty and fail to configure.
 set(CMAKE_SYSTEM_NAME Linux)
 set(CMAKE_SYSTEM_PROCESSOR x86_64)
+
+# Setting CMAKE_SYSTEM_NAME above makes CMake assume cross-compiling,
+# regardless of whether it matches the host - which breaks ports whose
+# CMakeLists.txt uses try_run() for feature detection (e.g. curl's
+# HAVE_POSIX_STRERROR_R), since CMake refuses to execute a test binary
+# it thinks was built for a foreign target. This toolchain is only ever
+# used for this native x64 Linux build, so it's always safe to disable.
+set(CMAKE_CROSSCOMPILING OFF CACHE BOOL "")
