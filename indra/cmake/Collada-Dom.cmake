@@ -25,6 +25,12 @@ find_library(COLLADA14_LIBRARY_DEBUG
 
 if (NOT COLLADA14_LIBRARY_DEBUG STREQUAL "COLLADA14_LIBRARY_DEBUG-NOTFOUND")
     target_link_libraries(ll::colladadom INTERFACE debug ${COLLADA14_LIBRARY_DEBUG})
+elseif (LINUX)
+    # Release-only vcpkg triplets (VCPKG_BUILD_TYPE release, e.g. the
+    # *-release-native perf triplets) never populate debug/lib. Only safe to
+    # fall back to the Release archive on Linux, where there's no separate
+    # debug CRT (VCPKG_CRT_LINKAGE dynamic) to mismatch against.
+    target_link_libraries(ll::colladadom INTERFACE debug ${COLLADA14_LIBRARY_RELEASE})
 endif()
 
 find_package(minizip CONFIG REQUIRED)

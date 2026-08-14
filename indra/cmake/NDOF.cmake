@@ -26,6 +26,12 @@ if (USE_NDOF)
 
   if (NOT NDOF_LIBRARY_DEBUG STREQUAL "NDOF_LIBRARY_DEBUG-NOTFOUND")
     target_link_libraries(ll::ndof INTERFACE debug ${NDOF_LIBRARY_DEBUG})
+  elseif (LINUX)
+    # Release-only vcpkg triplets (VCPKG_BUILD_TYPE release, e.g. the
+    # *-release-native perf triplets) never populate debug/lib. Only safe to
+    # fall back to the Release archive on Linux, where there's no separate
+    # debug CRT (VCPKG_CRT_LINKAGE dynamic) to mismatch against.
+    target_link_libraries(ll::ndof INTERFACE debug ${NDOF_LIBRARY_RELEASE})
   endif()
 
   if (LINUX)

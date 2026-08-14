@@ -33,6 +33,7 @@ target_link_libraries(media_plugin_libvlc
         llcommon
         ll::pluginlibraries
 )
+ll_plugin_workaround_mold_archive_bug(media_plugin_libvlc)
 
 if (WINDOWS)
   set_target_properties(media_plugin_libvlc
