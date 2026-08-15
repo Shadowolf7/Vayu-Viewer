@@ -5020,6 +5020,9 @@ bool LLVOAvatar::updateCharacter(LLAgent &agent)
     //--------------------------------------------------------------------
     if (getParent() && !isSitting())
     {
+        LL_INFOS("Avatar") << (isSelf() ? "Self a" : "A") << "vatar " << getID()
+            << " has parent " << ((LLViewerObject*)getParent())->getID()
+            << " but mIsSitting is false; auto-reseating via idle reconciliation" << LL_ENDL;
         sitOnObject((LLViewerObject*)getParent());
     }
     else if (!getParent() && isSitting() && !isMotionActive(ANIM_AGENT_SIT_GROUND_CONSTRAINED))
@@ -8233,6 +8236,11 @@ void LLVOAvatar::sitDown(bool bSitting)
 //-----------------------------------------------------------------------------
 void LLVOAvatar::sitOnObject(LLViewerObject *sit_object)
 {
+    LL_INFOS("Avatar") << (isSelf() ? "Self a" : "A") << "vatar " << getID()
+        << " sitting on object " << sit_object->getID()
+        << " in region " << (sit_object->getRegion() ? sit_object->getRegion()->getName() : "(none)")
+        << ", mIsSitting was " << (mIsSitting ? "true" : "false") << LL_ENDL;
+
     if (isSelf())
     {
         // Might be first sit
@@ -8308,6 +8316,10 @@ void LLVOAvatar::getOffObject()
     }
 
     LLViewerObject* sit_object = (LLViewerObject*)getParent();
+
+    LL_INFOS("Avatar") << (isSelf() ? "Self a" : "A") << "vatar " << getID()
+        << " getting off object " << (sit_object ? sit_object->getID() : LLUUID::null)
+        << LL_ENDL;
 
     if (sit_object)
     {

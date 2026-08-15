@@ -1027,6 +1027,8 @@ bool LLAgent::isSitting()
 
 void LLAgent::standUp()
 {
+    LL_INFOS("Avatar") << "Explicit stand requested, agent was "
+        << (isAgentAvatarValid() && gAgentAvatarp->isSitting() ? "sitting" : "not sitting") << LL_ENDL;
 //  setControlFlags(AGENT_CONTROL_STAND_UP);
 // [RLVa:KB] - Checked: 2010-03-07 (RLVa-1.2.0c) | Added: RLVa-1.2.0a
     // RELEASE-RLVa: [SL-2.0.0] Check this function's callers since usually they require explicit blocking
