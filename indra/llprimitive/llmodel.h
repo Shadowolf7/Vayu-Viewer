@@ -39,9 +39,7 @@ class domMesh;
 
 #define MAX_MODEL_FACES 8
 
-// Thread-safe refcount because the mesh repository shares one instance between the main
-// thread and the mesh worker threads rather than mirroring it -- see mFrozen below.
-class alignas(16) LLMeshSkinInfo : public LLThreadSafeRefCount
+class alignas(16) LLMeshSkinInfo : public LLRefCount
 {
     LL_ALIGN_NEW
 public:
@@ -72,16 +70,6 @@ public:
     bool mInvalidJointsScrubbed;
     bool mJointNumsInitialized;
     U64 mHash = 0;
-
-    // Set before this skin is handed to more than one thread. mJointNums and
-    // mJointNumsInitialized are the only fields written after construction, by
-    // LLSkinningUtil::initJointNums(); freezing resolves them once against the skeleton
-    // and makes that function a no-op, so a frozen skin has no mutable state left and
-    // the same instance can be shared instead of copied.
-    //
-    // It says nothing about who currently holds the skin. Do not read it as a proxy for
-    // membership of any cache.
-    bool mFrozen = false;
 };
 
 class alignas(16) LLModel : public LLVolume
