@@ -15,14 +15,11 @@ export mesa_glthread=true
 ## drivers. Comment out if you see visual artifacts.
 export AMD_DEBUG=lowprecision
 
-## Swap in mimalloc as the allocator -- measurably lower allocator
-## overhead than glibc malloc for this workload. Path assumes an
-## RPM-family distro layout (openSUSE/Fedora); adjust for others
-## (e.g. /usr/lib/x86_64-linux-gnu/libmimalloc.so.3 on Debian/Ubuntu).
-## A missing path here just produces a harmless ld.so warning, it
-## doesn't stop the viewer from starting.
-export LD_PRELOAD=/usr/lib64/libmimalloc.so.3
-# export LD_PRELOAD=/usr/lib64/libjemalloc.so.2
+## The allocator is rpmalloc, linked directly into the binary at build time
+## (see indra/cmake/RPMalloc.cmake) rather than swapped in here via
+## LD_PRELOAD against a system-installed library -- no LD_PRELOAD line
+## needed, and nothing here to keep in sync with whatever distro this runs
+## on.
 
 ## Everything below this line is just for advanced troubleshooters.
 ##-------------------------------------------------------------------

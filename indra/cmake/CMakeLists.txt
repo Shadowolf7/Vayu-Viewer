@@ -48,6 +48,7 @@ set(cmake_SOURCE_FILES
         PluginAPI.cmake
         PNG.cmake
         Python.cmake
+        RPMalloc.cmake
         run_build_test.py
         SDL3.cmake
         SSE2NEON.cmake
