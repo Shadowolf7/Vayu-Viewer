@@ -92,6 +92,10 @@ option(USE_NVAPI "Use NVidia NVAPI library for gpu profile support (Windows Only
 option(USE_OPENXR "Enable building with OpenXR support (Experimental)" OFF)
 option(USE_PRECOMPILED_HEADERS "Enable use of precompiled header directives where supported." ON)
 option(USE_CCACHE "Use ccache to speed up recompilation if it is available" ON)
+# macOS malloc interposition goes through the zone allocator system, not
+# symbol override -- rpmalloc's link-time override wasn't built or verified
+# against that, so this is off on Darwin regardless of the cache value.
+cmake_dependent_option(USE_RPMALLOC "Link rpmalloc in as the process-wide malloc/free/new/delete implementation" ON "NOT DARWIN" OFF)
 
 # Audio Engines
 option(USE_FMODSTUDIO "Enable support for the FMOD Studio audio engine" OFF)
@@ -359,6 +363,7 @@ include(LLPhysicsExtensions)
 include(Mesa)
 include(Meshoptimizer)
 include(Mikktspace)
+include(RPMalloc)
 include(NDOF)
 include(NSSpellChecker)
 include(NVAPI)

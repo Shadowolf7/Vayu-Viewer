@@ -2008,6 +2008,21 @@ if (TARGET ll::velopack)
    target_link_libraries(${VIEWER_BINARY_NAME} ll::velopack )
 endif ()
 
+if (TARGET ll::rpmalloc)
+   target_link_libraries(${VIEWER_BINARY_NAME} ll::rpmalloc )
+   target_compile_definitions(${VIEWER_BINARY_NAME} PRIVATE LL_USE_RPMALLOC=1)
+   if (LINUX)
+      # Without this, rpmalloc's malloc/free only override calls made from
+      # vayu-bin's own object code. Dynamically linked shared libraries
+      # (openssl, curl, sdl3, etc.) would keep resolving malloc/free against
+      # glibc, since ELF only lets a process-wide symbol win over a shared
+      # library's own copy if that symbol is visible in the executable's
+      # dynamic symbol table. --export-dynamic puts it there, matching what
+      # LD_PRELOAD did unconditionally for every loaded module.
+      target_link_options(${VIEWER_BINARY_NAME} PRIVATE "-Wl,--export-dynamic")
+   endif ()
+endif ()
+
 if (NOT DISABLE_WEBRTC)
     if(WINDOWS)
         target_link_libraries(${VIEWER_BINARY_NAME} $<$<CONFIG:OptDebug,RelWithDebInfo,Release>:llwebrtc>)

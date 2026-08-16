@@ -28,6 +28,27 @@
 
 #include "llappviewerwin32.h"
 
+#ifdef LL_USE_RPMALLOC
+#include "llprofiler.h"
+#if !(defined(LL_PROFILER_CONFIGURATION) && LL_PROFILER_CONFIGURATION >= LL_PROFILER_CONFIG_TRACY)
+// rpmalloc overrides plain malloc/free automatically once linked in, but
+// C++ operator new/delete need an explicit override on Windows -- rpnew.h
+// defines them with external linkage. It has no include guard by design
+// (the README calls out that including it twice is a duplicate-symbol
+// error), so this must stay the one and only place it's included. Every
+// other platform gets operator new/delete overridden by rpmalloc.c itself
+// (see RPMalloc.cmake/malloc.c's local patch for why that path is disabled
+// when Tracy is on); including rpnew.h there too would conflict with that.
+//
+// llcommon.cpp defines its own operator new/delete when Tracy profiling is
+// compiled in, to hook LL_PROFILE_ALLOC/FREE -- on every platform for the
+// unaligned overloads, and on non-Linux (so Windows too) for the aligned
+// ones. Since that still calls plain malloc/free internally, allocations
+// already land in rpmalloc either way; rpnew.h would just collide with it.
+#include "rpnew.h"
+#endif
+#endif
+
 #if !LL_SDL_WINDOW
 #include "llwindowwin32.h" // for gIconResource, set in the native WINMAIN below
 #endif

@@ -28,6 +28,10 @@
 
 #include "llappviewer.h"
 
+#ifdef LL_USE_RPMALLOC
+#include "rpmalloc.h"
+#endif
+
 // Viewer includes
 #include "llversioninfo.h"
 #include "llfeaturemanager.h"
@@ -659,6 +663,16 @@ LLAppViewer::LLAppViewer()
     mSettingsLocationList(NULL),
     mIsFirstRun(false)
 {
+#ifdef LL_USE_RPMALLOC
+    // rpmalloc.c is only pulled out of the static archive if something in
+    // the final link references a symbol from it -- the viewer never calls
+    // rp* functions directly, only the plain malloc/free family that
+    // ENABLE_OVERRIDE makes rpmalloc.c define. Without this call the linker
+    // has no reason to include that object file, and rpmalloc's override
+    // silently never takes effect. See rpmalloc's README, "override".
+    rpmalloc_linker_reference();
+#endif
+
     if(NULL != sInstance)
     {
         LL_ERRS() << "Oh no! An instance of LLAppViewer already exists! LLAppViewer is sort of like a singleton." << LL_ENDL;
