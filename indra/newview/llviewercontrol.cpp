@@ -64,7 +64,7 @@
 #include "llvovolume.h"
 #include "llworld.h"
 #include "llvlcomposition.h"
-#include "llimageblockcompressor.h"
+#include "vayuimageblockcompressor.h"
 #include "pipeline.h"
 #include "llviewerjoystick.h"
 #include "llviewerobjectlist.h"
@@ -625,7 +625,7 @@ static bool handleRenderCompressTexturesChanged(const LLSD& newvalue)
 
 static bool handleRenderCompressTexturesPresetChanged(const LLSD& newvalue)
 {
-    LLImageBlockCompressor::setPreset(static_cast<ELLBlockCompressionPreset>(newvalue.asInteger()));
+    VayuImageBlockCompressor::setPreset(static_cast<EVayuBlockCompressionPreset>(newvalue.asInteger()));
     return true;
 }
 

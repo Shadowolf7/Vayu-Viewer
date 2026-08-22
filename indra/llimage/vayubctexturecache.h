@@ -1,17 +1,16 @@
 /**
- * @file llbctexturecache.h
+ * @file vayubctexturecache.h
  * @brief On-disk cache for pre-encoded block-compressed texture mip chains.
  *
  * Standalone from LLTextureCache (which caches the still-JPEG2000-compressed
  * asset bytes) so that a mistake here can't corrupt the texture cache every
  * load already depends on. Deliberately knows nothing about
- * LLBlockCompressionResult/bc7e - it stores whatever (header, buffer) bytes
+ * VayuBlockCompressionResult/bc7e - it stores whatever (header, buffer) bytes
  * it's given and hands them back, so it stays unit-testable without linking
  * llimage.
  */
 
-#ifndef LL_LLBCTEXTURECACHE_H
-#define LL_LLBCTEXTURECACHE_H
+#pragma once
 
 #include "lluuid.h"
 
@@ -24,11 +23,11 @@
 #include <vector>
 
 // Mirrors the fields callers need to reconstruct a GL upload without
-// depending on llimage's LLBlockCompressionResult type directly.
-struct LLBCCacheEntryHeader
+// depending on llimage's VayuBlockCompressionResult type directly.
+struct VayuBCCacheEntryHeader
 {
-    U8  mFormat = 0;           // ELLBlockCompressionFormat, as encoded by the caller
-    U8  mPreset = 0;           // ELLBlockCompressionPreset the buffer was encoded at
+    U8  mFormat = 0;           // EVayuBlockCompressionFormat, as encoded by the caller
+    U8  mPreset = 0;           // EVayuBlockCompressionPreset the buffer was encoded at
     S32 mMipLevels = 0;
     U32 mWidth = 0;
     U32 mHeight = 0;
@@ -37,14 +36,14 @@ struct LLBCCacheEntryHeader
     U32 mGLPrimaryFormat = 0;
 };
 
-class LLBCTextureCache
+class VayuBCTextureCache
 {
 public:
-    static LLBCTextureCache& instance();
+    static VayuBCTextureCache& instance();
 
     // Not copyable - single process-wide cache.
-    LLBCTextureCache(const LLBCTextureCache&) = delete;
-    LLBCTextureCache& operator=(const LLBCTextureCache&) = delete;
+    VayuBCTextureCache(const VayuBCTextureCache&) = delete;
+    VayuBCTextureCache& operator=(const VayuBCTextureCache&) = delete;
 
     // Creates cache_dir if needed and scans existing entries. Safe to call
     // again to change the size budget; does not re-scan if already initialized
@@ -60,20 +59,20 @@ public:
     // lower preset than currently configured is treated as a miss so callers
     // re-encode and overwrite it, rather than being stuck at low quality.
     bool readEntry(const LLUUID& id, S32 discard_level, U8 min_preset,
-                   LLBCCacheEntryHeader& header, std::vector<U8>& buffer);
+                   VayuBCCacheEntryHeader& header, std::vector<U8>& buffer);
 
     // Writes (or overwrites) the entry for (id, discard_level). Evicts the
     // least-recently-touched entries afterward if this pushed the cache over
     // its size budget.
     void writeEntry(const LLUUID& id, S32 discard_level,
-                    const LLBCCacheEntryHeader& header, const std::vector<U8>& buffer);
+                    const VayuBCCacheEntryHeader& header, const std::vector<U8>& buffer);
 
     S64 getCurrentSize() const;
     S64 getMaxSize() const { return mMaxSize; }
     size_t getEntryCount() const;
 
 private:
-    LLBCTextureCache() = default;
+    VayuBCTextureCache() = default;
 
     struct IndexEntry
     {
@@ -104,5 +103,3 @@ private:
     LruList mLruList;
     std::unordered_map<std::string, LruList::iterator> mIndex;
 };
-
-#endif // LL_LLBCTEXTURECACHE_H

@@ -1,11 +1,11 @@
 /**
- * @file llbctexturecache.cpp
+ * @file vayubctexturecache.cpp
  * @brief On-disk cache for pre-encoded block-compressed texture mip chains.
  */
 
 #include "linden_common.h"
 
-#include "llbctexturecache.h"
+#include "vayubctexturecache.h"
 
 #include <algorithm>
 #include <fstream>
@@ -13,7 +13,7 @@
 
 namespace
 {
-    // Bump kFormatVersion (not kMagic) whenever LLBCCacheEntryHeader's layout
+    // Bump kFormatVersion (not kMagic) whenever VayuBCCacheEntryHeader's layout
     // changes, so old on-disk entries are treated as misses instead of being
     // misread as valid data.
     constexpr U32 kMagic = 0x31434256; // "VBC1"
@@ -27,28 +27,28 @@ namespace
     {
         U32 mMagic = kMagic;
         U32 mVersion = kFormatVersion;
-        LLBCCacheEntryHeader mMeta;
+        VayuBCCacheEntryHeader mMeta;
         U64 mBufferSize = 0;
     };
 }
 
-LLBCTextureCache& LLBCTextureCache::instance()
+VayuBCTextureCache& VayuBCTextureCache::instance()
 {
-    static LLBCTextureCache sInstance;
+    static VayuBCTextureCache sInstance;
     return sInstance;
 }
 
-std::string LLBCTextureCache::entryKey(const LLUUID& id, S32 discard_level) const
+std::string VayuBCTextureCache::entryKey(const LLUUID& id, S32 discard_level) const
 {
     return id.asString() + "_" + std::to_string(discard_level);
 }
 
-std::filesystem::path LLBCTextureCache::entryPath(const LLUUID& id, S32 discard_level) const
+std::filesystem::path VayuBCTextureCache::entryPath(const LLUUID& id, S32 discard_level) const
 {
     return mCacheDir / (entryKey(id, discard_level) + ".bc");
 }
 
-void LLBCTextureCache::initCache(const std::filesystem::path& cache_dir, S64 max_size_bytes)
+void VayuBCTextureCache::initCache(const std::filesystem::path& cache_dir, S64 max_size_bytes)
 {
     std::lock_guard<std::mutex> lock(mMutex);
 
@@ -68,7 +68,7 @@ void LLBCTextureCache::initCache(const std::filesystem::path& cache_dir, S64 max
     std::filesystem::create_directories(mCacheDir, ec);
     if (ec)
     {
-        LL_WARNS("Texture") << "LLBCTextureCache: failed to create " << mCacheDir.string()
+        LL_WARNS("Texture") << "VayuBCTextureCache: failed to create " << mCacheDir.string()
                              << ": " << ec.message() << LL_ENDL;
         mInitialized = false;
         return;
@@ -114,7 +114,7 @@ void LLBCTextureCache::initCache(const std::filesystem::path& cache_dir, S64 max
     mInitialized = true;
 }
 
-void LLBCTextureCache::purge()
+void VayuBCTextureCache::purge()
 {
     std::lock_guard<std::mutex> lock(mMutex);
 
@@ -128,8 +128,8 @@ void LLBCTextureCache::purge()
     mCurrentSize = 0;
 }
 
-bool LLBCTextureCache::readEntry(const LLUUID& id, S32 discard_level, U8 min_preset,
-                                 LLBCCacheEntryHeader& header, std::vector<U8>& buffer)
+bool VayuBCTextureCache::readEntry(const LLUUID& id, S32 discard_level, U8 min_preset,
+                                 VayuBCCacheEntryHeader& header, std::vector<U8>& buffer)
 {
     std::lock_guard<std::mutex> lock(mMutex);
 
@@ -170,8 +170,8 @@ bool LLBCTextureCache::readEntry(const LLUUID& id, S32 discard_level, U8 min_pre
     return true;
 }
 
-void LLBCTextureCache::writeEntry(const LLUUID& id, S32 discard_level,
-                                  const LLBCCacheEntryHeader& header, const std::vector<U8>& buffer)
+void VayuBCTextureCache::writeEntry(const LLUUID& id, S32 discard_level,
+                                  const VayuBCCacheEntryHeader& header, const std::vector<U8>& buffer)
 {
     std::lock_guard<std::mutex> lock(mMutex);
 
@@ -216,12 +216,12 @@ void LLBCTextureCache::writeEntry(const LLUUID& id, S32 discard_level,
     evictUntilWithinBudget();
 }
 
-void LLBCTextureCache::touch(LruList::iterator it)
+void VayuBCTextureCache::touch(LruList::iterator it)
 {
     mLruList.splice(mLruList.begin(), mLruList, it);
 }
 
-void LLBCTextureCache::removeEntry(const std::string& key)
+void VayuBCTextureCache::removeEntry(const std::string& key)
 {
     auto it = mIndex.find(key);
     if (it == mIndex.end())
@@ -234,7 +234,7 @@ void LLBCTextureCache::removeEntry(const std::string& key)
     mIndex.erase(it);
 }
 
-void LLBCTextureCache::evictUntilWithinBudget()
+void VayuBCTextureCache::evictUntilWithinBudget()
 {
     if (mCurrentSize <= mMaxSize)
         return;
@@ -249,13 +249,13 @@ void LLBCTextureCache::evictUntilWithinBudget()
     }
 }
 
-S64 LLBCTextureCache::getCurrentSize() const
+S64 VayuBCTextureCache::getCurrentSize() const
 {
     std::lock_guard<std::mutex> lock(mMutex);
     return mCurrentSize;
 }
 
-size_t LLBCTextureCache::getEntryCount() const
+size_t VayuBCTextureCache::getEntryCount() const
 {
     std::lock_guard<std::mutex> lock(mMutex);
     return mIndex.size();

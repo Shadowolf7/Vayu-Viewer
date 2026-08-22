@@ -34,7 +34,7 @@
 #include "lluuid.h"
 #include <memory>
 
-struct LLBlockCompressionResult;
+struct VayuBlockCompressionResult;
 
 constexpr S32 MIN_IMAGE_MIP =  2; // 4x4, only used for expand/contract power of 2
 constexpr S32 MAX_IMAGE_MIP = 12; // 4096x4096
@@ -290,8 +290,8 @@ public:
     std::string getComment() const { return mComment; }
     std::string mComment;
 
-    void setBlockCompressionResult(std::shared_ptr<LLBlockCompressionResult> result) { mBlockCompressionResult = result; }
-    std::shared_ptr<LLBlockCompressionResult> getBlockCompressionResult() const { return mBlockCompressionResult; }
+    void setBlockCompressionResult(std::shared_ptr<VayuBlockCompressionResult> result) { mBlockCompressionResult = result; }
+    std::shared_ptr<VayuBlockCompressionResult> getBlockCompressionResult() const { return mBlockCompressionResult; }
     bool hasBlockCompressionResult() const { return mBlockCompressionResult != nullptr; }
 
     // Emissive operations used by minimap
@@ -323,7 +323,7 @@ protected:
 
     void setDataAndSize(U8 *data, S32 width, S32 height, S8 components) ;
 
-    std::shared_ptr<LLBlockCompressionResult> mBlockCompressionResult;
+    std::shared_ptr<VayuBlockCompressionResult> mBlockCompressionResult;
 
 public:
     static S32 sRawImageCount;

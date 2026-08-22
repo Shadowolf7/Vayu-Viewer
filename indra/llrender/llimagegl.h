@@ -209,6 +209,13 @@ public:
     // morph-mask upload) call this themselves before/after binding.
     static void applySwizzleForDeprecatedFormat(ALTextureSlot::eTextureType type, U32 original_format);
 
+    // Categories (LLGLTexture::EBoostLevel / other-category values) whose
+    // pixels must stay exact or whose content is regenerated too often for
+    // background BC encoding to pay off. Shared by the upload-time decision
+    // here and by the fetch-time decision in LLViewerFetchedTexture so the
+    // two stay in lockstep instead of drifting into two different lists.
+    static bool categoryAllowsCompression(S32 category);
+
     bool createGLTexture() ;
     bool createGLTexture(S32 discard_level, const LLImageRaw* imageraw, S32 usename = 0, bool to_create = true,
         S32 category = sMaxCategories-1, bool defer_copy = false, LLGLuint* tex_name = nullptr);

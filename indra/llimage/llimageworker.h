@@ -50,7 +50,7 @@ public:
     // meant to resemble LLQueuedThread::handle_t
     typedef U32 handle_t;
     handle_t decodeImage(const LLPointer<LLImageFormatted>& image,
-                         S32 discard, bool needs_aux,
+                         S32 discard, bool needs_aux, bool allow_compression,
                          const LLPointer<Responder>& responder,
                          const LLUUID& id = LLUUID::null);
     size_t getPending();
