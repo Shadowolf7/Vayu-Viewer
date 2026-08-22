@@ -17,9 +17,10 @@
 
 #include <cstdint>
 #include <filesystem>
-#include <map>
+#include <list>
 #include <mutex>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 // Mirrors the fields callers need to reconstruct a GL upload without
@@ -76,27 +77,32 @@ private:
 
     struct IndexEntry
     {
+        std::string mKey;
         std::filesystem::path mPath;
         S64 mFileSize = 0;
-        U64 mRecency = 0; // higher = more recently written/read; see mNextRecency
     };
+
+    // Recency order lives in the list itself: front is most recently
+    // touched, back is least. Eviction always pops the back; touching an
+    // entry always splices it to the front. Both are O(1) - std::list
+    // splice/erase never relocate elements or invalidate other iterators,
+    // which is what lets mIndex hold onto iterators into this list safely.
+    using LruList = std::list<IndexEntry>;
 
     std::filesystem::path entryPath(const LLUUID& id, S32 discard_level) const;
     std::string entryKey(const LLUUID& id, S32 discard_level) const;
+    void touch(LruList::iterator it);
     void evictUntilWithinBudget();
-    void removeEntry(const std::string& key, const IndexEntry& entry);
+    void removeEntry(const std::string& key);
 
     mutable std::mutex mMutex;
     std::filesystem::path mCacheDir;
     S64 mMaxSize = 0;
     S64 mCurrentSize = 0;
     bool mInitialized = false;
-    U64 mNextRecency = 0; // monotonic counter; avoids relying on filesystem mtime resolution
 
-    // Keyed by entryKey(id, discard_level); ordering for eviction comes from
-    // each file's on-disk mtime (touched on every read hit and every write),
-    // not this map's iteration order.
-    std::map<std::string, IndexEntry> mIndex;
+    LruList mLruList;
+    std::unordered_map<std::string, LruList::iterator> mIndex;
 };
 
 #endif // LL_LLBCTEXTURECACHE_H

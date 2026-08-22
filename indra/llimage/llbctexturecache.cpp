@@ -19,6 +19,10 @@ namespace
     constexpr U32 kMagic = 0x31434256; // "VBC1"
     constexpr U32 kFormatVersion = 1;
 
+    // Once eviction kicks in, cut a bit past the ceiling so a steady trickle
+    // of writes right at the limit doesn't retrigger eviction on every write.
+    constexpr double kEvictionHeadroomFraction = 0.10;
+
     struct FileHeader
     {
         U32 mMagic = kMagic;
@@ -57,6 +61,7 @@ void LLBCTextureCache::initCache(const std::filesystem::path& cache_dir, S64 max
 
     mCacheDir = cache_dir;
     mIndex.clear();
+    mLruList.clear();
     mCurrentSize = 0;
 
     std::error_code ec;
@@ -69,9 +74,10 @@ void LLBCTextureCache::initCache(const std::filesystem::path& cache_dir, S64 max
         return;
     }
 
-    // Scan existing entries and order them oldest-to-newest by on-disk mtime so
-    // the in-process recency counter (used for all eviction decisions from
-    // here on, never the filesystem clock again) starts from a sane ordering.
+    // Scan existing entries and order them oldest-to-newest by on-disk mtime,
+    // then rebuild the LRU list in that order so it starts from a sane
+    // recency ordering (the filesystem clock is never consulted again after
+    // this).
     std::vector<std::pair<std::filesystem::file_time_type, IndexEntry>> found;
     for (const auto& dirent : std::filesystem::directory_iterator(mCacheDir, ec))
     {
@@ -87,6 +93,7 @@ void LLBCTextureCache::initCache(const std::filesystem::path& cache_dir, S64 max
             continue;
 
         IndexEntry entry;
+        entry.mKey = dirent.path().stem().string();
         entry.mPath = dirent.path();
         entry.mFileSize = size;
         found.emplace_back(mtime, entry);
@@ -95,10 +102,12 @@ void LLBCTextureCache::initCache(const std::filesystem::path& cache_dir, S64 max
     std::sort(found.begin(), found.end(),
               [](const auto& a, const auto& b) { return a.first < b.first; });
 
+    // Ascending mtime + push_front each => list ends up newest-at-front,
+    // oldest-at-back, matching mLruList's eviction convention.
     for (auto& [mtime, entry] : found)
     {
-        entry.mRecency = ++mNextRecency;
-        mIndex[entry.mPath.stem().string()] = entry;
+        mLruList.push_front(entry);
+        mIndex[entry.mKey] = mLruList.begin();
         mCurrentSize += entry.mFileSize;
     }
 
@@ -109,11 +118,12 @@ void LLBCTextureCache::purge()
 {
     std::lock_guard<std::mutex> lock(mMutex);
 
-    for (const auto& [key, entry] : mIndex)
+    for (const auto& entry : mLruList)
     {
         std::error_code ec;
         std::filesystem::remove(entry.mPath, ec);
     }
+    mLruList.clear();
     mIndex.clear();
     mCurrentSize = 0;
 }
@@ -128,7 +138,7 @@ bool LLBCTextureCache::readEntry(const LLUUID& id, S32 discard_level, U8 min_pre
     if (it == mIndex.end())
         return false;
 
-    std::ifstream in(it->second.mPath, std::ios::binary);
+    std::ifstream in(it->second->mPath, std::ios::binary);
     if (!in.good())
         return false;
 
@@ -138,7 +148,7 @@ bool LLBCTextureCache::readEntry(const LLUUID& id, S32 discard_level, U8 min_pre
     {
         // Stale or corrupt entry - reclaim the space rather than leaving dead weight.
         in.close();
-        removeEntry(key, it->second);
+        removeEntry(key);
         return false;
     }
 
@@ -155,7 +165,7 @@ bool LLBCTextureCache::readEntry(const LLUUID& id, S32 discard_level, U8 min_pre
         return false;
 
     header = file_header.mMeta;
-    it->second.mRecency = ++mNextRecency;
+    touch(it->second);
 
     return true;
 }
@@ -183,49 +193,59 @@ void LLBCTextureCache::writeEntry(const LLUUID& id, S32 discard_level,
     out.write(reinterpret_cast<const char*>(buffer.data()), (std::streamsize)buffer.size());
     out.close();
 
+    const S64 new_size = (S64)(sizeof(file_header) + buffer.size());
+
     auto prior = mIndex.find(key);
     if (prior != mIndex.end())
     {
-        mCurrentSize -= prior->second.mFileSize;
+        mCurrentSize -= prior->second->mFileSize;
+        prior->second->mFileSize = new_size;
+        touch(prior->second);
     }
-
-    IndexEntry entry;
-    entry.mPath = path;
-    entry.mFileSize = (S64)(sizeof(file_header) + buffer.size());
-    entry.mRecency = ++mNextRecency;
-    mIndex[key] = entry;
-    mCurrentSize += entry.mFileSize;
+    else
+    {
+        IndexEntry entry;
+        entry.mKey = key;
+        entry.mPath = path;
+        entry.mFileSize = new_size;
+        mLruList.push_front(entry);
+        mIndex[key] = mLruList.begin();
+    }
+    mCurrentSize += new_size;
 
     evictUntilWithinBudget();
 }
 
-void LLBCTextureCache::removeEntry(const std::string& key, const IndexEntry& entry)
+void LLBCTextureCache::touch(LruList::iterator it)
 {
+    mLruList.splice(mLruList.begin(), mLruList, it);
+}
+
+void LLBCTextureCache::removeEntry(const std::string& key)
+{
+    auto it = mIndex.find(key);
+    if (it == mIndex.end())
+        return;
+
     std::error_code ec;
-    std::filesystem::remove(entry.mPath, ec);
-    mCurrentSize -= entry.mFileSize;
-    mIndex.erase(key);
+    std::filesystem::remove(it->second->mPath, ec);
+    mCurrentSize -= it->second->mFileSize;
+    mLruList.erase(it->second);
+    mIndex.erase(it);
 }
 
 void LLBCTextureCache::evictUntilWithinBudget()
 {
-    while (mCurrentSize > mMaxSize && !mIndex.empty())
+    if (mCurrentSize <= mMaxSize)
+        return;
+
+    // Cut a bit past the ceiling (10% headroom) so a steady trickle of
+    // writes right at the limit doesn't retrigger eviction on every write.
+    const S64 target_size = (S64)(mMaxSize * (1.0 - kEvictionHeadroomFraction));
+
+    while (mCurrentSize > target_size && !mLruList.empty())
     {
-        // O(n) oldest-entry scan per eviction: fine at expected entry counts
-        // (thousands, not millions); revisit if that stops being true.
-        std::string oldest_key;
-        U64 oldest_recency = UINT64_MAX;
-
-        for (const auto& [key, entry] : mIndex)
-        {
-            if (entry.mRecency < oldest_recency)
-            {
-                oldest_recency = entry.mRecency;
-                oldest_key = key;
-            }
-        }
-
-        removeEntry(oldest_key, mIndex[oldest_key]);
+        removeEntry(mLruList.back().mKey);
     }
 }
 
