@@ -81,9 +81,7 @@ LLImageDecodeThread::~LLImageDecodeThread()
 size_t LLImageDecodeThread::update(F32 max_time_ms)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
-    size_t pending = getPending();
-    LLImageBlockCompressor::setQueueBacklog(pending);
-    return pending;
+    return getPending();
 }
 
 size_t LLImageDecodeThread::getPending()
@@ -102,6 +100,10 @@ LLImageDecodeThread::handle_t LLImageDecodeThread::decodeImage(
     U32 decode_id = ++mDecodeCount;
     if (decode_id == 0)
         decode_id = ++mDecodeCount;
+
+    // Report backlog here (called on the main thread for every decode request) since
+    // LLImageDecodeThread::update() is dead code - nothing in the viewer calls it.
+    LLImageBlockCompressor::setQueueBacklog(mThreadPool->getQueue().size());
 
     // Instantiate the ImageRequest right in the lambda, why not?
     bool posted = mThreadPool->getQueue().post(
