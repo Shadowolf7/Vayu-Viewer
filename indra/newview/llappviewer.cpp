@@ -135,6 +135,7 @@
 // Linden library includes
 #include "llavatarnamecache.h"
 #include "lldiriterator.h"
+#include "llbctexturecache.h"
 #include "llexperiencecache.h"
 #include "llimageblockcompressor.h"
 #include "llimagej2c.h"
@@ -4642,6 +4643,10 @@ bool LLAppViewer::initCache()
 
     const U32 CACHE_NUMBER_OF_REGIONS_FOR_OBJECTS = 128;
     LLVOCache::getInstance()->initCache(LL_PATH_CACHE, CACHE_NUMBER_OF_REGIONS_FOR_OBJECTS, getObjectCacheVersion());
+
+    const S64 bc_texture_cache_size = S64(gSavedSettings.getU32("VayuBCTextureCacheMaxSize")) * MB;
+    LLBCTextureCache::instance().initCache(
+        std::filesystem::path(gDirUtilp->getExpandedFilename(LL_PATH_CACHE, "bccache")), bc_texture_cache_size);
 
     // Remove old, stale CEF cache folders
     purgeCefStaleCaches();

@@ -1605,6 +1605,17 @@
       <key>Value</key>
       <integer>6144</integer>
     </map>
+    <key>VayuBCTextureCacheMaxSize</key>
+    <map>
+      <key>Comment</key>
+      <string>Hard drive space reserved for the pre-encoded block-compressed texture cache, in MB. Separate budget from CacheSize.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>U32</string>
+      <key>Value</key>
+      <integer>1024</integer>
+    </map>
     <key>CacheValidateCounter</key>
     <map>
       <key>Comment</key>
