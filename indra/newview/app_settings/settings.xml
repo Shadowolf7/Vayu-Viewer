@@ -1608,13 +1608,13 @@
     <key>VayuBCTextureCacheMaxSize</key>
     <map>
       <key>Comment</key>
-      <string>Hard drive space reserved for the pre-encoded block-compressed texture cache, in MB. Separate budget from CacheSize.</string>
+      <string>Hard drive space reserved for the pre-encoded block-compressed texture cache, in MB. Separate budget from CacheSize. Configurable in Preferences > Setup > Advanced.</string>
       <key>Persist</key>
       <integer>1</integer>
       <key>Type</key>
       <string>U32</string>
       <key>Value</key>
-      <integer>1024</integer>
+      <integer>4096</integer>
     </map>
     <key>CacheValidateCounter</key>
     <map>

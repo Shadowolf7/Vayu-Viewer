@@ -54,6 +54,35 @@
   <button.commit_callback
    function="Pref.ClearCache" />
   </button>
+  <spinner
+   control_name="VayuBCTextureCacheMaxSize"
+   decimal_digits="0"
+   follows="left|top"
+   height="23"
+   increment="64"
+   initial_value="4096"
+   label="Compressed texture cache size (512 - 32768MB)"
+   label_width="230"
+   layout="topleft"
+   left="33"
+   max_val="32768"
+   min_val="512"
+   top_pad="5"
+   name="bccachesizespinner"
+   tool_tip="Disk space reserved for pre-compressed (BC1/BC4/BC5/BC7) texture data, separate from the cache above. Cleared by the same Clear Cache button."
+   width="290" />
+  <text
+   type="string"
+   length="1"
+   follows="left|top"
+   height="23"
+   layout="topleft"
+   left_pad="5"
+   mouse_opaque="false"
+   name="bc_cache_mb_label"
+   width="20">
+    MB
+  </text>
   <text
    type="string"
    length="1"
