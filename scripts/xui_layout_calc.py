@@ -3,12 +3,20 @@
 
 Usage: xui_layout_calc.py <panel.xml> [usable_height]
 
-See doc note "XUI Layout Engine and Floater Geometry" (Obsidian, Vayu Viewer/)
-for the layout rules this implements and why hand-tracing the chain is
-unreliable — always verify against this script instead.
+Mirrors LLView::initFromParams's topleft-layout defaulting (indra/llui/llview.cpp,
+~line 2538 on): when a widget gives no top/top_pad/top_delta AND continues a row
+via left_pad or left_delta, it inherits the previous sibling's exact top AND
+bottom (its own declared height is not used for vertical positioning at all) -
+it does NOT stack below. Only a widget with no positioning attributes
+whatsoever drops to the next row, offset by VPAD (4px, lluiconstants.h).
+Verified against the engine source, not just observed behavior - see
+"XUI Layout Engine and Floater Geometry" (Obsidian, Vayu Viewer/) for the
+worked trace if this ever needs re-deriving.
 """
 import sys
 import xml.etree.ElementTree as ET
+
+VPAD = 4
 
 
 def layout(root):
@@ -19,16 +27,27 @@ def layout(root):
         attrs = child.attrib
         height = int(attrs.get("height", 0))
         width = int(attrs.get("width", 0))
+        continues_row = "left_pad" in attrs or "left_delta" in attrs
 
         if "top" in attrs:
             top = int(attrs["top"])
+            bottom = top + height
         elif "top_pad" in attrs:
             top = prev_bottom + int(attrs["top_pad"])
+            bottom = top + height
         elif "top_delta" in attrs:
             top = prev_top + int(attrs["top_delta"])
+            bottom = top + height
+        elif continues_row:
+            # No top-positioning attribute, but left_pad/left_delta says "stay
+            # on this row": inherits the previous sibling's rect vertically,
+            # own height is ignored for positioning purposes.
+            top = prev_top
+            bottom = prev_bottom
         else:
-            top = prev_bottom
-        bottom = top + height
+            # No positioning attributes at all: drop to a new row.
+            top = prev_bottom + VPAD
+            bottom = top + height
 
         if "left" in attrs:
             left = int(attrs["left"])
