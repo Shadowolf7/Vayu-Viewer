@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8" standalone="yes" ?>
 <floater
-  height="474"
+  height="496"
   layout="topleft"
   name="prefs_graphics_advanced"
   help_topic="Preferences_Graphics_Advanced"
@@ -1191,7 +1191,7 @@
       layout="topleft"
       left="13"
       name="horiz_border"
-      top="415"
+      top="437"
       top_delta="5"
       width="774"/>
   <button
