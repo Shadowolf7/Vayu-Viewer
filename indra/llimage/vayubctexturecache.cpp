@@ -152,6 +152,15 @@ void VayuBCTextureCache::purge()
     mPendingIndex.clear();
 }
 
+void VayuBCTextureCache::shutdown()
+{
+    // Must NOT hold mMutex here: resetting mWriterPool joins its thread,
+    // and flushOneEntry() (running on that thread) takes mMutex itself to
+    // splice/erase pending entries - holding the lock across the join would
+    // deadlock against a flush still in progress.
+    mWriterPool.reset();
+}
+
 bool VayuBCTextureCache::readEntry(const LLUUID& id, S32 discard_level, U8 min_preset,
                                  VayuBCCacheEntryHeader& header, std::vector<U8>& buffer)
 {

@@ -2151,6 +2151,14 @@ bool LLAppViewer::cleanup()
     }
     delete sImageDecodeThread;
     sImageDecodeThread = NULL;
+    // VayuBCTextureCache's writer pool must be joined here, at a controlled
+    // point, rather than left to its own destructor: as a function-local
+    // static its destructor only runs during exit()'s static-teardown
+    // chain, by which point global state ThreadPool::close() touches may
+    // already be gone - was fatal in practice (std::terminate on shutdown,
+    // confirmed via gdb). ImageDecode is the only feeder of writeEntry(),
+    // and it's fully torn down above, so nothing can race this.
+    VayuBCTextureCache::instance().shutdown();
     delete sPurgeDiskCacheThread;
     sPurgeDiskCacheThread = NULL;
     delete mGeneralThreadPool;
