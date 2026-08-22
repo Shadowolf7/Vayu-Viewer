@@ -259,6 +259,7 @@ set(viewer_SOURCE_FILES
     llavatarrenderinfoaccountant.cpp
     llavatarrendernotifier.cpp
     llavatarpropertiesprocessor.cpp
+    llbctexturecache.cpp
     llblockedlistitem.cpp
     llblocklist.cpp
     llbox.cpp
@@ -1044,6 +1045,7 @@ set(viewer_HEADER_FILES
     llavatarpropertiesprocessor.h
     llavatarrenderinfoaccountant.h
     llavatarrendernotifier.h
+    llbctexturecache.h
     llblockedlistitem.h
     llblocklist.h
     llbox.h
@@ -2455,6 +2457,7 @@ if (BUILD_TESTING)
     alscopedata.cpp
     alwhitebalancesolver.cpp
     llagentaccess.cpp
+    llbctexturecache.cpp
     lldateutil.cpp
 #    llmediadataclient.cpp
     lllogininstance.cpp
