@@ -13,13 +13,16 @@
 #pragma once
 
 #include "lluuid.h"
+#include "threadpool_fwd.h"
 
 #include <cstdint>
 #include <filesystem>
 #include <list>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 // Mirrors the fields callers need to reconstruct a GL upload without
@@ -40,6 +43,7 @@ class VayuBCTextureCache
 {
 public:
     static VayuBCTextureCache& instance();
+    ~VayuBCTextureCache();
 
     // Not copyable - single process-wide cache.
     VayuBCTextureCache(const VayuBCTextureCache&) = delete;
@@ -88,18 +92,63 @@ private:
     // which is what lets mIndex hold onto iterators into this list safely.
     using LruList = std::list<IndexEntry>;
 
+    // A write queued for the background writer pool. Fully serialized
+    // (FileHeader + buffer, ready to write as-is) so the flush itself is a
+    // single sequential write with no further assembly.
+    struct PendingWrite
+    {
+        std::string mKey;
+        std::filesystem::path mPath;
+        std::vector<U8> mFileBytes;
+    };
+    using PendingList = std::list<PendingWrite>;
+
     std::filesystem::path entryPath(const LLUUID& id, S32 discard_level) const;
     std::string entryKey(const LLUUID& id, S32 discard_level) const;
     void touch(LruList::iterator it);
     void evictUntilWithinBudget();
     void removeEntry(const std::string& key);
 
+    // Queues (or coalesces into an existing queued write for the same key)
+    // a write for the background pool, posting a flush task for genuinely
+    // new keys only - a coalesced write rides the flush already posted for
+    // that key, since flushOneEntry() always reads whatever's current at
+    // the time it actually runs. Called with mMutex already held.
+    void queuePendingWrite(const std::string& key, const std::filesystem::path& path,
+                           std::vector<U8>&& file_bytes);
+
+    // Runs on mWriterPool's single thread. Pops (splices) one entry off the
+    // front of mPendingWrites, writes it to disk with no lock held, then
+    // clears it from mFlushing. Splicing - not copying - out from under the
+    // lock is what makes the unlocked disk write safe: once a node is off
+    // mPendingWrites/mPendingIndex, no other thread can reach it, so there's
+    // nothing left to race against.
+    void flushOneEntry();
+
     mutable std::mutex mMutex;
     std::filesystem::path mCacheDir;
     S64 mMaxSize = 0;
+    // Logical size: bytes reserved by queued-or-cached entries, not bytes
+    // physically on disk right now. A just-queued write counts toward this
+    // (and toward eviction) immediately, before the writer pool has
+    // actually flushed it - budget accounting has to work off what the
+    // cache will look like once it catches up, not its transient disk state.
     S64 mCurrentSize = 0;
     bool mInitialized = false;
 
     LruList mLruList;
     std::unordered_map<std::string, LruList::iterator> mIndex;
+
+    // Writes not yet flushed to disk (readEntry() serves these straight out
+    // of memory) plus keys mid-flush (spliced out of the above, being
+    // written right now - readEntry() treats these as a plain temporary
+    // miss instead of reading a possibly-truncated file).
+    PendingList mPendingWrites;
+    std::unordered_map<std::string, PendingList::iterator> mPendingIndex;
+    std::unordered_set<std::string> mFlushing;
+
+    // Declared last so it's destroyed first: ~ThreadPool() joins the writer
+    // thread, which must happen before mMutex/mPendingWrites/mIndex above
+    // are torn down, since flushOneEntry() touches all of them.
+    std::unique_ptr<LL::ThreadPool> mWriterPool;
 };
