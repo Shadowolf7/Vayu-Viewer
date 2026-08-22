@@ -64,13 +64,17 @@ def layout(root):
     return rows
 
 
+DEFAULT_FLOATER_HEADER_HEIGHT = 25  # widgets/floater.xml default header_height
+
+
 def main():
     if len(sys.argv) < 2:
         print(__doc__)
         sys.exit(1)
 
     tree = ET.parse(sys.argv[1])
-    rows = layout(tree.getroot())
+    root = tree.getroot()
+    rows = layout(root)
 
     print(f"{'name':30} {'tag':20} {'top':>6} {'bottom':>6} {'left':>6} {'right':>6}")
     max_bottom = 0
@@ -79,8 +83,28 @@ def main():
         max_bottom = max(max_bottom, bottom)
 
     print(f"\ncontent bottom: {max_bottom}px")
+
+    # A <floater> root reserves header_height (default 25px, widgets/floater.xml)
+    # off the top for its title bar - that's NOT available to children, even
+    # though it's included in the floater's own declared height. A bare
+    # <panel> (e.g. one tab of a tab container) has no title bar of its own,
+    # so its full declared height is usable.
+    declared_height = root.attrib.get("height")
+    if root.tag == "floater" and declared_height is not None:
+        header_height = int(root.attrib.get("header_height", DEFAULT_FLOATER_HEADER_HEIGHT))
+        usable = int(declared_height) - header_height
+        print(f"floater height={declared_height}px - header_height={header_height}px -> usable {usable}px")
+    elif declared_height is not None:
+        usable = int(declared_height)
+        print(f"panel height={declared_height}px -> usable {usable}px")
+    else:
+        usable = None
+
     if len(sys.argv) > 2:
         usable = int(sys.argv[2])
+        print(f"(overriding with explicit usable height argument: {usable}px)")
+
+    if usable is not None:
         overflow = max_bottom - usable
         verdict = f"OVERFLOWS by {overflow}px" if overflow > 0 else f"fits, {-overflow}px to spare"
         print(f"usable height:  {usable}px -> {verdict}")
