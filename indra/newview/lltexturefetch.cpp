@@ -1799,7 +1799,8 @@ bool LLTextureFetchWorker::doWork(S32 param)
         mDecodeHandle = LLAppViewer::getImageDecodeThread()->decodeImage(mFormattedImage,
                                                                        discard,
                                                                        mNeedsAux,
-                                                                       new DecodeResponder(mFetcher, mID, this));
+                                                                       new DecodeResponder(mFetcher, mID, this),
+                                                                       mID);
         if (mDecodeHandle == 0)
         {
             // Abort, failed to put into queue.

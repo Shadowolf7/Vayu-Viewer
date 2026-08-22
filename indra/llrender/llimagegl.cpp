@@ -44,6 +44,8 @@
 #include "llrender.h"
 #include "llwindow.h"
 #include "llframetimer.h"
+#include "llimageblockcompressor.h"
+#include "llgltexture.h"
 #include <bit>
 #include <boost/unordered_map.hpp>
 
@@ -173,6 +175,7 @@ S32 LLImageGL::sCount                   = 0;
 F32 LLImageGL::sLastFrameTime           = 0.f;
 LLImageGL* LLImageGL::sDefaultGLTexture = NULL ;
 boost::unordered_set<LLImageGL*> LLImageGL::sImageList;
+bool LLImageGL::sCompressTextures       = true;
 
 
 bool LLImageGLThread::sEnabledTextures = false;
@@ -370,6 +373,14 @@ static bool isSizedInternalFormat(S32 intformat)
     case GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT3_EXT:
     case GL_COMPRESSED_RGBA_S3TC_DXT5_EXT:
     case GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT:
+    case GL_COMPRESSED_RED_RGTC1:
+    case GL_COMPRESSED_SIGNED_RED_RGTC1:
+    case GL_COMPRESSED_RG_RGTC2:
+    case GL_COMPRESSED_SIGNED_RG_RGTC2:
+    case GL_COMPRESSED_RGBA_BPTC_UNORM:
+    case GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM:
+    case GL_COMPRESSED_RGB_BPTC_SIGNED_FLOAT:
+    case GL_COMPRESSED_RGB_BPTC_UNSIGNED_FLOAT:
         return true;
     default:
         return false;
@@ -439,6 +450,14 @@ S32 LLImageGL::dataFormatBits(S32 dataformat)
     case GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT3_EXT:    return 8;
     case GL_COMPRESSED_RGBA_S3TC_DXT5_EXT:          return 8;
     case GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT:    return 8;
+    case GL_COMPRESSED_RED_RGTC1:                   return 4;
+    case GL_COMPRESSED_SIGNED_RED_RGTC1:            return 4;
+    case GL_COMPRESSED_RG_RGTC2:                    return 8;
+    case GL_COMPRESSED_SIGNED_RG_RGTC2:             return 8;
+    case GL_COMPRESSED_RGBA_BPTC_UNORM:             return 8;
+    case GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM:       return 8;
+    case GL_COMPRESSED_RGB_BPTC_SIGNED_FLOAT:       return 8;
+    case GL_COMPRESSED_RGB_BPTC_UNSIGNED_FLOAT:     return 8;
     case GL_LUMINANCE:                              return 8;
     case GL_LUMINANCE8:                             return 8;
     case GL_ALPHA:                                  return 8;
@@ -492,6 +511,14 @@ S64 LLImageGL::dataFormatBytes(S32 dataformat, S32 width, S32 height)
     case GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT3_EXT:
     case GL_COMPRESSED_RGBA_S3TC_DXT5_EXT:
     case GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT:
+    case GL_COMPRESSED_RED_RGTC1:
+    case GL_COMPRESSED_SIGNED_RED_RGTC1:
+    case GL_COMPRESSED_RG_RGTC2:
+    case GL_COMPRESSED_SIGNED_RG_RGTC2:
+    case GL_COMPRESSED_RGBA_BPTC_UNORM:
+    case GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM:
+    case GL_COMPRESSED_RGB_BPTC_SIGNED_FLOAT:
+    case GL_COMPRESSED_RGB_BPTC_UNSIGNED_FLOAT:
         if (width < 4) width = 4;
         if (height < 4) height = 4;
         break;
@@ -532,6 +559,14 @@ S64 LLImageGL::dataFormatVRAMBytes(S32 dataformat, S32 width, S32 height)
     case GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT3_EXT:
     case GL_COMPRESSED_RGBA_S3TC_DXT5_EXT:
     case GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT:
+    case GL_COMPRESSED_RED_RGTC1:
+    case GL_COMPRESSED_SIGNED_RED_RGTC1:
+    case GL_COMPRESSED_RG_RGTC2:
+    case GL_COMPRESSED_SIGNED_RG_RGTC2:
+    case GL_COMPRESSED_RGBA_BPTC_UNORM:
+    case GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM:
+    case GL_COMPRESSED_RGB_BPTC_SIGNED_FLOAT:
+    case GL_COMPRESSED_RGB_BPTC_UNSIGNED_FLOAT:
         if (width < 4) width = 4;
         if (height < 4) height = 4;
         break;
@@ -554,6 +589,14 @@ S32 LLImageGL::dataFormatComponents(S32 dataformat)
       case GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT3_EXT: return 4;
       case GL_COMPRESSED_RGBA_S3TC_DXT5_EXT:    return 4;
       case GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT: return 4;
+      case GL_COMPRESSED_RED_RGTC1:             return 1;
+      case GL_COMPRESSED_SIGNED_RED_RGTC1:      return 1;
+      case GL_COMPRESSED_RG_RGTC2:              return 2;
+      case GL_COMPRESSED_SIGNED_RG_RGTC2:       return 2;
+      case GL_COMPRESSED_RGB_BPTC_SIGNED_FLOAT: return 3;
+      case GL_COMPRESSED_RGB_BPTC_UNSIGNED_FLOAT: return 3;
+      case GL_COMPRESSED_RGBA_BPTC_UNORM:       return 4;
+      case GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM: return 4;
       case GL_LUMINANCE:                        return 1;
       case GL_ALPHA:                            return 1;
       case GL_RED:                              return 1;
@@ -720,6 +763,7 @@ void LLImageGL::init(bool usemipmaps)
     mPickMaskWidth = 0;
     mPickMaskHeight = 0;
     mUseMipMaps = usemipmaps;
+    mAllowCompression = true;
     mHasExplicitFormat = false;
 
     mIsMask = false;
@@ -1736,6 +1780,8 @@ bool LLImageGL::createGLTexture(S32 discard_level, const LLImageRaw* imageraw, S
         return false;
     }
 
+    const bool had_explicit_format = mHasExplicitFormat;
+
     if (mHasExplicitFormat &&
         ((mFormatPrimary == GL_RGBA && mComponents < 4) ||
          (mFormatPrimary == GL_RGB  && mComponents < 3)))
@@ -1808,6 +1854,54 @@ bool LLImageGL::createGLTexture(S32 discard_level, const LLImageRaw* imageraw, S
 
     setCategory(category);
     const U8* rawdata = imageraw->getData();
+
+    bool allow_cat = true;
+    switch (category)
+    {
+    case LLGLTexture::BOOST_AVATAR_SELF:
+    case LLGLTexture::BOOST_AVATAR_BAKED_SELF:
+    case LLGLTexture::AVATAR_SCRATCH_TEX:
+    case LLGLTexture::BOOST_SCULPTED:
+    case LLGLTexture::BOOST_UI:
+    case LLGLTexture::BOOST_ICON:
+    case LLGLTexture::BOOST_THUMBNAIL:
+    case LLGLTexture::BOOST_PREVIEW:
+    case LLGLTexture::BOOST_HUD:
+    case LLGLTexture::DYNAMIC_TEX:
+    case LLGLTexture::MEDIA:
+    case LLGLTexture::LOCAL:
+        allow_cat = false;
+        break;
+    default:
+        break;
+    }
+
+    const bool compress = sCompressTextures && mAllowCompression && allow_cat && !had_explicit_format && mUseMipMaps && !defer_copy && LLImageBlockCompressor::isEligible(raw_w, raw_h, imageraw->getComponents());
+    if (compress)
+    {
+        // 1. Fast path: check if the texture was already compressed on a background thread pool worker
+        auto pre_comp = imageraw->getBlockCompressionResult();
+        if (pre_comp && !pre_comp->mBuffer.empty())
+        {
+            mFormatInternal = pre_comp->mGLInternalFormat;
+            mFormatPrimary = pre_comp->mGLPrimaryFormat;
+            mFormatType = GL_UNSIGNED_BYTE;
+            const U8* comp_data = pre_comp->mBuffer.data() + pre_comp->getLargestMipOffset();
+            return createGLTexture(discard_level, comp_data, true /* data_hasmips */, usename, defer_copy, tex_name);
+        }
+
+        // 2. Fallback path: encode synchronously if not pre-compressed in background
+        LLBlockCompressionResult comp_res;
+        if (LLImageBlockCompressor::encode(imageraw, comp_res))
+        {
+            mFormatInternal = comp_res.mGLInternalFormat;
+            mFormatPrimary = comp_res.mGLPrimaryFormat;
+            mFormatType = GL_UNSIGNED_BYTE;
+            const U8* comp_data = comp_res.mBuffer.data() + comp_res.getLargestMipOffset();
+            return createGLTexture(discard_level, comp_data, true /* data_hasmips */, usename, defer_copy, tex_name);
+        }
+    }
+
     return createGLTexture(discard_level, rawdata, false, usename, defer_copy, tex_name);
 }
 
@@ -2648,6 +2742,14 @@ bool LLImageGL::isCompressed() const
     case GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT3_EXT:
     case GL_COMPRESSED_RGBA_S3TC_DXT5_EXT:
     case GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT:
+    case GL_COMPRESSED_RED_RGTC1:
+    case GL_COMPRESSED_SIGNED_RED_RGTC1:
+    case GL_COMPRESSED_RG_RGTC2:
+    case GL_COMPRESSED_SIGNED_RG_RGTC2:
+    case GL_COMPRESSED_RGBA_BPTC_UNORM:
+    case GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM:
+    case GL_COMPRESSED_RGB_BPTC_SIGNED_FLOAT:
+    case GL_COMPRESSED_RGB_BPTC_UNSIGNED_FLOAT:
         is_compressed = true;
         break;
     default:

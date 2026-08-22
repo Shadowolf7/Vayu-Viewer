@@ -28,6 +28,8 @@
 
 #include "llimageworker.h"
 #include "llimagedxt.h"
+#include "llimageblockcompressor.h"
+#include "llbctexturecache.h"
 #include "threadpool.h"
 
 /*--------------------------------------------------------------------------*/
@@ -38,7 +40,8 @@ public:
                  S32 discard,
                  bool needs_aux,
                  const LLPointer<LLImageDecodeThread::Responder>& responder,
-                 U32 request_id);
+                 U32 request_id,
+                 const LLUUID& id);
     virtual ~ImageRequest();
 
     /*virtual*/ bool processRequest();
@@ -52,6 +55,7 @@ private:
     S32 mDiscardLevel;
     U32 mRequestId;
     bool mNeedsAux;
+    LLUUID mID; // for the BC disk cache; may be null if the caller didn't pass one
     // output
     LLPointer<LLImageRaw> mDecodedImageRaw;
     LLPointer<LLImageRaw> mDecodedImageAux;
@@ -92,7 +96,8 @@ LLImageDecodeThread::handle_t LLImageDecodeThread::decodeImage(
     const LLPointer<LLImageFormatted>& image,
     S32 discard,
     bool needs_aux,
-    const LLPointer<LLImageDecodeThread::Responder>& responder)
+    const LLPointer<LLImageDecodeThread::Responder>& responder,
+    const LLUUID& id)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
 
@@ -100,9 +105,13 @@ LLImageDecodeThread::handle_t LLImageDecodeThread::decodeImage(
     if (decode_id == 0)
         decode_id = ++mDecodeCount;
 
+    // Report backlog here (called on the main thread for every decode request) since
+    // LLImageDecodeThread::update() is dead code - nothing in the viewer calls it.
+    LLImageBlockCompressor::setQueueBacklog(mThreadPool->getQueue().size());
+
     // Instantiate the ImageRequest right in the lambda, why not?
     bool posted = mThreadPool->getQueue().post(
-        [req = ImageRequest(image, discard, needs_aux, responder, decode_id)]
+        [req = ImageRequest(image, discard, needs_aux, responder, decode_id, id)]
         () mutable
         {
             auto done = req.processRequest();
@@ -132,14 +141,16 @@ ImageRequest::ImageRequest(const LLPointer<LLImageFormatted>& image,
                            S32 discard,
                            bool needs_aux,
                            const LLPointer<LLImageDecodeThread::Responder>& responder,
-                           U32 request_id)
+                           U32 request_id,
+                           const LLUUID& id)
     : mFormattedImage(image),
       mDiscardLevel(discard),
       mNeedsAux(needs_aux),
       mDecodedRaw(false),
       mDecodedAux(false),
       mResponder(responder),
-      mRequestId(request_id)
+      mRequestId(request_id),
+      mID(id)
 {
 }
 
@@ -211,6 +222,75 @@ bool ImageRequest::processRequest()
 
         // Pick up errors from decoding
         mErrorString = LLImage::getLastThreadError();
+    }
+
+    if (done && mDecodedRaw && mDecodedImageRaw.notNull())
+    {
+        if (LLImageBlockCompressor::isEligible(mDecodedImageRaw->getWidth(),
+                                               mDecodedImageRaw->getHeight(),
+                                               mDecodedImageRaw->getComponents()))
+        {
+            // Only mFormattedImage->getDiscardLevel() (read *after* decode, above)
+            // reflects what was actually decoded - the pre-decode desired/loaded
+            // discard can legitimately differ. Cache lookups keyed on the wrong
+            // value would silently never hit.
+            const S32 discard = mFormattedImage->getDiscardLevel();
+            // A texture streaming in progressively writes one cache entry per
+            // discard level it passes through (they're distinct keys, not
+            // overwrites) - accepted churn, not a bug: each entry is still
+            // independently useful for a future load that only wants that
+            // discard, e.g. a texture that stays small/distant on screen.
+            //
+            // mNeedsAux requests decode a channel the BC cache never stores;
+            // leave them on the always-live-encode path entirely.
+            const bool cacheable = !mNeedsAux && mID.notNull() && discard >= 0;
+            bool cache_hit = false;
+
+            if (cacheable)
+            {
+                LLBCCacheEntryHeader cache_header;
+                std::vector<U8> cache_buffer;
+                const U8 min_preset = (U8)LLImageBlockCompressor::getEffectivePreset();
+                if (LLBCTextureCache::instance().readEntry(mID, discard, min_preset, cache_header, cache_buffer))
+                {
+                    auto comp_res = std::make_shared<LLBlockCompressionResult>();
+                    comp_res->mFormat = (ELLBlockCompressionFormat)cache_header.mFormat;
+                    comp_res->mPreset = (ELLBlockCompressionPreset)cache_header.mPreset;
+                    comp_res->mGLInternalFormat = cache_header.mGLInternalFormat;
+                    comp_res->mGLPrimaryFormat = cache_header.mGLPrimaryFormat;
+                    comp_res->mWidth = cache_header.mWidth;
+                    comp_res->mHeight = cache_header.mHeight;
+                    comp_res->mMipLevels = cache_header.mMipLevels;
+                    comp_res->mComponents = cache_header.mComponents;
+                    comp_res->mBuffer = std::move(cache_buffer);
+                    mDecodedImageRaw->setBlockCompressionResult(comp_res);
+                    cache_hit = true;
+                }
+            }
+
+            if (!cache_hit)
+            {
+                auto comp_res = std::make_shared<LLBlockCompressionResult>();
+                if (LLImageBlockCompressor::encode(mDecodedImageRaw, *comp_res))
+                {
+                    mDecodedImageRaw->setBlockCompressionResult(comp_res);
+
+                    if (cacheable)
+                    {
+                        LLBCCacheEntryHeader cache_header;
+                        cache_header.mFormat = (U8)comp_res->mFormat;
+                        cache_header.mPreset = (U8)comp_res->mPreset;
+                        cache_header.mMipLevels = comp_res->mMipLevels;
+                        cache_header.mWidth = comp_res->mWidth;
+                        cache_header.mHeight = comp_res->mHeight;
+                        cache_header.mComponents = comp_res->mComponents;
+                        cache_header.mGLInternalFormat = comp_res->mGLInternalFormat;
+                        cache_header.mGLPrimaryFormat = comp_res->mGLPrimaryFormat;
+                        LLBCTextureCache::instance().writeEntry(mID, discard, cache_header, comp_res->mBuffer);
+                    }
+                }
+            }
+        }
     }
 
     return done;

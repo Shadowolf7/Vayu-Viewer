@@ -300,6 +300,8 @@ public:
     virtual void cleanup(); // Clean up the LLImageGL so it can be reinitialized.  Be careful when using this in derived class destructors
 
     void setNeedsAlphaAndPickMask(bool need_mask);
+    void setAllowCompression(bool allow) { mAllowCompression = allow; }
+    bool getAllowCompression() const { return mAllowCompression; }
 
 #if LL_IMAGEGL_THREAD_CHECK
     // thread debugging
@@ -396,6 +398,7 @@ private:
     // shared texture object allocated on this instance's behalf -- see LLCubeMap, where one
     // glTexStorage2D call covers all six faces. Reset whenever a fresh name is bound.
     bool     mStorageAllocated = false;
+    bool     mAllowCompression = true;
     U16      mWidth;
     U16      mHeight;
     S8       mCurrentDiscardLevel;
@@ -442,6 +445,7 @@ public:
     static U32 sUniqueCount;                // Tracks number of unique texture binds for current frame
     static LLImageGL* sDefaultGLTexture ;
     static bool sAutomatedTest;
+    static bool sCompressTextures;          // use CPU block texture compression
 #if DEBUG_MISS
     bool mMissed; // Missed on last bind?
     bool getMissed() const { return mMissed; };

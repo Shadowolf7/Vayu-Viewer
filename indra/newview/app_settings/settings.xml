@@ -1605,6 +1605,17 @@
       <key>Value</key>
       <integer>6144</integer>
     </map>
+    <key>VayuBCTextureCacheMaxSize</key>
+    <map>
+      <key>Comment</key>
+      <string>Hard drive space reserved for the pre-encoded block-compressed texture cache, in MB. Separate budget from CacheSize. Configurable in Preferences > Setup > Advanced.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>U32</string>
+      <key>Value</key>
+      <integer>4096</integer>
+    </map>
     <key>CacheValidateCounter</key>
     <map>
       <key>Comment</key>
@@ -7724,7 +7735,28 @@
       <real>0.0</real>
     </array>
   </map>
-
+    <key>RenderCompressTextures</key>
+    <map>
+      <key>Comment</key>
+      <string>Compress in-world textures using workload-aware block compression (BC1/BC4/BC5/BC7 via bc7enc/rgbcx) to reduce VRAM usage</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>Boolean</string>
+      <key>Value</key>
+      <integer>1</integer>
+    </map>
+    <key>RenderCompressTexturesPreset</key>
+    <map>
+      <key>Comment</key>
+      <string>0 - ultrafast, 1 - fast, 2 - basic (default), 3 - slow. Trades block texture compression encode latency for VRAM-image quality.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>S32</string>
+      <key>Value</key>
+      <real>2</real>
+    </map>
     <key>RenderAnisotropic</key>
     <map>
       <key>Comment</key>
