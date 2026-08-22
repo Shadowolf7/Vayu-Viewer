@@ -64,6 +64,7 @@
 #include "llvovolume.h"
 #include "llworld.h"
 #include "llvlcomposition.h"
+#include "llimageblockcompressor.h"
 #include "pipeline.h"
 #include "llviewerjoystick.h"
 #include "llviewerobjectlist.h"
@@ -622,6 +623,12 @@ static bool handleRenderCompressTexturesChanged(const LLSD& newvalue)
     return true;
 }
 
+static bool handleRenderCompressTexturesPresetChanged(const LLSD& newvalue)
+{
+    LLImageBlockCompressor::setPreset(static_cast<ELLBlockCompressionPreset>(newvalue.asInteger()));
+    return true;
+}
+
 static bool handleReflectionProbeDetailChanged(const LLSD& newvalue)
 {
     gPipeline.mReflectionMapManager.refreshSettings();
@@ -1020,6 +1027,7 @@ void settings_setup_listeners()
     setting_setup_signal_listener(gSavedSettings, "RenderAnisotropicLevel", handleAnisotropicFilteringChanged);
     gSavedSettings.getControl("RenderAnisotropicLevel")->getValidateSignal()->connect(boost::bind(&validateAnisotropicFiltering, _2));
     setting_setup_signal_listener(gSavedSettings, "RenderCompressTextures", handleRenderCompressTexturesChanged);
+    setting_setup_signal_listener(gSavedSettings, "RenderCompressTexturesPreset", handleRenderCompressTexturesPresetChanged);
     setting_setup_signal_listener(gSavedSettings, "RenderShadowResolutionScale", handleShadowsResized);
     setting_setup_signal_listener(gSavedSettings, "RenderGlow", handleReleaseGLBufferChanged);
     setting_setup_signal_listener(gSavedSettings, "RenderGlow", handleSetShaderChanged);

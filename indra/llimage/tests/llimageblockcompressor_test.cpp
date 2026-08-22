@@ -147,4 +147,42 @@ namespace tut
         ensure("Encoding binary cutout RGBA succeeded", ok);
         ensure("Binary cutout RGBA resolves to BC7", result.mFormat == ELLBlockCompressionFormat::BC7);
     }
+
+    // Test 8: All presets encode successfully and don't affect the chosen format
+    template<> template<>
+    void block_compressor_object::test<8>()
+    {
+        const U32 width = 16, height = 16;
+        std::vector<U8> rgba(width * height * 4);
+        for (size_t i = 0; i < width * height; ++i)
+        {
+            rgba[i * 4 + 0] = 180;
+            rgba[i * 4 + 1] = 90;
+            rgba[i * 4 + 2] = 45;
+            rgba[i * 4 + 3] = (i % 3 == 0) ? 128 : 255; // partial alpha -> BC7
+        }
+
+        const ELLBlockCompressionPreset saved_preset = LLImageBlockCompressor::getPreset();
+
+        const ELLBlockCompressionPreset presets[] = {
+            ELLBlockCompressionPreset::Ultrafast,
+            ELLBlockCompressionPreset::Fast,
+            ELLBlockCompressionPreset::Basic,
+            ELLBlockCompressionPreset::Slow,
+        };
+
+        for (ELLBlockCompressionPreset preset : presets)
+        {
+            LLImageBlockCompressor::setPreset(preset);
+            ensure("getPreset reflects setPreset", LLImageBlockCompressor::getPreset() == preset);
+
+            LLBlockCompressionResult result;
+            bool ok = LLImageBlockCompressor::encode(rgba.data(), width, height, 4, result, ELLBlockCompressionFormat::Auto);
+            ensure("Encoding succeeds at every preset", ok);
+            ensure("Preset doesn't change the resolved format", result.mFormat == ELLBlockCompressionFormat::BC7);
+            ensure("Preset run still produces mip data", result.mBuffer.size() > 0);
+        }
+
+        LLImageBlockCompressor::setPreset(saved_preset);
+    }
 }

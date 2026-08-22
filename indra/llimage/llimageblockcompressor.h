@@ -20,6 +20,16 @@ enum class ELLBlockCompressionFormat : U8
     BC7,         // Translucent / high-fidelity RGBA / PBR: BPTC (8 bpp, sRGB)
 };
 
+// Trades encode latency for compressed-image quality. Applies to both the
+// BC7 encoder (mode search breadth) and the BC1 encoder (search level).
+enum class ELLBlockCompressionPreset : U8
+{
+    Ultrafast = 0,   // BC7 mode 6 only, no partition search; lowest CPU cost
+    Fast,
+    Basic,           // Default balance of quality vs. encode latency
+    Slow,            // Full partition search + highest uber level
+};
+
 struct LLBlockCompressionResult
 {
     ELLBlockCompressionFormat mFormat = ELLBlockCompressionFormat::Auto;
@@ -42,6 +52,10 @@ class LLImageBlockCompressor
 {
 public:
     static void init();
+
+    // Current encode preset, read by worker threads on every encode() call.
+    static void setPreset(ELLBlockCompressionPreset preset);
+    static ELLBlockCompressionPreset getPreset();
 
     // Textures at or below this size skip compression and stay on direct raw upload
     static constexpr U32 kMinEncodeDim = 4;

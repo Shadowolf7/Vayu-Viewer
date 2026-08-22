@@ -136,6 +136,7 @@
 #include "llavatarnamecache.h"
 #include "lldiriterator.h"
 #include "llexperiencecache.h"
+#include "llimageblockcompressor.h"
 #include "llimagej2c.h"
 #include "llmemory.h"
 #include "llprimitive.h"
@@ -570,6 +571,7 @@ static void settings_to_globals()
     LLRender::sNsightDebugSupport = gSavedSettings.getBOOL("RenderNsightDebugSupport");
     LLRender::sAnisotropicFilteringLevel = static_cast<F32>(gSavedSettings.getU32("RenderAnisotropicLevel"));
     LLImageGL::sCompressTextures        = gSavedSettings.getBOOL("RenderCompressTextures");
+    LLImageBlockCompressor::setPreset(static_cast<ELLBlockCompressionPreset>(gSavedSettings.getS32("RenderCompressTexturesPreset")));
     LLVOVolume::sLODFactor              = llclamp(gSavedSettings.getF32("RenderVolumeLODFactor"), 0.01f, MAX_LOD_FACTOR);
     LLVOVolume::sDistanceFactor         = 1.f-LLVOVolume::sLODFactor * 0.1f;
     LLVolumeImplFlexible::sUpdateFactor = gSavedSettings.getF32("RenderFlexTimeFactor");

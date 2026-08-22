@@ -10,6 +10,7 @@
 #include "llerror.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <mutex>
 #include <cstring>
@@ -45,6 +46,47 @@ static float g_srgb_to_linear[256];
 static uint8_t g_linear_to_srgb[4096];
 static bool g_tables_ready = false;
 static std::once_flag g_init_once;
+static std::atomic<U8> g_preset{ (U8)ELLBlockCompressionPreset::Basic };
+
+// BC1 rgbcx encode level per preset (see rgbcx.h: MIN_LEVEL=0, MAX_LEVEL=18)
+static uint32_t bc1_level_for_preset(ELLBlockCompressionPreset preset)
+{
+    switch (preset)
+    {
+    case ELLBlockCompressionPreset::Ultrafast: return 0;
+    case ELLBlockCompressionPreset::Fast:      return 3;
+    case ELLBlockCompressionPreset::Slow:      return 10;
+    case ELLBlockCompressionPreset::Basic:
+    default:                                   return 5;
+    }
+}
+
+// Applies the preset's mode/partition/uber-level tradeoff to a BC7 params block
+// already initialized via bc7enc_compress_block_params_init().
+static void apply_bc7_preset(bc7enc_compress_block_params& params, ELLBlockCompressionPreset preset)
+{
+    switch (preset)
+    {
+    case ELLBlockCompressionPreset::Ultrafast:
+        params.m_mode_mask = (1u << 6); // mode 6 only: single partition, handles RGB + alpha
+        params.m_max_partitions = 0;
+        params.m_uber_level = 0;
+        break;
+    case ELLBlockCompressionPreset::Fast:
+        params.m_max_partitions = 16;
+        params.m_uber_level = 0;
+        break;
+    case ELLBlockCompressionPreset::Slow:
+        params.m_max_partitions = BC7ENC_MAX_PARTITIONS;
+        params.m_uber_level = BC7ENC_MAX_UBER_LEVEL;
+        break;
+    case ELLBlockCompressionPreset::Basic:
+    default:
+        params.m_max_partitions = BC7ENC_MAX_PARTITIONS;
+        params.m_uber_level = 0;
+        break;
+    }
+}
 
 static void init_tables()
 {
@@ -186,6 +228,16 @@ size_t LLBlockCompressionResult::getLargestMipOffset() const
 void LLImageBlockCompressor::init()
 {
     init_compression_tables();
+}
+
+void LLImageBlockCompressor::setPreset(ELLBlockCompressionPreset preset)
+{
+    g_preset.store((U8)preset, std::memory_order_relaxed);
+}
+
+ELLBlockCompressionPreset LLImageBlockCompressor::getPreset()
+{
+    return (ELLBlockCompressionPreset)g_preset.load(std::memory_order_relaxed);
 }
 
 bool LLImageBlockCompressor::isEligible(U32 width, U32 height, S32 components)
@@ -335,10 +387,13 @@ bool LLImageBlockCompressor::encode(const U8* src_data, U32 width, U32 height, S
         break;
     }
 
+    const ELLBlockCompressionPreset preset = getPreset();
+
     bc7enc_compress_block_params bc7_params;
     if (resolved == ELLBlockCompressionFormat::BC7)
     {
         bc7enc_compress_block_params_init(&bc7_params);
+        apply_bc7_preset(bc7_params, preset);
     }
 
     // 4. Encode mips into reverse order (smallest mip at offset 0, largest mip at end)
@@ -414,7 +469,7 @@ bool LLImageBlockCompressor::encode(const U8* src_data, U32 width, U32 height, S
                 switch (resolved)
                 {
                 case ELLBlockCompressionFormat::BC1:
-                    rgbcx::encode_bc1(5, out, block_rgba, false, false);
+                    rgbcx::encode_bc1(bc1_level_for_preset(preset), out, block_rgba, false, false);
                     out += 8;
                     break;
                 case ELLBlockCompressionFormat::BC4:

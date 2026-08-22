@@ -7735,6 +7735,17 @@
       <key>Value</key>
       <integer>1</integer>
     </map>
+    <key>RenderCompressTexturesPreset</key>
+    <map>
+      <key>Comment</key>
+      <string>0 - ultrafast, 1 - fast, 2 - basic (default), 3 - slow. Trades block texture compression encode latency for VRAM-image quality.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>S32</string>
+      <key>Value</key>
+      <real>2</real>
+    </map>
     <key>RenderAnisotropic</key>
     <map>
       <key>Comment</key>
