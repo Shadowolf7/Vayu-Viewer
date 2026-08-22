@@ -20,6 +20,7 @@ This isn't exhaustive — Alchemy carries roughly 80 of its own settings beyond 
 
 - Correct depth sorting between rigged attachments and world alpha (clothing/attachments no longer draw in the wrong order relative to transparent world objects).
 - Attached spotlights and projector lights now stay lit regardless of the "attached lights" toggle — only point-light attachments are affected by it.
+- **Block texture compression (BC7/BC1/BC4/BC5)** — textures are compressed off the main thread as they decode, cutting VRAM usage, with a persistent disk cache so they aren't re-encoded on every load. Choose a speed/quality preset (Ultrafast/Fast/Basic/Slow) and cache size in Preferences → Graphics → Advanced Hardware.
 
 ### Camera & movement
 
