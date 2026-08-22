@@ -1,10 +1,10 @@
 /**
- * @file llimageblockcompressor.cpp
+ * @file vayuimageblockcompressor.cpp
  * @brief High-performance workload-aware CPU block compression implementation
  */
 
 #include "linden_common.h"
-#include "llimageblockcompressor.h"
+#include "vayuimageblockcompressor.h"
 #include "bc7e/bc7enc.h"
 #include "bc7e/rgbcx.h"
 #include "llerror.h"
@@ -46,7 +46,7 @@ static float g_srgb_to_linear[256];
 static uint8_t g_linear_to_srgb[4096];
 static bool g_tables_ready = false;
 static std::once_flag g_init_once;
-static std::atomic<U8> g_preset{ (U8)ELLBlockCompressionPreset::Basic };
+static std::atomic<U8> g_preset{ (U8)EVayuBlockCompressionPreset::Basic };
 static std::atomic<size_t> g_queue_backlog{ 0 };
 
 // Initial guesses relative to the 8-thread "ImageDecode" pool (llimageworker.cpp);
@@ -55,38 +55,38 @@ constexpr size_t kModerateBacklogThreshold = 12; // ~1.5x pool width: cap effort
 constexpr size_t kHeavyBacklogThreshold = 32;     // ~4x pool width: force Ultrafast
 
 // BC1 rgbcx encode level per preset (see rgbcx.h: MIN_LEVEL=0, MAX_LEVEL=18)
-static uint32_t bc1_level_for_preset(ELLBlockCompressionPreset preset)
+static uint32_t bc1_level_for_preset(EVayuBlockCompressionPreset preset)
 {
     switch (preset)
     {
-    case ELLBlockCompressionPreset::Ultrafast: return 0;
-    case ELLBlockCompressionPreset::Fast:      return 3;
-    case ELLBlockCompressionPreset::Slow:      return 10;
-    case ELLBlockCompressionPreset::Basic:
+    case EVayuBlockCompressionPreset::Ultrafast: return 0;
+    case EVayuBlockCompressionPreset::Fast:      return 3;
+    case EVayuBlockCompressionPreset::Slow:      return 10;
+    case EVayuBlockCompressionPreset::Basic:
     default:                                   return 5;
     }
 }
 
 // Applies the preset's mode/partition/uber-level tradeoff to a BC7 params block
 // already initialized via bc7enc_compress_block_params_init().
-static void apply_bc7_preset(bc7enc_compress_block_params& params, ELLBlockCompressionPreset preset)
+static void apply_bc7_preset(bc7enc_compress_block_params& params, EVayuBlockCompressionPreset preset)
 {
     switch (preset)
     {
-    case ELLBlockCompressionPreset::Ultrafast:
+    case EVayuBlockCompressionPreset::Ultrafast:
         params.m_mode_mask = (1u << 6); // mode 6 only: single partition, handles RGB + alpha
         params.m_max_partitions = 0;
         params.m_uber_level = 0;
         break;
-    case ELLBlockCompressionPreset::Fast:
+    case EVayuBlockCompressionPreset::Fast:
         params.m_max_partitions = 16;
         params.m_uber_level = 0;
         break;
-    case ELLBlockCompressionPreset::Slow:
+    case EVayuBlockCompressionPreset::Slow:
         params.m_max_partitions = BC7ENC_MAX_PARTITIONS;
         params.m_uber_level = BC7ENC_MAX_UBER_LEVEL;
         break;
-    case ELLBlockCompressionPreset::Basic:
+    case EVayuBlockCompressionPreset::Basic:
     default:
         params.m_max_partitions = BC7ENC_MAX_PARTITIONS;
         params.m_uber_level = 0;
@@ -212,18 +212,18 @@ static inline uint32_t calc_level_bytes(uint32_t width, uint32_t height, uint32_
 
 } // namespace
 
-size_t LLBlockCompressionResult::getMipBytes(S32 discard_level) const
+size_t VayuBlockCompressionResult::getMipBytes(S32 discard_level) const
 {
     if (discard_level < 0 || discard_level >= mMipLevels)
         return 0;
 
     uint32_t w = llmax(1u, mWidth >> discard_level);
     uint32_t h = llmax(1u, mHeight >> discard_level);
-    uint32_t block_bytes = (mFormat == ELLBlockCompressionFormat::BC1 || mFormat == ELLBlockCompressionFormat::BC4) ? 8 : 16;
+    uint32_t block_bytes = (mFormat == EVayuBlockCompressionFormat::BC1 || mFormat == EVayuBlockCompressionFormat::BC4) ? 8 : 16;
     return calc_level_bytes(w, h, block_bytes);
 }
 
-size_t LLBlockCompressionResult::getLargestMipOffset() const
+size_t VayuBlockCompressionResult::getLargestMipOffset() const
 {
     if (mBuffer.empty() || mMipLevels <= 0)
         return 0;
@@ -231,39 +231,39 @@ size_t LLBlockCompressionResult::getLargestMipOffset() const
     return (mBuffer.size() >= level0_bytes) ? (mBuffer.size() - level0_bytes) : 0;
 }
 
-void LLImageBlockCompressor::init()
+void VayuImageBlockCompressor::init()
 {
     init_compression_tables();
 }
 
-void LLImageBlockCompressor::setPreset(ELLBlockCompressionPreset preset)
+void VayuImageBlockCompressor::setPreset(EVayuBlockCompressionPreset preset)
 {
     g_preset.store((U8)preset, std::memory_order_relaxed);
 }
 
-ELLBlockCompressionPreset LLImageBlockCompressor::getPreset()
+EVayuBlockCompressionPreset VayuImageBlockCompressor::getPreset()
 {
-    return (ELLBlockCompressionPreset)g_preset.load(std::memory_order_relaxed);
+    return (EVayuBlockCompressionPreset)g_preset.load(std::memory_order_relaxed);
 }
 
-void LLImageBlockCompressor::setQueueBacklog(size_t pending)
+void VayuImageBlockCompressor::setQueueBacklog(size_t pending)
 {
     g_queue_backlog.store(pending, std::memory_order_relaxed);
 }
 
-ELLBlockCompressionPreset LLImageBlockCompressor::getEffectivePreset()
+EVayuBlockCompressionPreset VayuImageBlockCompressor::getEffectivePreset()
 {
-    const ELLBlockCompressionPreset configured = getPreset();
+    const EVayuBlockCompressionPreset configured = getPreset();
     const size_t backlog = g_queue_backlog.load(std::memory_order_relaxed);
 
     if (backlog > kHeavyBacklogThreshold)
-        return ELLBlockCompressionPreset::Ultrafast;
+        return EVayuBlockCompressionPreset::Ultrafast;
     if (backlog > kModerateBacklogThreshold)
-        return std::min(configured, ELLBlockCompressionPreset::Fast);
+        return std::min(configured, EVayuBlockCompressionPreset::Fast);
     return configured;
 }
 
-bool LLImageBlockCompressor::isEligible(U32 width, U32 height, S32 components)
+bool VayuImageBlockCompressor::isEligible(U32 width, U32 height, S32 components)
 {
     if (width < kMinEncodeDim || height < kMinEncodeDim)
         return false;
@@ -272,9 +272,9 @@ bool LLImageBlockCompressor::isEligible(U32 width, U32 height, S32 components)
     return true;
 }
 
-bool LLImageBlockCompressor::encode(const LLImageRaw* raw_image,
-                                    LLBlockCompressionResult& result,
-                                    ELLBlockCompressionFormat format)
+bool VayuImageBlockCompressor::encode(const LLImageRaw* raw_image,
+                                    VayuBlockCompressionResult& result,
+                                    EVayuBlockCompressionFormat format)
 {
     if (!raw_image || raw_image->isBufferInvalid())
         return false;
@@ -282,9 +282,9 @@ bool LLImageBlockCompressor::encode(const LLImageRaw* raw_image,
                   raw_image->getComponents(), result, format);
 }
 
-bool LLImageBlockCompressor::encode(const U8* src_data, U32 width, U32 height, S32 components,
-                                    LLBlockCompressionResult& result,
-                                    ELLBlockCompressionFormat format)
+bool VayuImageBlockCompressor::encode(const U8* src_data, U32 width, U32 height, S32 components,
+                                    VayuBlockCompressionResult& result,
+                                    EVayuBlockCompressionFormat format)
 {
     if (!src_data || !isEligible(width, height, components))
         return false;
@@ -292,22 +292,22 @@ bool LLImageBlockCompressor::encode(const U8* src_data, U32 width, U32 height, S
     init();
 
     // 1. Resolve format
-    ELLBlockCompressionFormat resolved = format;
+    EVayuBlockCompressionFormat resolved = format;
     bool force_opaque = false;
 
-    if (resolved == ELLBlockCompressionFormat::Auto)
+    if (resolved == EVayuBlockCompressionFormat::Auto)
     {
         if (components == 1)
         {
-            resolved = ELLBlockCompressionFormat::BC4;
+            resolved = EVayuBlockCompressionFormat::BC4;
         }
         else if (components == 2)
         {
-            resolved = ELLBlockCompressionFormat::BC5;
+            resolved = EVayuBlockCompressionFormat::BC5;
         }
         else if (components == 3)
         {
-            resolved = ELLBlockCompressionFormat::BC1;
+            resolved = EVayuBlockCompressionFormat::BC1;
         }
         else if (components == 4)
         {
@@ -329,18 +329,18 @@ bool LLImageBlockCompressor::encode(const U8* src_data, U32 width, U32 height, S
             if (min_a == 255)
             {
                 // Fully opaque already -> BC1
-                resolved = ELLBlockCompressionFormat::BC1;
+                resolved = EVayuBlockCompressionFormat::BC1;
             }
             else
             {
                 // Transparency present: MUST USE BC7
-                resolved = ELLBlockCompressionFormat::BC7;
+                resolved = EVayuBlockCompressionFormat::BC7;
             }
         }
     }
 
-    const bool is_srgb = (resolved == ELLBlockCompressionFormat::BC1 || resolved == ELLBlockCompressionFormat::BC7);
-    const uint32_t block_bytes = (resolved == ELLBlockCompressionFormat::BC1 || resolved == ELLBlockCompressionFormat::BC4) ? 8 : 16;
+    const bool is_srgb = (resolved == EVayuBlockCompressionFormat::BC1 || resolved == EVayuBlockCompressionFormat::BC7);
+    const uint32_t block_bytes = (resolved == EVayuBlockCompressionFormat::BC1 || resolved == EVayuBlockCompressionFormat::BC4) ? 8 : 16;
 
     // 2. Generate uncompressed mip pyramid
     std::vector<std::vector<uint8_t>> uncompressed_mips;
@@ -391,30 +391,30 @@ bool LLImageBlockCompressor::encode(const U8* src_data, U32 width, U32 height, S
 
     switch (resolved)
     {
-    case ELLBlockCompressionFormat::BC1:
+    case EVayuBlockCompressionFormat::BC1:
         result.mGLInternalFormat = GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT1_EXT;
         result.mGLPrimaryFormat = GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT1_EXT;
         break;
-    case ELLBlockCompressionFormat::BC4:
+    case EVayuBlockCompressionFormat::BC4:
         result.mGLInternalFormat = GL_COMPRESSED_RED_RGTC1;
         result.mGLPrimaryFormat = GL_COMPRESSED_RED_RGTC1;
         break;
-    case ELLBlockCompressionFormat::BC5:
+    case EVayuBlockCompressionFormat::BC5:
         result.mGLInternalFormat = GL_COMPRESSED_RG_RGTC2;
         result.mGLPrimaryFormat = GL_COMPRESSED_RG_RGTC2;
         break;
-    case ELLBlockCompressionFormat::BC7:
+    case EVayuBlockCompressionFormat::BC7:
     default:
         result.mGLInternalFormat = GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM;
         result.mGLPrimaryFormat = GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM;
         break;
     }
 
-    const ELLBlockCompressionPreset preset = getEffectivePreset();
+    const EVayuBlockCompressionPreset preset = getEffectivePreset();
     result.mPreset = preset;
 
     bc7enc_compress_block_params bc7_params;
-    if (resolved == ELLBlockCompressionFormat::BC7)
+    if (resolved == EVayuBlockCompressionFormat::BC7)
     {
         bc7enc_compress_block_params_init(&bc7_params);
         apply_bc7_preset(bc7_params, preset);
@@ -492,19 +492,19 @@ bool LLImageBlockCompressor::encode(const U8* src_data, U32 width, U32 height, S
 
                 switch (resolved)
                 {
-                case ELLBlockCompressionFormat::BC1:
+                case EVayuBlockCompressionFormat::BC1:
                     rgbcx::encode_bc1(bc1_level_for_preset(preset), out, block_rgba, false, false);
                     out += 8;
                     break;
-                case ELLBlockCompressionFormat::BC4:
+                case EVayuBlockCompressionFormat::BC4:
                     rgbcx::encode_bc4(out, block_rgba, 4);
                     out += 8;
                     break;
-                case ELLBlockCompressionFormat::BC5:
+                case EVayuBlockCompressionFormat::BC5:
                     rgbcx::encode_bc5(out, block_rgba, 0, 1, 4);
                     out += 16;
                     break;
-                case ELLBlockCompressionFormat::BC7:
+                case EVayuBlockCompressionFormat::BC7:
                 default:
                     bc7enc_compress_block(out, block_rgba, &bc7_params);
                     out += 16;

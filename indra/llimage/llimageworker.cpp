@@ -28,8 +28,8 @@
 
 #include "llimageworker.h"
 #include "llimagedxt.h"
-#include "llimageblockcompressor.h"
-#include "llbctexturecache.h"
+#include "vayuimageblockcompressor.h"
+#include "vayubctexturecache.h"
 #include "threadpool.h"
 
 /*--------------------------------------------------------------------------*/
@@ -39,6 +39,7 @@ public:
     ImageRequest(const LLPointer<LLImageFormatted>& image,
                  S32 discard,
                  bool needs_aux,
+                 bool allow_compression,
                  const LLPointer<LLImageDecodeThread::Responder>& responder,
                  U32 request_id,
                  const LLUUID& id);
@@ -55,6 +56,7 @@ private:
     S32 mDiscardLevel;
     U32 mRequestId;
     bool mNeedsAux;
+    bool mAllowCompression;
     LLUUID mID; // for the BC disk cache; may be null if the caller didn't pass one
     // output
     LLPointer<LLImageRaw> mDecodedImageRaw;
@@ -96,6 +98,7 @@ LLImageDecodeThread::handle_t LLImageDecodeThread::decodeImage(
     const LLPointer<LLImageFormatted>& image,
     S32 discard,
     bool needs_aux,
+    bool allow_compression,
     const LLPointer<LLImageDecodeThread::Responder>& responder,
     const LLUUID& id)
 {
@@ -107,11 +110,11 @@ LLImageDecodeThread::handle_t LLImageDecodeThread::decodeImage(
 
     // Report backlog here (called on the main thread for every decode request) since
     // LLImageDecodeThread::update() is dead code - nothing in the viewer calls it.
-    LLImageBlockCompressor::setQueueBacklog(mThreadPool->getQueue().size());
+    VayuImageBlockCompressor::setQueueBacklog(mThreadPool->getQueue().size());
 
     // Instantiate the ImageRequest right in the lambda, why not?
     bool posted = mThreadPool->getQueue().post(
-        [req = ImageRequest(image, discard, needs_aux, responder, decode_id, id)]
+        [req = ImageRequest(image, discard, needs_aux, allow_compression, responder, decode_id, id)]
         () mutable
         {
             auto done = req.processRequest();
@@ -140,12 +143,14 @@ LLImageDecodeThread::Responder::~Responder()
 ImageRequest::ImageRequest(const LLPointer<LLImageFormatted>& image,
                            S32 discard,
                            bool needs_aux,
+                           bool allow_compression,
                            const LLPointer<LLImageDecodeThread::Responder>& responder,
                            U32 request_id,
                            const LLUUID& id)
     : mFormattedImage(image),
       mDiscardLevel(discard),
       mNeedsAux(needs_aux),
+      mAllowCompression(allow_compression),
       mDecodedRaw(false),
       mDecodedAux(false),
       mResponder(responder),
@@ -226,7 +231,8 @@ bool ImageRequest::processRequest()
 
     if (done && mDecodedRaw && mDecodedImageRaw.notNull())
     {
-        if (LLImageBlockCompressor::isEligible(mDecodedImageRaw->getWidth(),
+        if (mAllowCompression &&
+            VayuImageBlockCompressor::isEligible(mDecodedImageRaw->getWidth(),
                                                mDecodedImageRaw->getHeight(),
                                                mDecodedImageRaw->getComponents()))
         {
@@ -248,14 +254,14 @@ bool ImageRequest::processRequest()
 
             if (cacheable)
             {
-                LLBCCacheEntryHeader cache_header;
+                VayuBCCacheEntryHeader cache_header;
                 std::vector<U8> cache_buffer;
-                const U8 min_preset = (U8)LLImageBlockCompressor::getEffectivePreset();
-                if (LLBCTextureCache::instance().readEntry(mID, discard, min_preset, cache_header, cache_buffer))
+                const U8 min_preset = (U8)VayuImageBlockCompressor::getEffectivePreset();
+                if (VayuBCTextureCache::instance().readEntry(mID, discard, min_preset, cache_header, cache_buffer))
                 {
-                    auto comp_res = std::make_shared<LLBlockCompressionResult>();
-                    comp_res->mFormat = (ELLBlockCompressionFormat)cache_header.mFormat;
-                    comp_res->mPreset = (ELLBlockCompressionPreset)cache_header.mPreset;
+                    auto comp_res = std::make_shared<VayuBlockCompressionResult>();
+                    comp_res->mFormat = (EVayuBlockCompressionFormat)cache_header.mFormat;
+                    comp_res->mPreset = (EVayuBlockCompressionPreset)cache_header.mPreset;
                     comp_res->mGLInternalFormat = cache_header.mGLInternalFormat;
                     comp_res->mGLPrimaryFormat = cache_header.mGLPrimaryFormat;
                     comp_res->mWidth = cache_header.mWidth;
@@ -270,14 +276,14 @@ bool ImageRequest::processRequest()
 
             if (!cache_hit)
             {
-                auto comp_res = std::make_shared<LLBlockCompressionResult>();
-                if (LLImageBlockCompressor::encode(mDecodedImageRaw, *comp_res))
+                auto comp_res = std::make_shared<VayuBlockCompressionResult>();
+                if (VayuImageBlockCompressor::encode(mDecodedImageRaw, *comp_res))
                 {
                     mDecodedImageRaw->setBlockCompressionResult(comp_res);
 
                     if (cacheable)
                     {
-                        LLBCCacheEntryHeader cache_header;
+                        VayuBCCacheEntryHeader cache_header;
                         cache_header.mFormat = (U8)comp_res->mFormat;
                         cache_header.mPreset = (U8)comp_res->mPreset;
                         cache_header.mMipLevels = comp_res->mMipLevels;
@@ -286,7 +292,7 @@ bool ImageRequest::processRequest()
                         cache_header.mComponents = comp_res->mComponents;
                         cache_header.mGLInternalFormat = comp_res->mGLInternalFormat;
                         cache_header.mGLPrimaryFormat = comp_res->mGLPrimaryFormat;
-                        LLBCTextureCache::instance().writeEntry(mID, discard, cache_header, comp_res->mBuffer);
+                        VayuBCTextureCache::instance().writeEntry(mID, discard, cache_header, comp_res->mBuffer);
                     }
                 }
             }

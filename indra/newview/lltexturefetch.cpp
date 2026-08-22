@@ -565,6 +565,7 @@ private:
     bool mDecoded;
     bool mWritten;
     bool mNeedsAux;
+    bool mAllowCompression;
     bool mHaveAllData;
     bool mInLocalCache;
     bool mInCache;
@@ -891,6 +892,7 @@ LLTextureFetchWorker::LLTextureFetchWorker(LLTextureFetch* fetcher,
       mDecoded(false),
       mWritten(false),
       mNeedsAux(false),
+      mAllowCompression(true),
       mHaveAllData(false),
       mInLocalCache(false),
       mInCache(false),
@@ -1799,6 +1801,7 @@ bool LLTextureFetchWorker::doWork(S32 param)
         mDecodeHandle = LLAppViewer::getImageDecodeThread()->decodeImage(mFormattedImage,
                                                                        discard,
                                                                        mNeedsAux,
+                                                                       mAllowCompression,
                                                                        new DecodeResponder(mFetcher, mID, this),
                                                                        mID);
         if (mDecodeHandle == 0)
@@ -2496,7 +2499,7 @@ LLTextureFetch::~LLTextureFetch()
 }
 
 S32 LLTextureFetch::createRequest(FTType f_type, const std::string& url, const LLUUID& id, const LLHost& host, F32 priority,
-    S32 w, S32 h, S32 c, S32 desired_discard, bool needs_aux, bool can_use_http)
+    S32 w, S32 h, S32 c, S32 desired_discard, bool needs_aux, bool can_use_http, bool allow_compression)
 {
     LL_PROFILE_ZONE_SCOPED;
     if (mDebugPause)
@@ -2580,6 +2583,7 @@ S32 LLTextureFetch::createRequest(FTType f_type, const std::string& url, const L
         }
         worker->mActiveCount++;
         worker->mNeedsAux = needs_aux;
+        worker->mAllowCompression = allow_compression;
         worker->setImagePriority(priority);
         worker->setDesiredDiscard(desired_discard, desired_size);
         worker->setCanUseHTTP(can_use_http);
@@ -2608,6 +2612,7 @@ S32 LLTextureFetch::createRequest(FTType f_type, const std::string& url, const L
         worker->lockWorkMutex();                                        // +Mw
         worker->mActiveCount++;
         worker->mNeedsAux = needs_aux;
+        worker->mAllowCompression = allow_compression;
         worker->setCanUseHTTP(can_use_http);
         worker->unlockWorkMutex();                                      // -Mw
     }

@@ -44,7 +44,7 @@
 #include "llrender.h"
 #include "llwindow.h"
 #include "llframetimer.h"
-#include "llimageblockcompressor.h"
+#include "vayuimageblockcompressor.h"
 #include "llgltexture.h"
 #include <bit>
 #include <boost/unordered_map.hpp>
@@ -1728,6 +1728,29 @@ bool LLImageGL::createGLTexture()
     return true ;
 }
 
+// static
+bool LLImageGL::categoryAllowsCompression(S32 category)
+{
+    switch (category)
+    {
+    case LLGLTexture::BOOST_AVATAR_SELF:
+    case LLGLTexture::BOOST_AVATAR_BAKED_SELF:
+    case LLGLTexture::AVATAR_SCRATCH_TEX:
+    case LLGLTexture::BOOST_SCULPTED:
+    case LLGLTexture::BOOST_UI:
+    case LLGLTexture::BOOST_ICON:
+    case LLGLTexture::BOOST_THUMBNAIL:
+    case LLGLTexture::BOOST_PREVIEW:
+    case LLGLTexture::BOOST_HUD:
+    case LLGLTexture::DYNAMIC_TEX:
+    case LLGLTexture::MEDIA:
+    case LLGLTexture::LOCAL:
+        return false;
+    default:
+        return true;
+    }
+}
+
 bool LLImageGL::createGLTexture(S32 discard_level, const LLImageRaw* imageraw, S32 usename/*=0*/, bool to_create, S32 category, bool defer_copy, LLGLuint* tex_name)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
@@ -1855,28 +1878,7 @@ bool LLImageGL::createGLTexture(S32 discard_level, const LLImageRaw* imageraw, S
     setCategory(category);
     const U8* rawdata = imageraw->getData();
 
-    bool allow_cat = true;
-    switch (category)
-    {
-    case LLGLTexture::BOOST_AVATAR_SELF:
-    case LLGLTexture::BOOST_AVATAR_BAKED_SELF:
-    case LLGLTexture::AVATAR_SCRATCH_TEX:
-    case LLGLTexture::BOOST_SCULPTED:
-    case LLGLTexture::BOOST_UI:
-    case LLGLTexture::BOOST_ICON:
-    case LLGLTexture::BOOST_THUMBNAIL:
-    case LLGLTexture::BOOST_PREVIEW:
-    case LLGLTexture::BOOST_HUD:
-    case LLGLTexture::DYNAMIC_TEX:
-    case LLGLTexture::MEDIA:
-    case LLGLTexture::LOCAL:
-        allow_cat = false;
-        break;
-    default:
-        break;
-    }
-
-    const bool compress = sCompressTextures && mAllowCompression && allow_cat && !had_explicit_format && mUseMipMaps && !defer_copy && LLImageBlockCompressor::isEligible(raw_w, raw_h, imageraw->getComponents());
+    const bool compress = sCompressTextures && mAllowCompression && categoryAllowsCompression(category) && !had_explicit_format && mUseMipMaps && !defer_copy && VayuImageBlockCompressor::isEligible(raw_w, raw_h, imageraw->getComponents());
     if (compress)
     {
         // 1. Fast path: check if the texture was already compressed on a background thread pool worker
@@ -1891,8 +1893,8 @@ bool LLImageGL::createGLTexture(S32 discard_level, const LLImageRaw* imageraw, S
         }
 
         // 2. Fallback path: encode synchronously if not pre-compressed in background
-        LLBlockCompressionResult comp_res;
-        if (LLImageBlockCompressor::encode(imageraw, comp_res))
+        VayuBlockCompressionResult comp_res;
+        if (VayuImageBlockCompressor::encode(imageraw, comp_res))
         {
             mFormatInternal = comp_res.mGLInternalFormat;
             mFormatPrimary = comp_res.mGLPrimaryFormat;
