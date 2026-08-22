@@ -394,6 +394,19 @@
     width="300" />
 
   <check_box
+    control_name="RenderCompressTextures"
+    follows="left|top"
+    height="16"
+    initial_value="true"
+    label="Enable Block Texture Compression"
+    layout="topleft"
+    left="30"
+    name="RenderCompressTextures"
+    tool_tip="Compresses textures in video memory using BC1/BC4/BC5/BC7 via bc7enc, saving significant VRAM."
+    top_pad="6"
+    width="300" />
+
+  <check_box
     control_name="ALLimitFramerate"
     height="16"
     label="Limit framerate"
@@ -472,7 +485,7 @@
     layout="topleft"
     left="10"
     name="Defaults"
-    top_delta="65"
+    top="410"
     width="210">
     <button.commit_callback
       function="Pref.HardwareDefaults" />
@@ -485,7 +498,7 @@
     layout="topleft"
     left_pad="10"
     name="AdvancedSettings"
-    top_delta="0"
+    top="410"
     width="200">
     <button.commit_callback
       function="Pref.Advanced"

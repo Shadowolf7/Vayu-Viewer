@@ -3259,6 +3259,7 @@ LLViewerMediaTexture::LLViewerMediaTexture(const LLUUID& id, bool usemipmaps, LL
 
 
     mGLTexturep->setNeedsAlphaAndPickMask(false);
+    mGLTexturep->setAllowCompression(false);
 
     mIsPlaying = false;
 

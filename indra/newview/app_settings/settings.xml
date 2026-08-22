@@ -7724,7 +7724,17 @@
       <real>0.0</real>
     </array>
   </map>
-
+    <key>RenderCompressTextures</key>
+    <map>
+      <key>Comment</key>
+      <string>Compress in-world textures using workload-aware block compression (BC1/BC4/BC5/BC7 via bc7enc/rgbcx) to reduce VRAM usage</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>Boolean</string>
+      <key>Value</key>
+      <integer>1</integer>
+    </map>
     <key>RenderAnisotropic</key>
     <map>
       <key>Comment</key>

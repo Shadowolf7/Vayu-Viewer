@@ -28,6 +28,7 @@
 
 #include "llimageworker.h"
 #include "llimagedxt.h"
+#include "llimageblockcompressor.h"
 #include "threadpool.h"
 
 /*--------------------------------------------------------------------------*/
@@ -211,6 +212,20 @@ bool ImageRequest::processRequest()
 
         // Pick up errors from decoding
         mErrorString = LLImage::getLastThreadError();
+    }
+
+    if (done && mDecodedRaw && mDecodedImageRaw.notNull())
+    {
+        if (LLImageBlockCompressor::isEligible(mDecodedImageRaw->getWidth(),
+                                               mDecodedImageRaw->getHeight(),
+                                               mDecodedImageRaw->getComponents()))
+        {
+            auto comp_res = std::make_shared<LLBlockCompressionResult>();
+            if (LLImageBlockCompressor::encode(mDecodedImageRaw, *comp_res))
+            {
+                mDecodedImageRaw->setBlockCompressionResult(comp_res);
+            }
+        }
     }
 
     return done;
