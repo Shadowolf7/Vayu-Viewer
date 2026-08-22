@@ -411,6 +411,7 @@ bool LLImageBlockCompressor::encode(const U8* src_data, U32 width, U32 height, S
     }
 
     const ELLBlockCompressionPreset preset = getEffectivePreset();
+    result.mPreset = preset;
 
     bc7enc_compress_block_params bc7_params;
     if (resolved == ELLBlockCompressionFormat::BC7)

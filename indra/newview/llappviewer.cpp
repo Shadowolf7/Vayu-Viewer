@@ -4751,6 +4751,11 @@ void LLAppViewer::purgeCache()
     LLVOCache::getInstance()->removeCache(LL_PATH_CACHE);
     LLViewerShaderMgr::instance()->clearShaderCache();
     purgeCefStaleCaches();
+    // deleteFilesInDir() below skips subdirectories, so the BC cache (a
+    // subdirectory of LL_PATH_CACHE) needs its own removal - done via a raw
+    // directory delete rather than LLBCTextureCache::purge() since this runs
+    // before initCache() and purge() needs mCacheDir already set.
+    gDirUtilp->deleteDirAndContents(gDirUtilp->getExpandedFilename(LL_PATH_CACHE, "bccache"));
     gDirUtilp->deleteFilesInDir(gDirUtilp->getExpandedFilename(LL_PATH_CACHE, ""), "*");
 }
 

@@ -33,6 +33,7 @@ enum class ELLBlockCompressionPreset : U8
 struct LLBlockCompressionResult
 {
     ELLBlockCompressionFormat mFormat = ELLBlockCompressionFormat::Auto;
+    ELLBlockCompressionPreset mPreset = ELLBlockCompressionPreset::Basic; // preset actually used to produce mBuffer
     U32 mGLInternalFormat = 0;
     U32 mGLPrimaryFormat = 0;
     U32 mWidth = 0;
