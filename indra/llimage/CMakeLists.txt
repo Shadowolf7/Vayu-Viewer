@@ -85,6 +85,11 @@ if (BUILD_TESTING)
     PROPERTIES
     LL_TEST_ADDITIONAL_SOURCE_FILES "bc7e/bc7enc.cpp;bc7e/rgbcx.cpp"
     )
+  set_source_files_properties(
+    llimageworker.cpp
+    PROPERTIES
+    LL_TEST_ADDITIONAL_SOURCE_FILES "llimageblockcompressor.cpp;bc7e/bc7enc.cpp;bc7e/rgbcx.cpp"
+    )
   LL_ADD_PROJECT_UNIT_TESTS(llimage "${llimage_TEST_SOURCE_FILES}")
 endif ()
 

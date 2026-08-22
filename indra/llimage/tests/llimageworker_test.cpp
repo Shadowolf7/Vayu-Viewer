@@ -89,6 +89,7 @@ U8* LLImageRaw::allocateData(S32 size) { return NULL; }
 U8* LLImageRaw::reallocateData(S32 size) { return NULL; }
 const U8* LLImageBase::getData() const { return NULL; }
 U8* LLImageBase::getData() { return NULL; }
+bool LLImageBase::isBufferInvalid() const { return false; }
 const std::string& LLImage::getLastThreadError() { static std::string msg; return msg; }
 
 // End Stubbing
