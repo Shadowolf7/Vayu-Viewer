@@ -57,6 +57,16 @@ public:
     static void setPreset(ELLBlockCompressionPreset preset);
     static ELLBlockCompressionPreset getPreset();
 
+    // Reported by LLImageDecodeThread once per frame (its queue backlog / pending
+    // request count). encode() uses this to downgrade below the configured
+    // preset when the decode queue is falling behind, trading fidelity for
+    // throughput; it never raises effort above the user's configured preset.
+    static void setQueueBacklog(size_t pending);
+
+    // Resolves the preset actually used for the next encode() call: the
+    // configured preset, clamped down by the current queue backlog.
+    static ELLBlockCompressionPreset getEffectivePreset();
+
     // Textures at or below this size skip compression and stay on direct raw upload
     static constexpr U32 kMinEncodeDim = 4;
 

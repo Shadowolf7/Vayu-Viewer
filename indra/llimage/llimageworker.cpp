@@ -81,7 +81,9 @@ LLImageDecodeThread::~LLImageDecodeThread()
 size_t LLImageDecodeThread::update(F32 max_time_ms)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
-    return getPending();
+    size_t pending = getPending();
+    LLImageBlockCompressor::setQueueBacklog(pending);
+    return pending;
 }
 
 size_t LLImageDecodeThread::getPending()

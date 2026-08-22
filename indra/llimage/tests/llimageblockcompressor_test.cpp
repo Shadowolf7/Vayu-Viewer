@@ -185,4 +185,35 @@ namespace tut
 
         LLImageBlockCompressor::setPreset(saved_preset);
     }
+
+    // Test 9: Queue backlog downgrades the effective preset but never
+    // raises it above what the user configured.
+    template<> template<>
+    void block_compressor_object::test<9>()
+    {
+        const ELLBlockCompressionPreset saved_preset = LLImageBlockCompressor::getPreset();
+
+        LLImageBlockCompressor::setPreset(ELLBlockCompressionPreset::Slow);
+
+        LLImageBlockCompressor::setQueueBacklog(0);
+        ensure("No backlog uses the configured preset unmodified",
+               LLImageBlockCompressor::getEffectivePreset() == ELLBlockCompressionPreset::Slow);
+
+        LLImageBlockCompressor::setQueueBacklog(20);
+        ensure("Moderate backlog caps effort at Fast",
+               LLImageBlockCompressor::getEffectivePreset() == ELLBlockCompressionPreset::Fast);
+
+        LLImageBlockCompressor::setQueueBacklog(100);
+        ensure("Heavy backlog forces Ultrafast",
+               LLImageBlockCompressor::getEffectivePreset() == ELLBlockCompressionPreset::Ultrafast);
+
+        // A configured preset already below the moderate cap is left alone, not raised.
+        LLImageBlockCompressor::setPreset(ELLBlockCompressionPreset::Ultrafast);
+        LLImageBlockCompressor::setQueueBacklog(20);
+        ensure("Moderate backlog never raises effort above the configured preset",
+               LLImageBlockCompressor::getEffectivePreset() == ELLBlockCompressionPreset::Ultrafast);
+
+        LLImageBlockCompressor::setQueueBacklog(0);
+        LLImageBlockCompressor::setPreset(saved_preset);
+    }
 }

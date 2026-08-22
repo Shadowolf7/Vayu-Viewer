@@ -47,6 +47,12 @@ static uint8_t g_linear_to_srgb[4096];
 static bool g_tables_ready = false;
 static std::once_flag g_init_once;
 static std::atomic<U8> g_preset{ (U8)ELLBlockCompressionPreset::Basic };
+static std::atomic<size_t> g_queue_backlog{ 0 };
+
+// Initial guesses relative to the 8-thread "ImageDecode" pool (llimageworker.cpp);
+// not yet tuned against real telemetry (see Phase 3 roadmap item).
+constexpr size_t kModerateBacklogThreshold = 12; // ~1.5x pool width: cap effort at Fast
+constexpr size_t kHeavyBacklogThreshold = 32;     // ~4x pool width: force Ultrafast
 
 // BC1 rgbcx encode level per preset (see rgbcx.h: MIN_LEVEL=0, MAX_LEVEL=18)
 static uint32_t bc1_level_for_preset(ELLBlockCompressionPreset preset)
@@ -240,6 +246,23 @@ ELLBlockCompressionPreset LLImageBlockCompressor::getPreset()
     return (ELLBlockCompressionPreset)g_preset.load(std::memory_order_relaxed);
 }
 
+void LLImageBlockCompressor::setQueueBacklog(size_t pending)
+{
+    g_queue_backlog.store(pending, std::memory_order_relaxed);
+}
+
+ELLBlockCompressionPreset LLImageBlockCompressor::getEffectivePreset()
+{
+    const ELLBlockCompressionPreset configured = getPreset();
+    const size_t backlog = g_queue_backlog.load(std::memory_order_relaxed);
+
+    if (backlog > kHeavyBacklogThreshold)
+        return ELLBlockCompressionPreset::Ultrafast;
+    if (backlog > kModerateBacklogThreshold)
+        return std::min(configured, ELLBlockCompressionPreset::Fast);
+    return configured;
+}
+
 bool LLImageBlockCompressor::isEligible(U32 width, U32 height, S32 components)
 {
     if (width < kMinEncodeDim || height < kMinEncodeDim)
@@ -387,7 +410,7 @@ bool LLImageBlockCompressor::encode(const U8* src_data, U32 width, U32 height, S
         break;
     }
 
-    const ELLBlockCompressionPreset preset = getPreset();
+    const ELLBlockCompressionPreset preset = getEffectivePreset();
 
     bc7enc_compress_block_params bc7_params;
     if (resolved == ELLBlockCompressionFormat::BC7)
