@@ -58,6 +58,19 @@ public:
     // (re-initialized empty) afterward.
     void purge();
 
+    // Joins the writer pool's thread at a controlled point in app shutdown.
+    // Must be called (from LLAppViewer::cleanup(), after the ImageDecode
+    // thread pool that feeds writeEntry() is already torn down) rather than
+    // relying on this object's own destructor: as a function-local static,
+    // that destructor only runs whenever the C++ runtime's exit()-time
+    // static-destructor chain happens to reach it, by which point other
+    // global state ThreadPool::close() touches (LLEventPumps, the fiber
+    // scheduler behind LL::WorkQueue) may already be gone - confirmed via a
+    // live gdb backtrace to be fatal (std::terminate from an exception
+    // escaping ~ThreadPoolBase() during exit()). Safe to call more than
+    // once; idempotent no-op once mWriterPool is already null.
+    void shutdown();
+
     // Looks up (id, discard_level). Only counts as a hit if the cached entry's
     // preset is >= min_preset - a texture cached during a busy moment at a
     // lower preset than currently configured is treated as a miss so callers
