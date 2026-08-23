@@ -147,7 +147,10 @@ void VayuBCTextureCache::purge()
     // yet." A write mid-flush (key in mFlushing) isn't tracked here since
     // it's already off these lists; it'll finish writing its file and
     // become an untracked-but-harmless entry the next initCache() scan
-    // picks back up, same as any other purge/writer-pool race.
+    // picks back up, same as any other purge/writer-pool race. mDraining is
+    // deliberately left alone too: if this empties mPendingWrites out from
+    // under an in-flight drainPendingWrites() pass, that pass just notices
+    // "empty" on its next loop iteration and clears the flag itself.
     mPendingWrites.clear();
     mPendingIndex.clear();
 }
@@ -155,10 +158,28 @@ void VayuBCTextureCache::purge()
 void VayuBCTextureCache::shutdown()
 {
     // Must NOT hold mMutex here: resetting mWriterPool joins its thread,
-    // and flushOneEntry() (running on that thread) takes mMutex itself to
-    // splice/erase pending entries - holding the lock across the join would
-    // deadlock against a flush still in progress.
+    // and drainPendingWrites() (running on that thread) takes mMutex itself
+    // to splice/erase pending entries and to clear mDraining - holding the
+    // lock across the join would deadlock against a drain pass still in
+    // progress.
+    //
+    // Because drainPendingWrites() loops internally until mPendingWrites is
+    // empty, rather than relying on one WorkQueue ticket per entry, this
+    // join deterministically waits out the entire remaining backlog - not
+    // just whatever happened to still be queued in the WorkQueue at the
+    // moment shutdown() was called - before returning.
     mWriterPool.reset();
+
+    // Defensive backstop, not load-bearing under normal operation: by the
+    // time reset() returns, the writer thread is joined and gone, and
+    // drainPendingWrites()'s own final iteration always clears mDraining
+    // before returning. This just guards against mDraining ever getting
+    // stuck true (e.g. an exception escaping mid-loop), which would
+    // otherwise silently strand every future write - queuePendingWrite()
+    // would see mDraining already true and never post a new ticket for
+    // anyone to run.
+    std::lock_guard<std::mutex> lock(mMutex);
+    mDraining = false;
 }
 
 bool VayuBCTextureCache::readEntry(const LLUUID& id, S32 discard_level, U8 min_preset,
@@ -246,51 +267,68 @@ void VayuBCTextureCache::writeEntry(const LLUUID& id, S32 discard_level,
     memcpy(file_bytes.data(), &file_header, sizeof(file_header));
     memcpy(file_bytes.data() + sizeof(file_header), buffer.data(), buffer.size());
 
-    std::lock_guard<std::mutex> lock(mMutex);
+    // Set inside the lock below, acted on after it's released, so post()
+    // never runs with mMutex held - see queuePendingWrite()/
+    // drainPendingWrites(). With only one wakeup ticket ever outstanding at
+    // a time, post() can't structurally block on queue capacity anymore -
+    // but keeping it unlocked anyway is a second, independent guard against
+    // this exact deadlock shape if that one-ticket invariant ever breaks.
+    bool needs_post = false;
 
-    if (!mInitialized)
-        return;
-
-    const std::string key = entryKey(id, discard_level);
-    const std::filesystem::path path = entryPath(id, discard_level);
-    const S64 new_size = (S64)file_bytes.size();
-
-    auto prior = mIndex.find(key);
-    if (prior != mIndex.end())
     {
-        mCurrentSize -= prior->second->mFileSize;
-        prior->second->mFileSize = new_size;
-        touch(prior->second);
+        std::lock_guard<std::mutex> lock(mMutex);
+
+        if (!mInitialized)
+            return;
+
+        const std::string key = entryKey(id, discard_level);
+        const std::filesystem::path path = entryPath(id, discard_level);
+        const S64 new_size = (S64)file_bytes.size();
+
+        auto prior = mIndex.find(key);
+        if (prior != mIndex.end())
+        {
+            mCurrentSize -= prior->second->mFileSize;
+            prior->second->mFileSize = new_size;
+            touch(prior->second);
+        }
+        else
+        {
+            IndexEntry entry;
+            entry.mKey = key;
+            entry.mPath = path;
+            entry.mFileSize = new_size;
+            mLruList.push_front(entry);
+            mIndex[key] = mLruList.begin();
+        }
+        mCurrentSize += new_size;
+
+        // Disk I/O happens off this thread now - see queuePendingWrite()/
+        // drainPendingWrites() below.
+        needs_post = queuePendingWrite(key, path, std::move(file_bytes));
+
+        evictUntilWithinBudget();
     }
-    else
+
+    if (needs_post)
     {
-        IndexEntry entry;
-        entry.mKey = key;
-        entry.mPath = path;
-        entry.mFileSize = new_size;
-        mLruList.push_front(entry);
-        mIndex[key] = mLruList.begin();
+        mWriterPool->getQueue().post([this] { drainPendingWrites(); });
     }
-    mCurrentSize += new_size;
-
-    // Disk I/O happens off this thread now - see queuePendingWrite()/
-    // flushOneEntry() below.
-    queuePendingWrite(key, path, std::move(file_bytes));
-
-    evictUntilWithinBudget();
 }
 
-void VayuBCTextureCache::queuePendingWrite(const std::string& key, const std::filesystem::path& path,
+bool VayuBCTextureCache::queuePendingWrite(const std::string& key, const std::filesystem::path& path,
                                            std::vector<U8>&& file_bytes)
 {
     auto it = mPendingIndex.find(key);
     if (it != mPendingIndex.end())
     {
-        // Coalesce: overwrite the still-unflushed bytes in place. The flush
-        // task already posted for this key reads whatever's current when it
-        // actually runs, so there's nothing new to post.
+        // Coalesce: overwrite the still-unflushed bytes in place.
+        // drainPendingWrites() always reads whatever's current for a key
+        // when it actually gets to it, so there's nothing new to post - the
+        // ticket already outstanding (or the loop already running) covers
+        // this write too.
         it->second->mFileBytes = std::move(file_bytes);
-        return;
+        return false;
     }
 
     PendingWrite pw;
@@ -300,37 +338,66 @@ void VayuBCTextureCache::queuePendingWrite(const std::string& key, const std::fi
     mPendingWrites.push_back(std::move(pw));
     mPendingIndex[key] = std::prev(mPendingWrites.end());
 
-    mWriterPool->getQueue().post([this] { flushOneEntry(); });
+    if (mDraining)
+    {
+        // A drain pass is already queued-or-running; it'll pick this entry
+        // up on its own next loop iteration. Posting another ticket here
+        // would just be a redundant wakeup for the same loop.
+        return false;
+    }
+
+    mDraining = true;
+    return true;
 }
 
-void VayuBCTextureCache::flushOneEntry()
+void VayuBCTextureCache::drainPendingWrites()
 {
-    PendingList local;
-    std::string key;
+    for (;;)
     {
-        std::lock_guard<std::mutex> lock(mMutex);
-        if (mPendingWrites.empty())
-            return;
+        PendingList local;
+        std::string key;
+        {
+            std::lock_guard<std::mutex> lock(mMutex);
+            if (mPendingWrites.empty())
+            {
+                // Nothing left to do. Clearing mDraining HERE, in the same
+                // lock acquisition that just confirmed the backlog is
+                // empty, is load-bearing: if the check and the clear were
+                // two separate acquisitions, a write queued into the gap
+                // between them would see mDraining still true in
+                // queuePendingWrite() (so it wouldn't post a new ticket,
+                // trusting this loop to notice it) - but this loop would
+                // already be past the point of ever checking again, and
+                // that entry would sit in mPendingWrites forever with
+                // nobody left to flush it.
+                mDraining = false;
+                return;
+            }
 
-        // Splice - don't copy - the front node into our own local list.
-        // Once it's off mPendingWrites/mPendingIndex, no other thread can
-        // reach it, so reading mFileBytes below without the lock is safe:
-        // there's nothing left to race against.
-        local.splice(local.begin(), mPendingWrites, mPendingWrites.begin());
-        key = local.front().mKey;
-        mPendingIndex.erase(key);
-        mFlushing.insert(key);
+            // Splice - don't copy - the front node into our own local list.
+            // Once it's off mPendingWrites/mPendingIndex, no other thread
+            // can reach it, so reading mFileBytes below without the lock is
+            // safe: there's nothing left to race against.
+            local.splice(local.begin(), mPendingWrites, mPendingWrites.begin());
+            key = local.front().mKey;
+            mPendingIndex.erase(key);
+            mFlushing.insert(key);
+        }
+
+        std::ofstream out(local.front().mPath, std::ios::binary | std::ios::trunc);
+        if (out.good())
+        {
+            const auto& bytes = local.front().mFileBytes;
+            out.write(reinterpret_cast<const char*>(bytes.data()), (std::streamsize)bytes.size());
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(mMutex);
+            mFlushing.erase(key);
+        }
+        // Loop back to the top and re-take the lock fresh to check for more
+        // work. mMutex is never held across the disk write above.
     }
-
-    std::ofstream out(local.front().mPath, std::ios::binary | std::ios::trunc);
-    if (out.good())
-    {
-        const auto& bytes = local.front().mFileBytes;
-        out.write(reinterpret_cast<const char*>(bytes.data()), (std::streamsize)bytes.size());
-    }
-
-    std::lock_guard<std::mutex> lock(mMutex);
-    mFlushing.erase(key);
 }
 
 void VayuBCTextureCache::touch(LruList::iterator it)
@@ -344,12 +411,12 @@ void VayuBCTextureCache::removeEntry(const std::string& key)
     if (it == mIndex.end())
         return;
 
-    // A write currently mid-flush (see flushOneEntry()) still has this path
-    // open for writing - don't fight it for the file. On Windows, deleting
-    // a file another thread has open for writing fails outright (POSIX
-    // tolerates it, unlinking without disturbing the open handle); either
-    // way it just becomes an untracked file the next initCache() scan picks
-    // back up, same tolerance as any other writer-pool race here.
+    // A write currently mid-flush (see drainPendingWrites()) still has this
+    // path open for writing - don't fight it for the file. On Windows,
+    // deleting a file another thread has open for writing fails outright
+    // (POSIX tolerates it, unlinking without disturbing the open handle);
+    // either way it just becomes an untracked file the next initCache()
+    // scan picks back up, same tolerance as any other writer-pool race here.
     if (!mFlushing.count(key))
     {
         std::error_code ec;
@@ -362,7 +429,7 @@ void VayuBCTextureCache::removeEntry(const std::string& key)
     // Cancel a still-queued write for this key too - no file exists yet
     // for it (or if it does, we just removed it above), so there's nothing
     // to flush. A write already mid-flight (key in mFlushing) isn't
-    // reachable here anymore; see flushOneEntry()'s comment.
+    // reachable here anymore; see drainPendingWrites()'s comment.
     auto pending_it = mPendingIndex.find(key);
     if (pending_it != mPendingIndex.end())
     {

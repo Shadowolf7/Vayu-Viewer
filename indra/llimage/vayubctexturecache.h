@@ -123,20 +123,29 @@ private:
     void removeEntry(const std::string& key);
 
     // Queues (or coalesces into an existing queued write for the same key)
-    // a write for the background pool, posting a flush task for genuinely
-    // new keys only - a coalesced write rides the flush already posted for
-    // that key, since flushOneEntry() always reads whatever's current at
-    // the time it actually runs. Called with mMutex already held.
-    void queuePendingWrite(const std::string& key, const std::filesystem::path& path,
+    // a write for the background pool. Returns true exactly when this call
+    // flipped mDraining from false to true - i.e. when the caller is
+    // responsible for handing the writer pool its one outstanding wakeup
+    // ticket by posting drainPendingWrites(). With a single writer thread
+    // there only ever needs to be one ticket in flight no matter how deep
+    // the backlog gets; drainPendingWrites() loops internally to work
+    // through whatever's queued once it starts. Called with mMutex already
+    // held.
+    bool queuePendingWrite(const std::string& key, const std::filesystem::path& path,
                            std::vector<U8>&& file_bytes);
 
-    // Runs on mWriterPool's single thread. Pops (splices) one entry off the
-    // front of mPendingWrites, writes it to disk with no lock held, then
-    // clears it from mFlushing. Splicing - not copying - out from under the
-    // lock is what makes the unlocked disk write safe: once a node is off
-    // mPendingWrites/mPendingIndex, no other thread can reach it, so there's
-    // nothing left to race against.
-    void flushOneEntry();
+    // Runs on mWriterPool's single thread, once per false->true transition
+    // of mDraining (see queuePendingWrite()). Loops until mPendingWrites is
+    // empty: each iteration pops (splices) one entry off the front, writes
+    // it to disk with no lock held, then re-locks briefly to clear it from
+    // mFlushing before checking for more. Splicing - not copying - out from
+    // under the lock is what makes the unlocked disk write safe: once a
+    // node is off mPendingWrites/mPendingIndex, no other thread can reach
+    // it, so there's nothing left to race against. The loop's final
+    // iteration clears mDraining in the SAME lock acquisition that finds
+    // mPendingWrites empty - splitting that into two acquisitions would let
+    // a write queued into the gap get stranded with nobody left to flush it.
+    void drainPendingWrites();
 
     mutable std::mutex mMutex;
     std::filesystem::path mCacheDir;
@@ -160,8 +169,21 @@ private:
     std::unordered_map<std::string, PendingList::iterator> mPendingIndex;
     std::unordered_set<std::string> mFlushing;
 
+    // True while a drainPendingWrites() pass is queued-or-running on the
+    // writer pool. The single source of truth for "is there currently
+    // exactly one outstanding wakeup ticket (or an active drain loop that
+    // will notice new work without needing one)". Set true only by
+    // queuePendingWrite()'s false->true transition (which is also the only
+    // time it posts); cleared only by drainPendingWrites() itself, in the
+    // same critical section where it confirms mPendingWrites is empty.
+    // purge() deliberately does not touch this: if it empties
+    // mPendingWrites out from under an in-flight drain pass, that pass will
+    // simply notice on its next loop iteration and clear the flag itself.
+    bool mDraining = false;
+
     // Declared last so it's destroyed first: ~ThreadPool() joins the writer
-    // thread, which must happen before mMutex/mPendingWrites/mIndex above
-    // are torn down, since flushOneEntry() touches all of them.
+    // thread, which must happen before mMutex/mPendingWrites/mIndex/
+    // mDraining above are torn down, since drainPendingWrites() touches all
+    // of them.
     std::unique_ptr<LL::ThreadPool> mWriterPool;
 };
