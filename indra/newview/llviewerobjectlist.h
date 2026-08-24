@@ -154,6 +154,14 @@ public:
     void orphanize(LLViewerObject *childp, U32 parent_id, U32 ip, U32 port);
     void findOrphans(LLViewerObject* objectp, U32 ip, U32 port);
 
+    // Vehicle/seat root kills are inherently racy around region crossings -
+    // the outgoing sim's copy can die before or after the new sim's copy
+    // exists (see Vayu issue #74). Rather than deciding instantly whether a
+    // kill is real, hold it for a grace period: if the same object gets a
+    // live update in the meantime (i.e. it was just a crossing race), the
+    // kill is cancelled; otherwise it's applied once the grace period expires.
+    void deferSeatKill(LLViewerObject* objectp, LLViewerRegion* source_region);
+
 public:
     // Class for keeping track of orphaned objects
     class OrphanInfo
@@ -199,6 +207,16 @@ protected:
     std::vector<OrphanInfo> mOrphanChildren;    // UUID's of orphaned objects
     S32 mNumOrphans;
     S32 mNumAvatars;
+
+    struct LLDeferredSeatKill
+    {
+        LLPointer<LLViewerObject> mObject;
+        LLViewerRegion*           mSourceRegion; // for logging only, not dereferenced after the fact
+        LLViewerRegion*           mRegionAtDefer; // reconciled once mObject's region differs from this
+        F32                       mExpiryTime;    // gFrameTimeSeconds value
+    };
+    std::vector<LLDeferredSeatKill> mDeferredSeatKills;
+    void updateDeferredSeatKills();
 
     typedef std::vector<LLPointer<LLViewerObject> > vobj_list_t;
 

@@ -3999,6 +3999,23 @@ void process_terse_object_update_improved(LLMessageSystem *mesgsys, void **user_
     }
 }
 
+// True if any avatar (self or passenger) is seated on objectp's root - used to
+// decide whether a kill needs the region-crossing grace period in deferSeatKill()
+// rather than applying immediately. See Vayu issue #74.
+static bool object_root_has_seated_avatar(LLViewerObject* objectp)
+{
+    LLViewerObject* root = objectp->getRootEdit();
+    for (LLViewerObject::child_list_t::const_iterator iter = root->getChildren().begin();
+         iter != root->getChildren().end(); ++iter)
+    {
+        if ((*iter)->getPCode() == LL_PCODE_LEGACY_AVATAR)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 void process_kill_object(LLMessageSystem *mesgsys, void **user_data)
 {
     LL_PROFILE_ZONE_SCOPED;
@@ -4049,13 +4066,17 @@ void process_kill_object(LLMessageSystem *mesgsys, void **user_data)
                 }
 // [/SL:KB]
 
-                // Block vehicle / seat kills sent by the outgoing simulator during region crossings
-                if ( regionp && (regionp != gAgent.getRegion()) &&
-                     isAgentAvatarValid() && gAgentAvatarp->isSitting() &&
-                     (gAgentAvatarp->getRoot() == objectp->getRootEdit()) )
+                // Kills of a seat root are inherently racy around region crossings - the
+                // outgoing sim's copy can die before or after the new sim's copy exists,
+                // and occasionally not at all (e.g. a parcel-ban ejection can leave the
+                // kill stuck behind a capability desync). Rather than guessing from this
+                // one message, defer and see if the object comes back to life under a
+                // new region within a short grace period; if not, the kill is applied for
+                // real (unseating everyone on it, same as before). Covers self and any
+                // passenger. See Vayu issue #74.
+                if (object_root_has_seated_avatar(objectp))
                 {
-                    LL_INFOS("Avatar") << "Ignoring vehicle kill from outgoing region " << regionp->getName()
-                        << " for seated root object " << objectp->getRootEdit()->getID() << LL_ENDL;
+                    gObjectList.deferSeatKill(objectp, regionp);
                     continue;
                 }
 

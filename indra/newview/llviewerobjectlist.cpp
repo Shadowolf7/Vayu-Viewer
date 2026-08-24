@@ -927,6 +927,8 @@ void LLViewerObjectList::update(LLAgent &agent)
     //clear avatar LOD change counter
     LLVOAvatar::sNumLODChangesThisFrame = 0;
 
+    updateDeferredSeatKills();
+
     const F64 frame_time = LLFrameTimer::getElapsedSeconds();
 
     LLViewerObject *objectp = NULL;
@@ -2124,6 +2126,74 @@ S32 LLViewerObjectList::findReferences(LLDrawable *drawablep) const
     return num_refs;
 }
 
+
+void LLViewerObjectList::deferSeatKill(LLViewerObject* objectp, LLViewerRegion* source_region)
+{
+    for (LLDeferredSeatKill& deferred : mDeferredSeatKills)
+    {
+        if (deferred.mObject == objectp)
+        {
+            // Already deferred (repeat kill resend) - leave the original expiry alone.
+            return;
+        }
+    }
+
+    F32 grace_period = llclamp(gSavedSettings.getF32("VayuVehicleUnseatGracePeriod"), 0.5f, 10.f);
+
+    LLDeferredSeatKill deferred;
+    deferred.mObject = objectp;
+    deferred.mSourceRegion = source_region;
+    deferred.mRegionAtDefer = objectp->getRegion();
+    deferred.mExpiryTime = gFrameTimeSeconds + grace_period;
+    mDeferredSeatKills.push_back(deferred);
+
+    LL_INFOS("Avatar") << "Deferring kill of seat root " << objectp->getID()
+        << " from region " << (source_region ? source_region->getName() : "<unknown>")
+        << " for up to " << grace_period << "s to see if it reappears" << LL_ENDL;
+}
+
+void LLViewerObjectList::updateDeferredSeatKills()
+{
+    if (mDeferredSeatKills.empty())
+    {
+        return;
+    }
+
+    for (std::vector<LLDeferredSeatKill>::iterator iter = mDeferredSeatKills.begin();
+         iter != mDeferredSeatKills.end(); )
+    {
+        LLViewerObject* objectp = iter->mObject;
+
+        if (!objectp || objectp->isDead())
+        {
+            // Something else already killed it (or it was cleaned up) - nothing left to do.
+            iter = mDeferredSeatKills.erase(iter);
+            continue;
+        }
+
+        if (objectp->getRegion() != iter->mRegionAtDefer)
+        {
+            // A live update re-homed this object into a (possibly new) region since we
+            // deferred the kill - this was just a crossing race, not a real kill.
+            LL_INFOS("Avatar") << "Seat root " << objectp->getID()
+                << " reappeared under region " << (objectp->getRegion() ? objectp->getRegion()->getName() : "<none>")
+                << " - cancelling deferred kill" << LL_ENDL;
+            iter = mDeferredSeatKills.erase(iter);
+            continue;
+        }
+
+        if (gFrameTimeSeconds > iter->mExpiryTime)
+        {
+            LL_INFOS("Avatar") << "Seat root " << objectp->getID()
+                << " did not reappear within the grace period - applying deferred kill" << LL_ENDL;
+            killObject(objectp);
+            iter = mDeferredSeatKills.erase(iter);
+            continue;
+        }
+
+        ++iter;
+    }
+}
 
 void LLViewerObjectList::orphanize(LLViewerObject *childp, U32 parent_id, U32 ip, U32 port)
 {

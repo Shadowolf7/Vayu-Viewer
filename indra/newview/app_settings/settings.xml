@@ -1616,6 +1616,17 @@
       <key>Value</key>
       <integer>4096</integer>
     </map>
+    <key>VayuVehicleUnseatGracePeriod</key>
+    <map>
+      <key>Comment</key>
+      <string>Seconds to hold a kill of a vehicle/seat root object before actually unseating anyone on it, to ride out region-crossing races where the object briefly appears dead. Clamped to 0.5-10s.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>F32</string>
+      <key>Value</key>
+      <real>2.0</real>
+    </map>
     <key>CacheValidateCounter</key>
     <map>
       <key>Comment</key>
