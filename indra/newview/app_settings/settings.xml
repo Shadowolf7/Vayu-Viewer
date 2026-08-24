@@ -1616,6 +1616,17 @@
       <key>Value</key>
       <integer>4096</integer>
     </map>
+    <key>VayuBCTextureCacheMaxPendingSize</key>
+    <map>
+      <key>Comment</key>
+      <string>Memory ceiling, in MB, for block-compressed texture writes waiting to be flushed to the BC cache. The decode threads can queue writes faster than the single writer thread drains them; past this ceiling the oldest queued writes are dropped (costing only a later re-encode) instead of growing in RAM. Raise only if you have memory to spare.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>U32</string>
+      <key>Value</key>
+      <integer>256</integer>
+    </map>
     <key>VayuPerfFrameLog</key>
     <map>
       <key>Comment</key>

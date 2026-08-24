@@ -1,5 +1,5 @@
 /**
- * @file llbctexturecache_test.cpp
+ * @file vayubctexturecache_test.cpp
  * @brief Unit tests for VayuBCTextureCache
  */
 
@@ -10,6 +10,8 @@
 #include "../vayubctexturecache.h"
 
 #include <filesystem>
+#include <memory>
+#include <utility>
 
 namespace tut
 {
@@ -24,6 +26,13 @@ namespace tut
     static std::filesystem::path test_dir(const char* name)
     {
         return std::filesystem::temp_directory_path() / (std::string("vayu_bccache_test_") + name);
+    }
+
+    // The cache takes shared ownership of the buffer now (see writeEntry()),
+    // so tests hand it a shared_ptr rather than a reference to a local.
+    static std::shared_ptr<const std::vector<U8>> make_buffer(std::vector<U8> bytes)
+    {
+        return std::make_shared<const std::vector<U8>>(std::move(bytes));
     }
 
     static VayuBCCacheEntryHeader make_header(U8 format, U8 preset)
@@ -53,7 +62,7 @@ namespace tut
         VayuBCCacheEntryHeader header = make_header(3, 2);
         std::vector<U8> buffer = { 1, 2, 3, 4, 5, 6, 7, 8 };
 
-        VayuBCTextureCache::instance().writeEntry(id, 0, header, buffer);
+        VayuBCTextureCache::instance().writeEntry(id, 0, header, make_buffer(buffer));
 
         VayuBCCacheEntryHeader read_header;
         std::vector<U8> read_buffer;
@@ -99,7 +108,7 @@ namespace tut
         id.generate();
         VayuBCCacheEntryHeader header = make_header(3, 1 /* Fast */);
         std::vector<U8> buffer = { 9, 9, 9 };
-        VayuBCTextureCache::instance().writeEntry(id, 0, header, buffer);
+        VayuBCTextureCache::instance().writeEntry(id, 0, header, make_buffer(buffer));
 
         VayuBCCacheEntryHeader out_header;
         std::vector<U8> out_buffer;
@@ -132,9 +141,9 @@ namespace tut
         id_b.generate();
         id_c.generate();
 
-        VayuBCTextureCache::instance().writeEntry(id_a, 0, header, payload);
-        VayuBCTextureCache::instance().writeEntry(id_b, 0, header, payload);
-        VayuBCTextureCache::instance().writeEntry(id_c, 0, header, payload);
+        VayuBCTextureCache::instance().writeEntry(id_a, 0, header, make_buffer(payload));
+        VayuBCTextureCache::instance().writeEntry(id_b, 0, header, make_buffer(payload));
+        VayuBCTextureCache::instance().writeEntry(id_c, 0, header, make_buffer(payload));
 
         ensure("Cache stays within its size budget", VayuBCTextureCache::instance().getCurrentSize() <= approx_entry_size * 2);
 
@@ -148,7 +157,69 @@ namespace tut
         VayuBCTextureCache::instance().purge();
     }
 
-    // Test 5: a backlog of many uniquely-keyed writes queued back-to-back is
+    // Test 5: the in-RAM pending-write backlog stays under its ceiling, and
+    // trimming it never discards the write that was just queued.
+    //
+    // This is the memory-safety property the bound exists for: N decode
+    // workers can queue writes far faster than the single writer thread
+    // drains them, and before this bound existed that backlog was unbounded
+    // RAM growth in exactly the situation that generates the most writes
+    // (arriving somewhere texture-dense). Overflow drops oldest-first rather
+    // than blocking the producer, so a drop costs one re-encode later and
+    // nothing more.
+    //
+    // Deliberately asserts the invariant rather than an exact drop count:
+    // how many entries survive depends on how much of the backlog the writer
+    // thread happened to flush concurrently, which isn't deterministic. What
+    // is deterministic is that writeEntry() returns with the backlog under
+    // its ceiling, and that the newest write is never the one dropped.
+    template<> template<>
+    void bc_texture_cache_object::test<5>()
+    {
+        auto dir = test_dir("pending_bound");
+        std::filesystem::remove_all(dir);
+
+        constexpr size_t kCount = 200;
+        constexpr size_t kPayloadSize = 1024;
+
+        // Disk budget generous enough that nothing is evicted for size -
+        // this test is about the RAM backlog, not on-disk eviction.
+        const S64 disk_budget = (S64)(kCount * (kPayloadSize + 256) * 4);
+        // Room for a couple of entries' worth of queued writes, comfortably
+        // more than any single entry, so the bound is strict - the
+        // never-drop-the-newest carve-out can't be what satisfies it.
+        const S64 pending_budget = (S64)((kPayloadSize + 256) * 2);
+
+        VayuBCTextureCache::instance().initCache(dir, disk_budget, pending_budget);
+
+        LLUUID newest_id;
+        for (size_t i = 0; i < kCount; ++i)
+        {
+            LLUUID id;
+            id.generate();
+            newest_id = id;
+
+            VayuBCCacheEntryHeader header = make_header(2, 1);
+            std::vector<U8> payload(kPayloadSize, (U8)(i & 0xFF));
+            VayuBCTextureCache::instance().writeEntry(id, 0, header, make_buffer(std::move(payload)));
+
+            ensure("Pending backlog stays within its ceiling",
+                   VayuBCTextureCache::instance().getPendingBytes()
+                       <= VayuBCTextureCache::instance().getMaxPendingBytes());
+        }
+
+        // Drop-oldest, never drop-newest: the final write must still be
+        // retrievable, whether it's still queued or already flushed.
+        VayuBCCacheEntryHeader out_header;
+        std::vector<U8> out_buffer;
+        ensure("The most recently queued write is never the one dropped",
+               VayuBCTextureCache::instance().readEntry(newest_id, 0, 0, out_header, out_buffer));
+        ensure_equals("Surviving entry's payload is intact", out_buffer.size(), kPayloadSize);
+
+        VayuBCTextureCache::instance().purge();
+    }
+
+    // Test 6: a backlog of many uniquely-keyed writes queued back-to-back is
     // fully drained by shutdown() - regression test for the writer-pool
     // deadlock fixed by replacing one WorkQueue ticket per queued key with a
     // single self-looping drain pass (see queuePendingWrite()/
@@ -167,7 +238,7 @@ namespace tut
     // tests would still work even out of order, but a shutdown()-invoking
     // test is easiest to reason about kept at the end.
     template<> template<>
-    void bc_texture_cache_object::test<5>()
+    void bc_texture_cache_object::test<6>()
     {
         auto dir = test_dir("drain_backlog");
         std::filesystem::remove_all(dir);
@@ -190,7 +261,7 @@ namespace tut
             // write shows up as a content mismatch, not just a miss.
             memcpy(buffer.data(), &i, sizeof(i));
 
-            VayuBCTextureCache::instance().writeEntry(ids[i], 0, header, buffer);
+            VayuBCTextureCache::instance().writeEntry(ids[i], 0, header, make_buffer(std::move(buffer)));
         }
 
         // Force a full, deterministic drain: shutdown()'s join() doesn't

@@ -73,6 +73,7 @@
 #include "llkeyboard.h"
 #include "llerrorcontrol.h"
 #include "llappviewer.h"
+#include "vayubctexturecache.h"
 #include "llvosurfacepatch.h"
 #include "llvowlsky.h"
 #include "alsamplerstate.h"
@@ -967,6 +968,28 @@ void handleLocalTerrainChanged(const LLSD& newValue)
         gLocalTerrainMaterials.setPaintType(paint_enabled ? TERRAIN_PAINT_TYPE_PBR_PAINTMAP : TERRAIN_PAINT_TYPE_HEIGHTMAP_WITH_NOISE);
     }
 }
+
+void handleBCTextureCacheBudgetChanged()
+{
+    // Only re-apply to a cache that already exists. These listeners are
+    // attached (settings_setup_listeners()) before LLAppViewer::initCache()
+    // runs, so a settings write in that window would otherwise reach a cache
+    // that has never been stood up - turning a budget tweak into a full scan
+    // of the cache directory, at a point during startup where gDirUtilp may
+    // not be ready for it. Skipping is free: initCache() reads whatever the
+    // settings say when it gets there.
+    if (!VayuBCTextureCache::instance().isInitialized())
+    {
+        return;
+    }
+
+    // Cheap and safe to call live: re-initializing the BC cache with the
+    // directory it already has just updates the two budgets and returns
+    // without re-scanning (see VayuBCTextureCache::initCache). A lowered
+    // pending ceiling isn't applied retroactively to an existing backlog -
+    // the next queued write trims it back down.
+    LLAppViewer::applyBCTextureCacheBudgets();
+}
 ////////////////////////////////////////////////////////////////////////////
 
 LLPointer<LLControlVariable> setting_get_control(LLControlGroup& group, const std::string& setting)
@@ -1000,6 +1023,8 @@ void setting_setup_signal_listener(LLControlGroup& group, const std::string& set
 void settings_setup_listeners()
 {
     LL_PROFILE_ZONE_SCOPED;
+    setting_setup_signal_listener(gSavedSettings, "VayuBCTextureCacheMaxSize", handleBCTextureCacheBudgetChanged);
+    setting_setup_signal_listener(gSavedSettings, "VayuBCTextureCacheMaxPendingSize", handleBCTextureCacheBudgetChanged);
     setting_setup_signal_listener(gSavedSettings, "FirstPersonAvatarVisible", handleRenderAvatarMouselookChanged);
     setting_setup_signal_listener(gSavedSettings, "NumpadControl", handleNumpadControlChanged);
     setting_setup_signal_listener(gSavedSettings, "RenderFarClip", handleRenderFarClipChanged);

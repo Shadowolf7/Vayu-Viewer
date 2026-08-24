@@ -49,10 +49,17 @@ public:
     VayuBCTextureCache(const VayuBCTextureCache&) = delete;
     VayuBCTextureCache& operator=(const VayuBCTextureCache&) = delete;
 
+    // Default ceiling on how many bytes of not-yet-flushed writes may sit in
+    // RAM at once. See mMaxPendingBytes for why this bound exists at all.
+    static constexpr S64 kDefaultMaxPendingBytes = 256 * 1024 * 1024;
+
     // Creates cache_dir if needed and scans existing entries. Safe to call
     // again to change the size budget; does not re-scan if already initialized
-    // with the same directory.
-    void initCache(const std::filesystem::path& cache_dir, S64 max_size_bytes);
+    // with the same directory. max_pending_bytes caps the in-RAM write
+    // backlog (see mMaxPendingBytes); it is applied on every call, including
+    // ones that skip the re-scan.
+    void initCache(const std::filesystem::path& cache_dir, S64 max_size_bytes,
+                   S64 max_pending_bytes = kDefaultMaxPendingBytes);
 
     // Deletes every entry and resets the in-memory index. Cache stays usable
     // (re-initialized empty) afterward.
@@ -81,12 +88,40 @@ public:
     // Writes (or overwrites) the entry for (id, discard_level). Evicts the
     // least-recently-touched entries afterward if this pushed the cache over
     // its size budget.
+    //
+    // Takes shared ownership of the buffer rather than copying it: callers
+    // already hold the encoded mip chain in a shared_ptr for the GL upload,
+    // so a queued write costs a refcount bump instead of a second multi-MB
+    // copy of every texture. Use shared_ptr's aliasing constructor to hand
+    // over a buffer that lives inside a larger owned object, e.g.
+    //   std::shared_ptr<const std::vector<U8>>(comp_res, &comp_res->mBuffer)
+    // The buffer must not be mutated after this call - the writer thread
+    // reads it without the lock, at an unspecified later time. This is a real
+    // constraint on callers, not a formality: it was free when this cache
+    // kept a private copy, and stopped being free when it started aliasing
+    // the caller's buffer. The one in-tree caller satisfies it - the only
+    // post-handoff reader is LLImageGL::createGLTexture (llimagegl.cpp), and
+    // it only calls empty()/data() on the buffer.
     void writeEntry(const LLUUID& id, S32 discard_level,
-                    const VayuBCCacheEntryHeader& header, const std::vector<U8>& buffer);
+                    const VayuBCCacheEntryHeader& header,
+                    std::shared_ptr<const std::vector<U8>> buffer);
 
     S64 getCurrentSize() const;
     S64 getMaxSize() const { return mMaxSize; }
     size_t getEntryCount() const;
+
+    // False until initCache() has successfully scanned a cache directory.
+    // Lets callers that only mean to *re-apply* budgets to a live cache tell
+    // themselves apart from the call that first stands it up - the latter
+    // walks the whole cache directory, which is not something a settings
+    // change should trigger at an arbitrary point during startup.
+    bool isInitialized() const;
+
+    // Bytes of not-yet-flushed writes currently held in RAM, and the ceiling
+    // enforced on that. Exposed mainly so the bound is observable from tests
+    // and diagnostics; see mMaxPendingBytes.
+    S64 getPendingBytes() const;
+    S64 getMaxPendingBytes() const { return mMaxPendingBytes; }
 
 private:
     VayuBCTextureCache() = default;
@@ -105,22 +140,51 @@ private:
     // which is what lets mIndex hold onto iterators into this list safely.
     using LruList = std::list<IndexEntry>;
 
-    // A write queued for the background writer pool. Fully serialized
-    // (FileHeader + buffer, ready to write as-is) so the flush itself is a
-    // single sequential write with no further assembly.
+    // A write queued for the background writer pool. Holds the metadata plus
+    // shared ownership of the caller's encoded buffer - deliberately NOT a
+    // pre-serialized copy. Serialization is two sequential writes at flush
+    // time (header, then buffer), which is why queueing a write no longer
+    // duplicates the entire mip chain in RAM.
     struct PendingWrite
     {
         std::string mKey;
         std::filesystem::path mPath;
-        std::vector<U8> mFileBytes;
+        VayuBCCacheEntryHeader mMeta;
+        std::shared_ptr<const std::vector<U8>> mBuffer;
+        // Serialized size (header + buffer), precomputed so size accounting
+        // never has to dereference mBuffer.
+        S64 mFileSize = 0;
     };
     using PendingList = std::list<PendingWrite>;
 
     std::filesystem::path entryPath(const LLUUID& id, S32 discard_level) const;
     std::string entryKey(const LLUUID& id, S32 discard_level) const;
     void touch(LruList::iterator it);
-    void evictUntilWithinBudget();
-    void removeEntry(const std::string& key);
+
+    // Both take mMutex already held, and neither touches the filesystem: any
+    // file that needs deleting is appended to deferred_unlinks for the caller
+    // to remove *after* releasing the lock. Doing the unlink inline was a
+    // real stall - one over-budget write had to delete down to the eviction
+    // headroom in a single locked loop (thousands of unlink() syscalls at a
+    // large cache budget) while every decode worker blocked on mMutex behind
+    // it. Passing nullptr restores inline deletion, which is fine for the
+    // one-off single-file case (a corrupt entry found during readEntry()).
+    void evictUntilWithinBudget(std::vector<std::filesystem::path>* deferred_unlinks);
+    void removeEntry(const std::string& key,
+                     std::vector<std::filesystem::path>* deferred_unlinks);
+
+    // Drops oldest-first from the pending queue until it's back under
+    // mMaxPendingBytes. Never drops back(), which is the write that was just
+    // queued - dropping the newest write on arrival would make the cache
+    // useless exactly when it's under the most pressure. mMutex held.
+    //
+    // Accumulates into mDropped*, and sets *should_log_drops when this call
+    // is the one that should report them. The reporting itself is left to
+    // the caller so it happens after mMutex is released - formatting a log
+    // line under the lock that every decode worker contends on would be a
+    // small version of the stall this whole class is trying to avoid.
+    void trimPendingBacklog(std::vector<std::filesystem::path>* deferred_unlinks,
+                            bool* should_log_drops);
 
     // Queues (or coalesces into an existing queued write for the same key)
     // a write for the background pool. Returns true exactly when this call
@@ -132,7 +196,9 @@ private:
     // through whatever's queued once it starts. Called with mMutex already
     // held.
     bool queuePendingWrite(const std::string& key, const std::filesystem::path& path,
-                           std::vector<U8>&& file_bytes);
+                           const VayuBCCacheEntryHeader& header,
+                           std::shared_ptr<const std::vector<U8>>&& buffer,
+                           S64 file_size);
 
     // Runs on mWriterPool's single thread, once per false->true transition
     // of mDraining (see queuePendingWrite()). Loops until mPendingWrites is
@@ -168,6 +234,29 @@ private:
     PendingList mPendingWrites;
     std::unordered_map<std::string, PendingList::iterator> mPendingIndex;
     std::unordered_set<std::string> mFlushing;
+
+    // Serialized bytes currently held by mPendingWrites, and the ceiling on
+    // that. N decode workers can queue writes far faster than the single
+    // writer thread drains them, so without a bound this list is unbounded
+    // RAM growth in exactly the situation that produces the most writes
+    // (arriving somewhere texture-dense). Overflow drops the oldest queued
+    // write rather than blocking the producer: a dropped write is only a
+    // lost cache entry - readEntry() treats the absent file as an ordinary
+    // miss and the caller re-encodes - whereas making producers block here
+    // would reintroduce the writer-pool deadlock shape that came from
+    // waiting on queue capacity with a lock held.
+    S64 mPendingBytes = 0;
+    S64 mMaxPendingBytes = kDefaultMaxPendingBytes;
+
+    // Cumulative count/bytes of writes dropped by trimPendingBacklog(), plus
+    // the throttle state for reporting them. Dropping is otherwise entirely
+    // silent, which makes "did the ceiling actually get hit?" unanswerable
+    // from a log after the fact - and that's exactly the question worth
+    // asking before anyone reaches for the setting that controls it.
+    S64 mDroppedWrites = 0;
+    S64 mDroppedBytes = 0;
+    S64 mDroppedWritesReported = 0;
+    F64 mLastDropLogTime = 0.0;
 
     // True while a drainPendingWrites() pass is queued-or-running on the
     // writer pool. The single source of truth for "is there currently

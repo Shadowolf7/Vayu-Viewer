@@ -20,7 +20,7 @@ This isn't exhaustive — Alchemy carries roughly 80 of its own settings beyond 
 
 - Correct depth sorting between rigged attachments and world alpha (clothing/attachments no longer draw in the wrong order relative to transparent world objects).
 - Attached spotlights and projector lights now stay lit regardless of the "attached lights" toggle — only point-light attachments are affected by it.
-- **Block texture compression (BC7/BC1/BC4/BC5)** — textures are compressed off the main thread as they decode, cutting VRAM usage, with a persistent disk cache so they aren't re-encoded on every load. Choose a speed/quality preset (Ultrafast/Fast/Basic/Slow) and cache size in Preferences → Graphics → Advanced Hardware.
+- **Block texture compression (BC7/BC1/BC4/BC5)** — textures are compressed off the main thread as they decode, cutting VRAM usage, with a persistent disk cache so they aren't re-encoded on every load. Choose a speed/quality preset (Ultrafast/Fast/Basic/Slow) and cache size in Preferences → Graphics → Advanced Hardware. Compressed textures waiting to be written to that cache are capped by `VayuBCTextureCacheMaxPendingSize` (Debug Settings, default 256 MB) so a texture-dense area can't grow that queue without limit; past the cap the oldest queued writes are dropped, which costs a re-encode later but never correctness. Both this and the disk cache size now apply immediately, without a restart.
 
 ### Camera & movement
 
@@ -55,6 +55,8 @@ Pose stand, Windlight quick-select, an FPS limiter, and a VRAM-triggered draw-di
 - Mesh loading no longer hangs waiting objects when a mesh header retry runs out of attempts.
 - Fixed an asset/mesh loading regression introduced by a curl upgrade.
 - **Vehicle unseating on region crossings** — a kill of the vehicle/seat you're on (or a passenger's) is now held briefly instead of acted on immediately, so an ordinary crossing-timing race doesn't unseat anyone for no reason. A genuinely dead seat — e.g. a parcel-ban ejection — still resolves correctly, just after a short grace period instead of leaving you stuck. ([fa665aa70f](https://github.com/Shadowolf7/Vayu-Viewer/commit/fa665aa70f))
+- **Texture cache memory growth in crowded areas** — writes queued for the block-compression disk cache no longer hold a second copy of every texture, and the queue is now bounded rather than growing until memory runs out. Both mattered most exactly where it hurt: arriving somewhere with a lot of textures or avatars.
+- **Crash reports now point at the actual crash** — the signal handler used to re-signal itself before the OS could record where the fault happened, so every crash dump described the handler rather than the bug. Genuine faults are now handed to the OS intact, which is what makes a crash dump worth collecting.
 
 ---
 

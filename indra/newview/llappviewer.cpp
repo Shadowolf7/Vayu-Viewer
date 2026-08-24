@@ -4529,6 +4529,19 @@ U32 LLAppViewer::getObjectCacheVersion()
     return INDRA_OBJECT_CACHE_VERSION;
 }
 
+void LLAppViewer::applyBCTextureCacheBudgets()
+{
+    static const S64 MB = 1024 * 1024;
+
+    const S64 bc_texture_cache_size = S64(gSavedSettings.getU32("VayuBCTextureCacheMaxSize")) * MB;
+    const S64 bc_texture_cache_pending_size =
+        S64(gSavedSettings.getU32("VayuBCTextureCacheMaxPendingSize")) * MB;
+
+    VayuBCTextureCache::instance().initCache(
+        std::filesystem::path(gDirUtilp->getExpandedFilename(LL_PATH_CACHE, "bccache")),
+        bc_texture_cache_size, bc_texture_cache_pending_size);
+}
+
 bool LLAppViewer::initCache()
 {
     LL_PROFILE_ZONE_SCOPED;
@@ -4653,9 +4666,7 @@ bool LLAppViewer::initCache()
     const U32 CACHE_NUMBER_OF_REGIONS_FOR_OBJECTS = 128;
     LLVOCache::getInstance()->initCache(LL_PATH_CACHE, CACHE_NUMBER_OF_REGIONS_FOR_OBJECTS, getObjectCacheVersion());
 
-    const S64 bc_texture_cache_size = S64(gSavedSettings.getU32("VayuBCTextureCacheMaxSize")) * MB;
-    VayuBCTextureCache::instance().initCache(
-        std::filesystem::path(gDirUtilp->getExpandedFilename(LL_PATH_CACHE, "bccache")), bc_texture_cache_size);
+    applyBCTextureCacheBudgets();
 
     // Remove old, stale CEF cache folders
     purgeCefStaleCaches();

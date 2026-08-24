@@ -138,6 +138,13 @@ public:
     static U32 getObjectCacheVersion() ;
     static U32 getDiskCacheVersion() ;
 
+    // Pushes the current VayuBCTextureCacheMaxSize / MaxPendingSize settings
+    // into the BC cache. Called once from initCache() and again from the
+    // settings listeners, so both budgets are tunable live: re-initializing
+    // an already-initialized cache with the same directory just updates the
+    // budgets and returns, with no re-scan (see VayuBCTextureCache::initCache).
+    static void applyBCTextureCacheBudgets();
+
     const std::string& getSerialNumber() { return mSerialNumber; }
 
     bool getPurgeCache() const { return mPurgeCache; }
