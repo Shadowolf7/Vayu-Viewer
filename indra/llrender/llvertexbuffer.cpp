@@ -202,6 +202,17 @@ void GLWorkQueue::runUntilClose()
     while (!isClosed())
     {
         runOne();
+
+        // This thread owns its own Tracy GPU context: LLGLWorkerThread::run()
+        // binds a shared GL context via makeContextCurrent(), which registers a
+        // per-thread GpuCtx (Tracy's GetGpuCtx() is thread_local), and the
+        // "vbo alloc" zones below issue timestamp queries against it. Tracy
+        // requires each context to be collected periodically -- otherwise its
+        // 64K-entry query ring wraps and overruns the read cursor, and the
+        // guard against that is an assert() which is compiled out of Release
+        // builds. runOne() blocks until there is work, so this collects at the
+        // rate the thread actually touches GL rather than spinning when idle.
+        LL_PROFILER_GPU_COLLECT;
     }
 }
 

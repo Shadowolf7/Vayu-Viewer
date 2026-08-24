@@ -179,6 +179,15 @@ LLWindowSDL::LLWindowSDL(LLWindowCallbacks* callbacks,
     {
         gGLManager.initWGL();
         gGLManager.initGL();
+
+        // Tracy's GPU context registration needs glGenQueries/glQueryCounter
+        // etc. already resolved, which only happens once initGL() above has
+        // run initExtensions() -- it must NOT live inside createContext()
+        // itself, since gGLManager.initGL() hasn't run yet at that point and
+        // those function pointers are still null (segfaults on first launch
+        // with USE_TRACY_GPU, since that's an unconditional call to a null
+        // GL entry point through TracyGpuContext -> tracy::GpuCtx::GpuCtx()).
+        LL_PROFILER_GPU_CONTEXT;
 #if LL_WINDOWS
         // GL didn't always report a VRAM budget (notably Intel iGPUs); ask DXGI.
         LLDXHardware::updateVRAMBudgetFromDXGI();
@@ -564,8 +573,6 @@ bool LLWindowSDL::createContext(int x, int y, int width, int height, int bits, b
                 OSMB_OK);
         return false;
     }
-
-    LL_PROFILER_GPU_CONTEXT;
 
     // Enable vertical sync
     toggleVSync(enable_vsync);

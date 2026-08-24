@@ -57,12 +57,24 @@
 #define LL_PROFILER_CATEGORY_ENABLE_NETWORK     1
 #define LL_PROFILER_CATEGORY_ENABLE_OCTREE      1
 #define LL_PROFILER_CATEGORY_ENABLE_PIPELINE    1
-#define LL_PROFILER_CATEGORY_ENABLE_SHADER      1
+// SHADER off: per-uniform instrumentation (uniform1f/3fv/4fv, enableTexture)
+// measured 11.8% of all zones in a capture off this viewer -- these fire once
+// per uniform per draw call. The enclosing draw/pass zones still show the cost.
+#define LL_PROFILER_CATEGORY_ENABLE_SHADER      0
 #define LL_PROFILER_CATEGORY_ENABLE_SPATIAL     1
 #define LL_PROFILER_CATEGORY_ENABLE_STATS       1
 #define LL_PROFILER_CATEGORY_ENABLE_STRING      1
 #define LL_PROFILER_CATEGORY_ENABLE_TEXTURE     1
-#define LL_PROFILER_CATEGORY_ENABLE_THREAD      1
+// THREAD off: measured 51.7% of all zones on its own -- LLThread::currentID
+// alone was 7M zones in an 11-second capture, plus every mutex lock/unlock and
+// every work-queue push/pop. Instrumenting a thread-id accessor costs far more
+// than the accessor. Lock *contention* is still visible: that comes from
+// Tracy's lockable wrappers (LL_PROFILE_MUTEX / TracyLockable), which are a
+// separate mechanism and unaffected by this.
+//
+// Together with SHADER this removed 63.5% of trace volume. Before that, a
+// capture grew ~110MB/s and hit the memory watchdog's floor in 11 seconds.
+#define LL_PROFILER_CATEGORY_ENABLE_THREAD      0
 #define LL_PROFILER_CATEGORY_ENABLE_UI          1
 #define LL_PROFILER_CATEGORY_ENABLE_VIEWER      1
 #define LL_PROFILER_CATEGORY_ENABLE_VERTEX      1

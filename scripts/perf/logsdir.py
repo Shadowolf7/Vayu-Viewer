@@ -20,7 +20,7 @@ class Error(Exception):
 
 # logic used by SLVersionChecker
 def logsdir():
-    app = 'SecondLife'
+    app = 'Vayu'
     system = platform.system()
     if (system == 'Darwin'):
         base_dir = os.path.join(os.path.expanduser('~'),

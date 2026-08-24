@@ -1616,6 +1616,17 @@
       <key>Value</key>
       <integer>4096</integer>
     </map>
+    <key>VayuPerfFrameLog</key>
+    <map>
+      <key>Comment</key>
+      <string>Continuously log per-frame timing (total frame time plus idle/sleep/display/HUD/UI/swap phase breakdown) to vayu_perf_frame.csv in the logs folder, for offline stutter diagnosis.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>Boolean</string>
+      <key>Value</key>
+      <integer>0</integer>
+    </map>
     <key>VayuVehicleUnseatGracePeriod</key>
     <map>
       <key>Comment</key>

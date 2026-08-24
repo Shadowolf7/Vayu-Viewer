@@ -34,6 +34,7 @@
 #include "llwindow.h"
 #include "llworld.h"
 #include <llthread.h>
+#include <fstream>
 
 extern LLControlGroup gSavedSettings;
 
@@ -292,6 +293,64 @@ namespace LLPerfStats
         sTotalAvatarTime = LLVOAvatar::getTotalGPURenderTime();
         sAverageAvatarTime = LLVOAvatar::getAverageGPURenderTime();
         sMaxAvatarTime = LLVOAvatar::getMaxGPURenderTime();
+    }
+
+    void logFramePerf(U64 doframe_us)
+    {
+        LL_PROFILE_ZONE_SCOPED_CATEGORY_STATS;
+
+        // Cached rather than gSavedSettings.getBOOL(): this runs every frame,
+        // and the plain getter is a string-keyed map lookup each time even when
+        // the feature is off. LLCachedControl reads the value once and refreshes
+        // only when the setting actually changes -- the same pattern used for
+        // other per-frame settings reads (see ALLimitFramerate in llappviewer).
+        static LLCachedControl<bool> perf_frame_log(gSavedSettings, "VayuPerfFrameLog", false);
+        if (!perf_frame_log)
+        {
+            return;
+        }
+
+        static std::ofstream sLog;
+        static U32 sRowsSinceFlush = 0;
+        static bool sInited = false;
+
+        if (!sInited)
+        {
+            sInited = true;
+            std::string path = gDirUtilp->getExpandedFilename(LL_PATH_LOGS, "vayu_perf_frame.csv");
+            sLog.open(path.c_str(), std::ios::out | std::ios::trunc);
+            if (sLog.is_open())
+            {
+                sLog << "timestamp_ms,frame,doframe_us,render_frame_us,render_idle_us,"
+                        "render_sleep_us,render_display_us,render_huds_us,render_ui_us,render_swap_us\n";
+            }
+        }
+
+        if (!sLog.is_open())
+        {
+            return;
+        }
+
+        const U64 timestamp_ms = (U64)std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+
+        sLog << timestamp_ms << ',' << gFrameCount << ',' << doframe_us << ','
+             << (U64)raw_to_us(StatsRecorder::getSceneStat(StatType_t::RENDER_FRAME)) << ','
+             << (U64)raw_to_us(StatsRecorder::getSceneStat(StatType_t::RENDER_IDLE)) << ','
+             << (U64)raw_to_us(StatsRecorder::getSceneStat(StatType_t::RENDER_SLEEP)) << ','
+             << (U64)raw_to_us(StatsRecorder::getSceneStat(StatType_t::RENDER_DISPLAY)) << ','
+             << (U64)raw_to_us(StatsRecorder::getSceneStat(StatType_t::RENDER_HUDS)) << ','
+             << (U64)raw_to_us(StatsRecorder::getSceneStat(StatType_t::RENDER_UI)) << ','
+             << (U64)raw_to_us(StatsRecorder::getSceneStat(StatType_t::RENDER_SWAP)) << '\n';
+
+        // Flush periodically rather than every row: fsync-per-frame would undercut
+        // the near-zero-overhead goal, but we still want the tail on disk if the
+        // viewer dies mid-session rather than losing an unflushed buffer.
+        if (++sRowsSinceFlush >= 30)
+        {
+            sLog.flush();
+            sRowsSinceFlush = 0;
+        }
     }
 
     //static

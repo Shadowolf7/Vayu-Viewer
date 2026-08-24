@@ -308,6 +308,17 @@
         }
       ]
     },
+    "tracy-tools": {
+      "description": "Build Tracy command-line capture/export tools (tracy-capture, tracy-csvexport)",
+      "dependencies": [
+        {
+          "name": "tracy",
+          "features": [
+            "cli-tools"
+          ]
+        }
+      ]
+    },
     "velopack": {
       "description": "Build with support for the Velopack install and update framework",
       "dependencies": [

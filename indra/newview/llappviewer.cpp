@@ -1358,6 +1358,7 @@ bool LLAppViewer::frame()
             const auto end = std::chrono::steady_clock::now();
             const U64 doframe_time_us = (U64)std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
             LLTrace::sample(LLStatViewer::DOFRAME_TIME_US, doframe_time_us);
+            LLPerfStats::logFramePerf(doframe_time_us);
         }
         catch (const LLContinueError&)
         {
