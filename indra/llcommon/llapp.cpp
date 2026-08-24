@@ -469,6 +469,44 @@ const char* signal_to_string(int sig) {
     }
 }
 
+// Hand a fatal signal back to the OS in whatever way preserves the most
+// post-mortem evidence, having already restored default signal dispositions
+// via clear_signals().
+//
+// The obvious way to do this is raise(signum), and that's what every path
+// here used to do. The problem is that raise() is implemented as
+// tgkill(self), i.e. it sends a *fresh* signal from this thread rather than
+// letting the original one through. The core dump that results describes the
+// raise() call site, and reports si_code = SI_TKILL with the sender's pid
+// where the faulting address should be - so the actual instruction and
+// address that crashed are simply gone. Every coredump this viewer has
+// produced looks like it crashed inside its own signal handler.
+//
+// For a genuine hardware fault there's a better option: just return. The
+// kernel resumes the thread at the instruction that faulted, and since
+// clear_signals() has already put SIG_DFL back, re-executing it faults again
+// and terminates the process with a faithful core - correct thread, correct
+// stack, correct si_addr.
+//
+// That only works when re-executing actually re-triggers the signal, so it's
+// gated on a kernel-generated (si_code > 0) synchronous fault. A signal that
+// arrived asynchronously - SIGQUIT, or a SIGSEGV someone sent with kill -
+// has no faulting instruction to retry; returning there would just resume as
+// if nothing happened and the process would never die. Those still go
+// through raise().
+void reraise_for_core(int signum, siginfo_t *info)
+{
+    const bool is_fault_signal = (signum == SIGSEGV || signum == SIGBUS ||
+                                  signum == SIGILL  || signum == SIGFPE);
+
+    if (is_fault_signal && info && info->si_code > 0)
+    {
+        return;
+    }
+
+    raise(signum);
+}
+
 void default_unix_signal_handler(int signum, siginfo_t *info, void *)
 {
     // Unix implementation of synchronous signal handler
@@ -568,7 +606,7 @@ void default_unix_signal_handler(int signum, siginfo_t *info, void *)
                 {
                     LL_WARNS() << "Signal handler - Got another fatal signal while in the error handler, die now!" << LL_ENDL;
                 }
-                raise(signum);
+                reraise_for_core(signum, info);
                 return;
             }
 
@@ -581,7 +619,7 @@ void default_unix_signal_handler(int signum, siginfo_t *info, void *)
             {
                 clear_signals();
                 LL_WARNS() << "Fatal signal received, not handling the crash here, passing back to operating system" << LL_ENDL;
-                raise(signum);
+                reraise_for_core(signum, info);
                 return;
             }
 
@@ -592,7 +630,7 @@ void default_unix_signal_handler(int signum, siginfo_t *info, void *)
                 // if the crashing thread is one the shutdown depends on, e.g. a
                 // libdispatch worker inside the macOS GL driver. Crash instead.
                 clear_signals();
-                raise(signum);
+                reraise_for_core(signum, info);
                 return;
             }
 
@@ -604,7 +642,7 @@ void default_unix_signal_handler(int signum, siginfo_t *info, void *)
                 LL_WARNS() << "Signal handler - App is stopped, reraising signal" << LL_ENDL;
             }
             clear_signals();
-            raise(signum);
+            reraise_for_core(signum, info);
             return;
         }
 
