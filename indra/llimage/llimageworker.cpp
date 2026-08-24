@@ -292,7 +292,20 @@ bool ImageRequest::processRequest()
                         cache_header.mComponents = comp_res->mComponents;
                         cache_header.mGLInternalFormat = comp_res->mGLInternalFormat;
                         cache_header.mGLPrimaryFormat = comp_res->mGLPrimaryFormat;
-                        VayuBCTextureCache::instance().writeEntry(mID, discard, cache_header, comp_res->mBuffer);
+                        // Aliasing shared_ptr: shares comp_res's refcount but
+                        // points at its buffer member, so the cache can hold
+                        // the encoded bytes alive for its background flush
+                        // without copying them. comp_res is already owned by
+                        // mDecodedImageRaw above; writeEntry() requires the
+                        // buffer stay unmodified from here on, which holds -
+                        // encode() has already finished filling it, and the
+                        // only later reader is LLImageGL::createGLTexture(),
+                        // which just reads empty()/data() off it. The
+                        // mBuffer = std::move(...) above is the cache-hit
+                        // path, which never reaches this branch.
+                        VayuBCTextureCache::instance().writeEntry(
+                            mID, discard, cache_header,
+                            std::shared_ptr<const std::vector<U8>>(comp_res, &comp_res->mBuffer));
                     }
                 }
             }

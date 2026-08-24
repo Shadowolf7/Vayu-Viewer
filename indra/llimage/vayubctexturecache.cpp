@@ -55,11 +55,13 @@ std::filesystem::path VayuBCTextureCache::entryPath(const LLUUID& id, S32 discar
     return mCacheDir / (entryKey(id, discard_level) + ".bc");
 }
 
-void VayuBCTextureCache::initCache(const std::filesystem::path& cache_dir, S64 max_size_bytes)
+void VayuBCTextureCache::initCache(const std::filesystem::path& cache_dir, S64 max_size_bytes,
+                                   S64 max_pending_bytes)
 {
     std::lock_guard<std::mutex> lock(mMutex);
 
     mMaxSize = max_size_bytes;
+    mMaxPendingBytes = max_pending_bytes;
 
     if (mInitialized && mCacheDir == cache_dir)
     {
@@ -71,6 +73,7 @@ void VayuBCTextureCache::initCache(const std::filesystem::path& cache_dir, S64 m
     mLruList.clear();
     mPendingWrites.clear();
     mPendingIndex.clear();
+    mPendingBytes = 0;
     mCurrentSize = 0;
 
     std::error_code ec;
@@ -131,28 +134,43 @@ void VayuBCTextureCache::initCache(const std::filesystem::path& cache_dir, S64 m
 
 void VayuBCTextureCache::purge()
 {
-    std::lock_guard<std::mutex> lock(mMutex);
+    // Same reasoning as evictUntilWithinBudget(): collect the paths under the
+    // lock, unlink after releasing it, so a full purge of a large cache never
+    // holds mMutex across thousands of unlink() syscalls.
+    std::vector<std::filesystem::path> deferred_unlinks;
 
-    for (const auto& entry : mLruList)
+    {
+        std::lock_guard<std::mutex> lock(mMutex);
+
+        deferred_unlinks.reserve(mLruList.size());
+        for (const auto& entry : mLruList)
+        {
+            deferred_unlinks.push_back(entry.mPath);
+        }
+        mLruList.clear();
+        mIndex.clear();
+        mCurrentSize = 0;
+
+        // Drop anything not yet flushed too - purge means the cache is empty
+        // now, not "empty except whatever the writer pool hasn't gotten to
+        // yet." A write mid-flush (key in mFlushing) isn't tracked here since
+        // it's already off these lists; it'll finish writing its file and
+        // become an untracked-but-harmless entry the next initCache() scan
+        // picks back up, same as any other purge/writer-pool race. mDraining
+        // is deliberately left alone too: if this empties mPendingWrites out
+        // from under an in-flight drainPendingWrites() pass, that pass just
+        // notices "empty" on its next loop iteration and clears the flag
+        // itself.
+        mPendingWrites.clear();
+        mPendingIndex.clear();
+        mPendingBytes = 0;
+    }
+
+    for (const auto& path : deferred_unlinks)
     {
         std::error_code ec;
-        std::filesystem::remove(entry.mPath, ec);
+        std::filesystem::remove(path, ec);
     }
-    mLruList.clear();
-    mIndex.clear();
-    mCurrentSize = 0;
-
-    // Drop anything not yet flushed too - purge means the cache is empty
-    // now, not "empty except whatever the writer pool hasn't gotten to
-    // yet." A write mid-flush (key in mFlushing) isn't tracked here since
-    // it's already off these lists; it'll finish writing its file and
-    // become an untracked-but-harmless entry the next initCache() scan
-    // picks back up, same as any other purge/writer-pool race. mDraining is
-    // deliberately left alone too: if this empties mPendingWrites out from
-    // under an in-flight drainPendingWrites() pass, that pass just notices
-    // "empty" on its next loop iteration and clears the flag itself.
-    mPendingWrites.clear();
-    mPendingIndex.clear();
 }
 
 void VayuBCTextureCache::shutdown()
@@ -195,20 +213,16 @@ bool VayuBCTextureCache::readEntry(const LLUUID& id, S32 discard_level, U8 min_p
     auto pending_it = mPendingIndex.find(key);
     if (pending_it != mPendingIndex.end())
     {
-        // Not yet handed to the writer pool - serve straight from the
-        // queued bytes rather than touching a disk file that may not exist
-        // yet at all.
-        const std::vector<U8>& bytes = pending_it->second->mFileBytes;
-        if (bytes.size() < sizeof(FileHeader))
+        // Not yet handed to the writer pool - serve straight from the queued
+        // entry rather than touching a disk file that may not exist yet at
+        // all. Nothing is serialized until flush time, so this reads the
+        // metadata and buffer as they are, with no header parsing.
+        const PendingWrite& pending = *pending_it->second;
+        if (pending.mMeta.mPreset < min_preset)
             return false;
 
-        FileHeader file_header;
-        memcpy(&file_header, bytes.data(), sizeof(file_header));
-        if (file_header.mMeta.mPreset < min_preset)
-            return false;
-
-        buffer.assign(bytes.begin() + sizeof(file_header), bytes.end());
-        header = file_header.mMeta;
+        buffer = *pending.mBuffer;
+        header = pending.mMeta;
         touch(it->second);
         return true;
     }
@@ -230,9 +244,11 @@ bool VayuBCTextureCache::readEntry(const LLUUID& id, S32 discard_level, U8 min_p
     in.read(reinterpret_cast<char*>(&file_header), sizeof(file_header));
     if (!in.good() || file_header.mMagic != kMagic || file_header.mVersion != kFormatVersion)
     {
-        // Stale or corrupt entry - reclaim the space rather than leaving dead weight.
+        // Stale or corrupt entry - reclaim the space rather than leaving dead
+        // weight. Inline unlink (nullptr) is fine here: it's a single file in
+        // a path that's already doing disk I/O, not an eviction sweep.
         in.close();
-        removeEntry(key);
+        removeEntry(key, nullptr);
         return false;
     }
 
@@ -255,17 +271,18 @@ bool VayuBCTextureCache::readEntry(const LLUUID& id, S32 discard_level, U8 min_p
 }
 
 void VayuBCTextureCache::writeEntry(const LLUUID& id, S32 discard_level,
-                                  const VayuBCCacheEntryHeader& header, const std::vector<U8>& buffer)
+                                  const VayuBCCacheEntryHeader& header,
+                                  std::shared_ptr<const std::vector<U8>> buffer)
 {
-    // Serialize before taking the lock - this can be a multi-megabyte copy
-    // for a large mip chain, and none of it touches shared state.
-    FileHeader file_header;
-    file_header.mMeta = header;
-    file_header.mBufferSize = buffer.size();
+    if (!buffer)
+        return;
 
-    std::vector<U8> file_bytes(sizeof(file_header) + buffer.size());
-    memcpy(file_bytes.data(), &file_header, sizeof(file_header));
-    memcpy(file_bytes.data() + sizeof(file_header), buffer.data(), buffer.size());
+    // No serialization here anymore: the entry is queued as (metadata,
+    // shared_ptr-to-buffer) and assembled by the writer thread at flush
+    // time. Callers already keep this exact buffer alive for the GL upload,
+    // so queueing a write is now a refcount bump rather than a second
+    // multi-megabyte copy of every texture that passes through.
+    const S64 new_size = (S64)(sizeof(FileHeader) + buffer->size());
 
     // Set inside the lock below, acted on after it's released, so post()
     // never runs with mMutex held - see queuePendingWrite()/
@@ -275,6 +292,10 @@ void VayuBCTextureCache::writeEntry(const LLUUID& id, S32 discard_level,
     // this exact deadlock shape if that one-ticket invariant ever breaks.
     bool needs_post = false;
 
+    // Populated under the lock, acted on after it's released - see
+    // evictUntilWithinBudget().
+    std::vector<std::filesystem::path> deferred_unlinks;
+
     {
         std::lock_guard<std::mutex> lock(mMutex);
 
@@ -283,7 +304,6 @@ void VayuBCTextureCache::writeEntry(const LLUUID& id, S32 discard_level,
 
         const std::string key = entryKey(id, discard_level);
         const std::filesystem::path path = entryPath(id, discard_level);
-        const S64 new_size = (S64)file_bytes.size();
 
         auto prior = mIndex.find(key);
         if (prior != mIndex.end())
@@ -305,9 +325,20 @@ void VayuBCTextureCache::writeEntry(const LLUUID& id, S32 discard_level,
 
         // Disk I/O happens off this thread now - see queuePendingWrite()/
         // drainPendingWrites() below.
-        needs_post = queuePendingWrite(key, path, std::move(file_bytes));
+        needs_post = queuePendingWrite(key, path, header, std::move(buffer), new_size);
 
-        evictUntilWithinBudget();
+        // Order matters: trim the in-RAM backlog first, then the on-disk
+        // budget. trimPendingBacklog() drops whole entries (index included),
+        // which lowers mCurrentSize too, so doing it first can leave nothing
+        // for eviction to do.
+        trimPendingBacklog(&deferred_unlinks);
+        evictUntilWithinBudget(&deferred_unlinks);
+    }
+
+    for (const auto& unlink_path : deferred_unlinks)
+    {
+        std::error_code ec;
+        std::filesystem::remove(unlink_path, ec);
     }
 
     if (needs_post)
@@ -317,26 +348,35 @@ void VayuBCTextureCache::writeEntry(const LLUUID& id, S32 discard_level,
 }
 
 bool VayuBCTextureCache::queuePendingWrite(const std::string& key, const std::filesystem::path& path,
-                                           std::vector<U8>&& file_bytes)
+                                           const VayuBCCacheEntryHeader& header,
+                                           std::shared_ptr<const std::vector<U8>>&& buffer,
+                                           S64 file_size)
 {
     auto it = mPendingIndex.find(key);
     if (it != mPendingIndex.end())
     {
-        // Coalesce: overwrite the still-unflushed bytes in place.
+        // Coalesce: replace the still-unflushed entry in place.
         // drainPendingWrites() always reads whatever's current for a key
         // when it actually gets to it, so there's nothing new to post - the
         // ticket already outstanding (or the loop already running) covers
         // this write too.
-        it->second->mFileBytes = std::move(file_bytes);
+        mPendingBytes -= it->second->mFileSize;
+        it->second->mMeta = header;
+        it->second->mBuffer = std::move(buffer);
+        it->second->mFileSize = file_size;
+        mPendingBytes += file_size;
         return false;
     }
 
     PendingWrite pw;
     pw.mKey = key;
     pw.mPath = path;
-    pw.mFileBytes = std::move(file_bytes);
+    pw.mMeta = header;
+    pw.mBuffer = std::move(buffer);
+    pw.mFileSize = file_size;
     mPendingWrites.push_back(std::move(pw));
     mPendingIndex[key] = std::prev(mPendingWrites.end());
+    mPendingBytes += file_size;
 
     if (mDraining)
     {
@@ -376,19 +416,32 @@ void VayuBCTextureCache::drainPendingWrites()
 
             // Splice - don't copy - the front node into our own local list.
             // Once it's off mPendingWrites/mPendingIndex, no other thread
-            // can reach it, so reading mFileBytes below without the lock is
-            // safe: there's nothing left to race against.
+            // can reach it, so reading the entry below without the lock is
+            // safe: there's nothing left to race against. The buffer it
+            // shares ownership of is likewise immutable by contract (see
+            // writeEntry()), so no producer can be rewriting it underneath
+            // this thread either.
             local.splice(local.begin(), mPendingWrites, mPendingWrites.begin());
             key = local.front().mKey;
             mPendingIndex.erase(key);
+            mPendingBytes -= local.front().mFileSize;
             mFlushing.insert(key);
         }
 
-        std::ofstream out(local.front().mPath, std::ios::binary | std::ios::trunc);
+        const PendingWrite& pending = local.front();
+        std::ofstream out(pending.mPath, std::ios::binary | std::ios::trunc);
         if (out.good())
         {
-            const auto& bytes = local.front().mFileBytes;
-            out.write(reinterpret_cast<const char*>(bytes.data()), (std::streamsize)bytes.size());
+            // Assemble here rather than at queue time: two sequential writes
+            // into the same stream, so the full mip chain never needs a
+            // second copy in RAM just to be written contiguously.
+            FileHeader file_header;
+            file_header.mMeta = pending.mMeta;
+            file_header.mBufferSize = pending.mBuffer->size();
+
+            out.write(reinterpret_cast<const char*>(&file_header), (std::streamsize)sizeof(file_header));
+            out.write(reinterpret_cast<const char*>(pending.mBuffer->data()),
+                      (std::streamsize)pending.mBuffer->size());
         }
 
         {
@@ -405,7 +458,8 @@ void VayuBCTextureCache::touch(LruList::iterator it)
     mLruList.splice(mLruList.begin(), mLruList, it);
 }
 
-void VayuBCTextureCache::removeEntry(const std::string& key)
+void VayuBCTextureCache::removeEntry(const std::string& key,
+                                     std::vector<std::filesystem::path>* deferred_unlinks)
 {
     auto it = mIndex.find(key);
     if (it == mIndex.end())
@@ -419,8 +473,15 @@ void VayuBCTextureCache::removeEntry(const std::string& key)
     // scan picks back up, same tolerance as any other writer-pool race here.
     if (!mFlushing.count(key))
     {
-        std::error_code ec;
-        std::filesystem::remove(it->second->mPath, ec);
+        if (deferred_unlinks)
+        {
+            deferred_unlinks->push_back(it->second->mPath);
+        }
+        else
+        {
+            std::error_code ec;
+            std::filesystem::remove(it->second->mPath, ec);
+        }
     }
     mCurrentSize -= it->second->mFileSize;
     mLruList.erase(it->second);
@@ -433,12 +494,44 @@ void VayuBCTextureCache::removeEntry(const std::string& key)
     auto pending_it = mPendingIndex.find(key);
     if (pending_it != mPendingIndex.end())
     {
+        mPendingBytes -= pending_it->second->mFileSize;
         mPendingWrites.erase(pending_it->second);
         mPendingIndex.erase(pending_it);
     }
 }
 
-void VayuBCTextureCache::evictUntilWithinBudget()
+void VayuBCTextureCache::trimPendingBacklog(std::vector<std::filesystem::path>* deferred_unlinks)
+{
+    // size() > 1 rather than !empty(): back() is the write that was just
+    // queued. If a single entry is somehow larger than the whole budget,
+    // keeping it is the right call - dropping it would mean this cache could
+    // never store that texture at all, and one oversized entry in flight is
+    // bounded anyway.
+    while (mPendingBytes > mMaxPendingBytes && mPendingWrites.size() > 1)
+    {
+        // removeEntry() does the whole job: drops the queued write, drops
+        // its index entry, and fixes up both mCurrentSize and mPendingBytes.
+        // A dropped write costs one re-encode later, nothing more -
+        // readEntry() treats the absent file as an ordinary miss.
+        const std::string key = mPendingWrites.front().mKey;
+        removeEntry(key, deferred_unlinks);
+
+        // Forward progress must not depend on mIndex and mPendingWrites
+        // agreeing: removeEntry() bails out early if the key has no index
+        // entry, which would leave the queue untouched and spin this loop
+        // forever. They shouldn't ever disagree - writeEntry() always adds
+        // the index entry before queueing - but "shouldn't" is not worth an
+        // infinite loop holding mMutex.
+        if (!mPendingWrites.empty() && mPendingWrites.front().mKey == key)
+        {
+            mPendingBytes -= mPendingWrites.front().mFileSize;
+            mPendingIndex.erase(key);
+            mPendingWrites.pop_front();
+        }
+    }
+}
+
+void VayuBCTextureCache::evictUntilWithinBudget(std::vector<std::filesystem::path>* deferred_unlinks)
 {
     if (mCurrentSize <= mMaxSize)
         return;
@@ -449,7 +542,7 @@ void VayuBCTextureCache::evictUntilWithinBudget()
 
     while (mCurrentSize > target_size && !mLruList.empty())
     {
-        removeEntry(mLruList.back().mKey);
+        removeEntry(mLruList.back().mKey, deferred_unlinks);
     }
 }
 
@@ -463,4 +556,10 @@ size_t VayuBCTextureCache::getEntryCount() const
 {
     std::lock_guard<std::mutex> lock(mMutex);
     return mIndex.size();
+}
+
+S64 VayuBCTextureCache::getPendingBytes() const
+{
+    std::lock_guard<std::mutex> lock(mMutex);
+    return mPendingBytes;
 }

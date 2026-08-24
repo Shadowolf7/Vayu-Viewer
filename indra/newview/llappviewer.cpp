@@ -4654,8 +4654,11 @@ bool LLAppViewer::initCache()
     LLVOCache::getInstance()->initCache(LL_PATH_CACHE, CACHE_NUMBER_OF_REGIONS_FOR_OBJECTS, getObjectCacheVersion());
 
     const S64 bc_texture_cache_size = S64(gSavedSettings.getU32("VayuBCTextureCacheMaxSize")) * MB;
+    const S64 bc_texture_cache_pending_size =
+        S64(gSavedSettings.getU32("VayuBCTextureCacheMaxPendingSize")) * MB;
     VayuBCTextureCache::instance().initCache(
-        std::filesystem::path(gDirUtilp->getExpandedFilename(LL_PATH_CACHE, "bccache")), bc_texture_cache_size);
+        std::filesystem::path(gDirUtilp->getExpandedFilename(LL_PATH_CACHE, "bccache")), bc_texture_cache_size,
+        bc_texture_cache_pending_size);
 
     // Remove old, stale CEF cache folders
     purgeCefStaleCaches();
