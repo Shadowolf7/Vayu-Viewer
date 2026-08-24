@@ -1,0 +1,100 @@
+# Vayu-Viewer overlay port addition (not from upstream vcpkg registry).
+#
+# cmake/vendor.cmake is wrapped in include_guard(GLOBAL), so it only runs
+# once for the whole configure -- but tracy's top-level CMakeLists.txt
+# add_subdirectory()'s capture/csvexport/import/update/profiler as SIBLING
+# scopes, each of which independently does include(cmake/vendor.cmake).
+# Only the first sibling processed actually gets the find_package() calls;
+# the guard skips them for everyone else. Since the resulting imported
+# targets are local to whichever sibling ran first, every OTHER sibling
+# that also needs them (e.g. import/CMakeLists.txt needing
+# nlohmann_json::nlohmann_json) fails with "target was not found" even
+# though the package genuinely is installed and was found.
+#
+# Fix: mark each find_package()-produced imported target IMPORTED_GLOBAL,
+# so it's visible from every subdirectory scope, not just the one that
+# happened to resolve it first.
+--- a/cmake/vendor.cmake
++++ b/cmake/vendor.cmake
+@@ -17,20 +17,35 @@
+ # capstone
+ 
+ find_package(capstone CONFIG)
++if(TARGET capstone::capstone)
++    set_target_properties(capstone::capstone PROPERTIES IMPORTED_GLOBAL TRUE)
++endif()
+ 
+ # GLFW
+ 
+ if(NOT USE_WAYLAND AND NOT EMSCRIPTEN)
+     find_package(glfw3 CONFIG)
++    if(TARGET glfw3::glfw3)
++        set_target_properties(glfw3::glfw3 PROPERTIES IMPORTED_GLOBAL TRUE)
++    endif()
+ endif()
+ 
+ # freetype
+ 
+ find_package(Freetype)
++if(TARGET Freetype::Freetype)
++    set_target_properties(Freetype::Freetype PROPERTIES IMPORTED_GLOBAL TRUE)
++endif()
+ 
+ # Zstd
+ 
+ find_package(zstd CONFIG)
++if(TARGET zstd::libzstd)
++    set_target_properties(zstd::libzstd PROPERTIES IMPORTED_GLOBAL TRUE)
++endif()
++if(TARGET zstd::libzstd_static)
++    set_target_properties(zstd::libzstd_static PROPERTIES IMPORTED_GLOBAL TRUE)
++endif()
+ 
+ # Diff Template Library
+ 
+@@ -82,18 +97,30 @@
+ # NFD
+ 
+ find_package(nfd CONFIG)
++if(TARGET nfd::nfd)
++    set_target_properties(nfd::nfd PROPERTIES IMPORTED_GLOBAL TRUE)
++endif()
+ 
+ # PPQSort
+ 
+ find_package(PPQSort CONFIG)
++if(TARGET PPQSort::PPQSort)
++    set_target_properties(PPQSort::PPQSort PROPERTIES IMPORTED_GLOBAL TRUE)
++endif()
+ 
+ # json
+ 
+ find_package(nlohmann_json CONFIG)
++if(TARGET nlohmann_json::nlohmann_json)
++    set_target_properties(nlohmann_json::nlohmann_json PROPERTIES IMPORTED_GLOBAL TRUE)
++endif()
+ 
+ # md4c
+ 
+ find_package(md4c CONFIG)
++if(TARGET md4c::md4c)
++    set_target_properties(md4c::md4c PROPERTIES IMPORTED_GLOBAL TRUE)
++endif()
+ 
+ if(NOT EMSCRIPTEN)
+ 
+@@ -112,8 +139,14 @@
+     # pugixml
+ 
+     find_package(pugixml CONFIG)
++    if(TARGET pugixml::pugixml)
++        set_target_properties(pugixml::pugixml PROPERTIES IMPORTED_GLOBAL TRUE)
++    endif()
+ 
+     # libcurl
+ 
+     find_package(CURL)
++    if(TARGET CURL::libcurl)
++        set_target_properties(CURL::libcurl PROPERTIES IMPORTED_GLOBAL TRUE)
++    endif()
+ endif()

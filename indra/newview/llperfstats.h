@@ -46,6 +46,11 @@ namespace LLPerfStats
     // called once per main loop iteration
     void updateClass();
 
+    // Tier-1 always-available frame/phase timing log, gated by VayuPerfFrameLog.
+    // Call once per frame, right after doFrame() returns, with the wall-clock
+    // doFrame() duration already measured by the caller.
+    void logFramePerf(U64 doframe_us);
+
 // Note if changing these, they should correspond with the log range of the correpsonding sliders
     static constexpr U64 ART_UNLIMITED_NANOS{50000000};
     static constexpr U64 ART_MINIMUM_NANOS{100000};

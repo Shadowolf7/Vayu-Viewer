@@ -6,6 +6,9 @@ vcpkg_from_github(
     HEAD_REF master
     PATCHES
         build-tools.patch
+        fix-vendor-versions.patch
+        global-imported-targets.patch
+        downgrade-capstone-5.patch # tracy wants capstone's older AArch64 API naming; vcpkg ships capstone 5.0.9, which renamed it to arm64
 )
 
 vcpkg_check_features(OUT_FEATURE_OPTIONS FEATURE_OPTIONS

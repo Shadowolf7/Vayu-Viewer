@@ -167,6 +167,7 @@ option(USE_TRACY_ON_DEMAND "Use on-demand Tracy profiling." ON)
 option(USE_TRACY_LOCAL_ONLY "Disallow remote Tracy profiling." ON)
 option(USE_TRACY_GPU "Use Tracy GPU profiling" OFF)
 option(USE_TRACY_GUI "Enable building Tracy profiler GUI" OFF)
+option(USE_TRACY_TOOLS "Build Tracy command-line capture/export tools (tracy-capture, tracy-csvexport)" OFF)
 
 # Signing
 option(ENABLE_SIGNING "Enable signing the viewer" OFF)
@@ -211,6 +212,10 @@ endif()
 
 if(USE_TRACY_GUI)
   list(APPEND VCPKG_MANIFEST_FEATURES "tracy-gui")
+endif()
+
+if(USE_TRACY_TOOLS)
+  list(APPEND VCPKG_MANIFEST_FEATURES "tracy-tools")
 endif()
 
 if(USE_OPENXR)
