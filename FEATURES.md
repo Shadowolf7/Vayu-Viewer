@@ -54,6 +54,7 @@ Pose stand, Windlight quick-select, an FPS limiter, and a VRAM-triggered draw-di
 
 - Mesh loading no longer hangs waiting objects when a mesh header retry runs out of attempts.
 - Fixed an asset/mesh loading regression introduced by a curl upgrade.
+- **Vehicle unseating on region crossings** — a kill of the vehicle/seat you're on (or a passenger's) is now held briefly instead of acted on immediately, so an ordinary crossing-timing race doesn't unseat anyone for no reason. A genuinely dead seat — e.g. a parcel-ban ejection — still resolves correctly, just after a short grace period instead of leaving you stuck. ([fa665aa70f](https://github.com/Shadowolf7/Vayu-Viewer/commit/fa665aa70f))
 
 ---
 
