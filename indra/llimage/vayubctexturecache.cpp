@@ -563,3 +563,9 @@ S64 VayuBCTextureCache::getPendingBytes() const
     std::lock_guard<std::mutex> lock(mMutex);
     return mPendingBytes;
 }
+
+bool VayuBCTextureCache::isInitialized() const
+{
+    std::lock_guard<std::mutex> lock(mMutex);
+    return mInitialized;
+}

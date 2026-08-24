@@ -110,6 +110,13 @@ public:
     S64 getMaxSize() const { return mMaxSize; }
     size_t getEntryCount() const;
 
+    // False until initCache() has successfully scanned a cache directory.
+    // Lets callers that only mean to *re-apply* budgets to a live cache tell
+    // themselves apart from the call that first stands it up - the latter
+    // walks the whole cache directory, which is not something a settings
+    // change should trigger at an arbitrary point during startup.
+    bool isInitialized() const;
+
     // Bytes of not-yet-flushed writes currently held in RAM, and the ceiling
     // enforced on that. Exposed mainly so the bound is observable from tests
     // and diagnostics; see mMaxPendingBytes.
