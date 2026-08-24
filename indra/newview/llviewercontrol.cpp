@@ -967,6 +967,16 @@ void handleLocalTerrainChanged(const LLSD& newValue)
         gLocalTerrainMaterials.setPaintType(paint_enabled ? TERRAIN_PAINT_TYPE_PBR_PAINTMAP : TERRAIN_PAINT_TYPE_HEIGHTMAP_WITH_NOISE);
     }
 }
+
+void handleBCTextureCacheBudgetChanged()
+{
+    // Cheap and safe to call live: re-initializing the BC cache with the
+    // directory it already has just updates the two budgets and returns
+    // without re-scanning (see VayuBCTextureCache::initCache). A lowered
+    // pending ceiling isn't applied retroactively to an existing backlog -
+    // the next queued write trims it back down.
+    LLAppViewer::applyBCTextureCacheBudgets();
+}
 ////////////////////////////////////////////////////////////////////////////
 
 LLPointer<LLControlVariable> setting_get_control(LLControlGroup& group, const std::string& setting)
@@ -1000,6 +1010,8 @@ void setting_setup_signal_listener(LLControlGroup& group, const std::string& set
 void settings_setup_listeners()
 {
     LL_PROFILE_ZONE_SCOPED;
+    setting_setup_signal_listener(gSavedSettings, "VayuBCTextureCacheMaxSize", handleBCTextureCacheBudgetChanged);
+    setting_setup_signal_listener(gSavedSettings, "VayuBCTextureCacheMaxPendingSize", handleBCTextureCacheBudgetChanged);
     setting_setup_signal_listener(gSavedSettings, "FirstPersonAvatarVisible", handleRenderAvatarMouselookChanged);
     setting_setup_signal_listener(gSavedSettings, "NumpadControl", handleNumpadControlChanged);
     setting_setup_signal_listener(gSavedSettings, "RenderFarClip", handleRenderFarClipChanged);
