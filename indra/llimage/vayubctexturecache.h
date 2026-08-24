@@ -177,7 +177,14 @@ private:
     // mMaxPendingBytes. Never drops back(), which is the write that was just
     // queued - dropping the newest write on arrival would make the cache
     // useless exactly when it's under the most pressure. mMutex held.
-    void trimPendingBacklog(std::vector<std::filesystem::path>* deferred_unlinks);
+    //
+    // Accumulates into mDropped*, and sets *should_log_drops when this call
+    // is the one that should report them. The reporting itself is left to
+    // the caller so it happens after mMutex is released - formatting a log
+    // line under the lock that every decode worker contends on would be a
+    // small version of the stall this whole class is trying to avoid.
+    void trimPendingBacklog(std::vector<std::filesystem::path>* deferred_unlinks,
+                            bool* should_log_drops);
 
     // Queues (or coalesces into an existing queued write for the same key)
     // a write for the background pool. Returns true exactly when this call
@@ -240,6 +247,16 @@ private:
     // waiting on queue capacity with a lock held.
     S64 mPendingBytes = 0;
     S64 mMaxPendingBytes = kDefaultMaxPendingBytes;
+
+    // Cumulative count/bytes of writes dropped by trimPendingBacklog(), plus
+    // the throttle state for reporting them. Dropping is otherwise entirely
+    // silent, which makes "did the ceiling actually get hit?" unanswerable
+    // from a log after the fact - and that's exactly the question worth
+    // asking before anyone reaches for the setting that controls it.
+    S64 mDroppedWrites = 0;
+    S64 mDroppedBytes = 0;
+    S64 mDroppedWritesReported = 0;
+    F64 mLastDropLogTime = 0.0;
 
     // True while a drainPendingWrites() pass is queued-or-running on the
     // writer pool. The single source of truth for "is there currently

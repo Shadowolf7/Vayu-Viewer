@@ -6,6 +6,7 @@
 #include "linden_common.h"
 
 #include "vayubctexturecache.h"
+#include "lltimer.h"
 #include "threadpool.h"
 
 #include <algorithm>
@@ -24,6 +25,11 @@ namespace
     // Once eviction kicks in, cut a bit past the ceiling so a steady trickle
     // of writes right at the limit doesn't retrigger eviction on every write.
     constexpr double kEvictionHeadroomFraction = 0.10;
+
+    // Minimum gap between "backlog is dropping writes" warnings. Long enough
+    // that sustained overload produces a readable trickle rather than a flood,
+    // short enough to still show the shape of a burst.
+    constexpr F64 kDropLogIntervalSeconds = 10.0;
 
     struct FileHeader
     {
@@ -293,8 +299,12 @@ void VayuBCTextureCache::writeEntry(const LLUUID& id, S32 discard_level,
     bool needs_post = false;
 
     // Populated under the lock, acted on after it's released - see
-    // evictUntilWithinBudget().
+    // evictUntilWithinBudget() and trimPendingBacklog().
     std::vector<std::filesystem::path> deferred_unlinks;
+    bool log_drops = false;
+    S64 dropped_writes = 0;
+    S64 dropped_bytes = 0;
+    S64 max_pending = 0;
 
     {
         std::lock_guard<std::mutex> lock(mMutex);
@@ -331,14 +341,31 @@ void VayuBCTextureCache::writeEntry(const LLUUID& id, S32 discard_level,
         // budget. trimPendingBacklog() drops whole entries (index included),
         // which lowers mCurrentSize too, so doing it first can leave nothing
         // for eviction to do.
-        trimPendingBacklog(&deferred_unlinks);
+        trimPendingBacklog(&deferred_unlinks, &log_drops);
         evictUntilWithinBudget(&deferred_unlinks);
+
+        if (log_drops)
+        {
+            // Snapshot under the lock; report below without it.
+            dropped_writes = mDroppedWrites;
+            dropped_bytes = mDroppedBytes;
+            max_pending = mMaxPendingBytes;
+        }
     }
 
     for (const auto& unlink_path : deferred_unlinks)
     {
         std::error_code ec;
         std::filesystem::remove(unlink_path, ec);
+    }
+
+    if (log_drops)
+    {
+        LL_WARNS("Texture") << "VayuBCTextureCache: pending-write backlog hit its "
+            << (max_pending / (1024 * 1024)) << " MB ceiling; dropping oldest queued writes. "
+            << dropped_writes << " dropped this session (" << (dropped_bytes / (1024 * 1024))
+            << " MB). Each drop costs a re-encode later, not correctness. If this is frequent "
+            << "and there's memory to spare, raise VayuBCTextureCacheMaxPendingSize." << LL_ENDL;
     }
 
     if (needs_post)
@@ -500,8 +527,11 @@ void VayuBCTextureCache::removeEntry(const std::string& key,
     }
 }
 
-void VayuBCTextureCache::trimPendingBacklog(std::vector<std::filesystem::path>* deferred_unlinks)
+void VayuBCTextureCache::trimPendingBacklog(std::vector<std::filesystem::path>* deferred_unlinks,
+                                            bool* should_log_drops)
 {
+    const S64 dropped_before = mDroppedWrites;
+
     // size() > 1 rather than !empty(): back() is the write that was just
     // queued. If a single entry is somehow larger than the whole budget,
     // keeping it is the right call - dropping it would mean this cache could
@@ -514,6 +544,10 @@ void VayuBCTextureCache::trimPendingBacklog(std::vector<std::filesystem::path>* 
         // A dropped write costs one re-encode later, nothing more -
         // readEntry() treats the absent file as an ordinary miss.
         const std::string key = mPendingWrites.front().mKey;
+        // Captured before the drop - removeEntry() zeroes this entry out of
+        // mPendingBytes on its way through.
+        const S64 dropped_size = mPendingWrites.front().mFileSize;
+
         removeEntry(key, deferred_unlinks);
 
         // Forward progress must not depend on mIndex and mPendingWrites
@@ -527,6 +561,28 @@ void VayuBCTextureCache::trimPendingBacklog(std::vector<std::filesystem::path>* 
             mPendingBytes -= mPendingWrites.front().mFileSize;
             mPendingIndex.erase(key);
             mPendingWrites.pop_front();
+        }
+
+        ++mDroppedWrites;
+        mDroppedBytes += dropped_size;
+    }
+
+    if (should_log_drops)
+    {
+        *should_log_drops = false;
+
+        // Throttled to one line per interval, and only when something new was
+        // actually dropped. Under sustained overload this runs on every write
+        // from every decode worker, so an unthrottled warning would bury the
+        // log in the exact scenario someone is trying to read it.
+        if (mDroppedWrites > dropped_before)
+        {
+            const F64 now = LLTimer::getElapsedSeconds().value();
+            if (now - mLastDropLogTime >= kDropLogIntervalSeconds)
+            {
+                mLastDropLogTime = now;
+                *should_log_drops = true;
+            }
         }
     }
 }
