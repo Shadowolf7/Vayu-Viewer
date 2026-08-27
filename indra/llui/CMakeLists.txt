@@ -59,7 +59,6 @@ target_sources(llui
     llresizebar.cpp
     llresizehandle.cpp
     llresmgr.cpp
-    llrngwriter.cpp
     llscrollbar.cpp
     llscrollcontainer.cpp
     llscrollingpanellist.cpp
@@ -176,7 +175,6 @@ target_sources(llui
     llresizebar.h
     llresizehandle.h
     llresmgr.h
-    llrngwriter.h
     llsearchablecontrol.h
     llsearcheditor.h
     llscrollbar.h
@@ -307,4 +305,5 @@ if(BUILD_TESTING)
   set(test_project llui)
   LL_ADD_INTEGRATION_TEST(llurlentry llurlentry.cpp "${test_libs}" "${test_project}")
   LL_ADD_INTEGRATION_TEST(llemojidictionary llemojidictionary.cpp "${test_libs}" "${test_project}")
+  LL_ADD_INTEGRATION_TEST(llxuiparser "" "${test_libs}" "${test_project}")
 endif()

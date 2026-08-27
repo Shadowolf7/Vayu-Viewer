@@ -516,7 +516,7 @@ S32 LLFolderViewItem::arrange( S32* width, S32* height )
         }
         // getLabelFont() is the cached font for mLabelStyle; sSuffixFont is the cached NORMAL-style
         // font. Both avoid the per-call sFonts map lookup that getLabelFontForStyle() does.
-        mLabelWidth = getLabelXPos() + getLabelFont()->getWidth(mLabel.c_str()) + sSuffixFont->getWidth(mLabelSuffix.c_str()) + mLabelPaddingRight;
+        mLabelWidth = getLabelXPos() + getLabelFont()->getWidth(mLabel) + sSuffixFont->getWidth(mLabelSuffix) + mLabelPaddingRight;
         mLabelWidthDirty = false;
         if (mIsFavorite)
         {
@@ -1118,21 +1118,36 @@ void LLFolderViewItem::draw()
         return;
     }
 
-    S32 filter_string_length = mViewModelItem->hasFilterStringMatch() ? (S32)mViewModelItem->getFilterStringSize() : 0;
     F32 right_x  = 0;
     F32 y = (F32)rect_height - line_height - (F32)mStyle->textPadTop - (F32)sTopPad;
     F32 text_left = (F32)getLabelXPos();
-    LLWString combined_string = mLabel + mLabelSuffix;
 
-    S32 filter_offset = static_cast<S32>(mViewModelItem->getFilterStringOffset());
+    // The model reports the filter match as a byte offset and byte length into the
+    // item's UTF-8 searchable name, but everything below indexes LLWStrings by
+    // codepoint. Convert once here: left in bytes, both the highlight rect and the
+    // highlighted render range slide off the match for any name carrying multi-byte
+    // characters ahead of it. combined_string is only wanted on a match, so it is
+    // built here rather than for every item on every draw.
+    LLWString combined_string;
+    S32 filter_offset = 0;
+    S32 filter_string_length = 0;
+    if (mViewModelItem->hasFilterStringMatch())
+    {
+        combined_string = mLabel + mLabelSuffix;
+        filter_offset = wstring_wstring_length_from_utf8_length(
+            combined_string, 0, static_cast<S32>(mViewModelItem->getFilterStringOffset()));
+        filter_string_length = wstring_wstring_length_from_utf8_length(
+            combined_string, filter_offset, static_cast<S32>(mViewModelItem->getFilterStringSize()));
+    }
+
     if (filter_string_length > 0)
     {
         S32 bottom = rect_height - line_height - 3 - sTopPad;
         S32 top = rect_height - sTopPad;
         if(mLabelSuffix.empty() || (font == sSuffixFont))
         {
-            S32 left = ll_round(text_left) + font->getWidth(combined_string.c_str(), 0, filter_offset) - 2;
-            S32 right = left + font->getWidth(combined_string.c_str(), filter_offset, filter_string_length) + 2;
+            S32 left = ll_round(text_left) + font->getWidth(combined_string, 0, filter_offset) - 2;
+            S32 right = left + font->getWidth(combined_string, filter_offset, filter_string_length) + 2;
 
             LLRect box_rect(left, top, right, bottom);
             sSelectionImg->draw(box_rect, sFilterBGColor);
@@ -1142,8 +1157,8 @@ void LLFolderViewItem::draw()
             S32 label_filter_length = llmin((S32)mLabel.size() - filter_offset, (S32)filter_string_length);
             if(label_filter_length > 0)
             {
-                S32 left = (S32)(ll_round(text_left) + font->getWidthF32(mLabel.c_str(), 0, llmin(filter_offset, (S32)mLabel.size()))) - 2;
-                S32 right = left + (S32)font->getWidthF32(mLabel.c_str(), filter_offset, label_filter_length) + 2;
+                S32 left = (S32)(ll_round(text_left) + font->getWidthF32(mLabel, 0, llmin(filter_offset, (S32)mLabel.size()))) - 2;
+                S32 right = left + (S32)font->getWidthF32(mLabel, filter_offset, label_filter_length) + 2;
                 LLRect box_rect(left, top, right, bottom);
                 sSelectionImg->draw(box_rect, sFilterBGColor);
             }
@@ -1151,8 +1166,8 @@ void LLFolderViewItem::draw()
             if(suffix_filter_length > 0)
             {
                 S32 suffix_offset = llmax(0, filter_offset - (S32)mLabel.size());
-                S32 left = (S32)(ll_round(text_left) + font->getWidthF32(mLabel.c_str(), 0, static_cast<S32>(mLabel.size())) + sSuffixFont->getWidthF32(mLabelSuffix.c_str(), 0, suffix_offset)) - 2;
-                S32 right = left + (S32)sSuffixFont->getWidthF32(mLabelSuffix.c_str(), suffix_offset, suffix_filter_length) + 2;
+                S32 left = (S32)(ll_round(text_left) + font->getWidthF32(mLabel, 0, static_cast<S32>(mLabel.size())) + sSuffixFont->getWidthF32(mLabelSuffix, 0, suffix_offset)) - 2;
+                S32 right = left + (S32)sSuffixFont->getWidthF32(mLabelSuffix, suffix_offset, suffix_filter_length) + 2;
                 LLRect box_rect(left, top, right, bottom);
                 sSelectionImg->draw(box_rect, sFilterBGColor);
             }
@@ -1202,7 +1217,7 @@ void LLFolderViewItem::draw()
     {
         if(mLabelSuffix.empty() || (font == sSuffixFont))
         {
-            F32 match_string_left = text_left + font->getWidthF32(combined_string.c_str(), 0, filter_offset + filter_string_length) - font->getWidthF32(combined_string.c_str(), filter_offset, filter_string_length);
+            F32 match_string_left = text_left + font->getWidthF32(combined_string, 0, filter_offset + filter_string_length) - font->getWidthF32(combined_string, filter_offset, filter_string_length);
             F32 yy = (F32)rect_height - line_height - (F32)mStyle->textPadTop - (F32)sTopPad;
             font->render(combined_string, filter_offset, match_string_left, yy,
                 sFilterTextColor, LLFontGL::LEFT, LLFontGL::BOTTOM, LLFontGL::NORMAL, LLFontGL::NO_SHADOW,
@@ -1213,7 +1228,7 @@ void LLFolderViewItem::draw()
             S32 label_filter_length = llmin((S32)mLabel.size() - filter_offset, (S32)filter_string_length);
             if(label_filter_length > 0)
             {
-                F32 match_string_left = text_left + font->getWidthF32(mLabel.c_str(), 0, filter_offset + label_filter_length) - font->getWidthF32(mLabel.c_str(), filter_offset, label_filter_length);
+                F32 match_string_left = text_left + font->getWidthF32(mLabel, 0, filter_offset + label_filter_length) - font->getWidthF32(mLabel, filter_offset, label_filter_length);
                 F32 yy = (F32)rect_height - line_height - (F32)mStyle->textPadTop - (F32)sTopPad;
                 font->render(mLabel, filter_offset, match_string_left, yy,
                     sFilterTextColor, LLFontGL::LEFT, LLFontGL::BOTTOM, LLFontGL::NORMAL, LLFontGL::NO_SHADOW,
@@ -1224,7 +1239,7 @@ void LLFolderViewItem::draw()
             if(suffix_filter_length > 0)
             {
                 S32 suffix_offset = llmax(0, filter_offset - (S32)mLabel.size());
-                F32 match_string_left = text_left + font->getWidthF32(mLabel.c_str(), 0, static_cast<S32>(mLabel.size())) + sSuffixFont->getWidthF32(mLabelSuffix.c_str(), 0, suffix_offset + suffix_filter_length) - sSuffixFont->getWidthF32(mLabelSuffix.c_str(), suffix_offset, suffix_filter_length);
+                F32 match_string_left = text_left + font->getWidthF32(mLabel, 0, static_cast<S32>(mLabel.size())) + sSuffixFont->getWidthF32(mLabelSuffix, 0, suffix_offset + suffix_filter_length) - sSuffixFont->getWidthF32(mLabelSuffix, suffix_offset, suffix_filter_length);
                 F32 yy = (F32)rect_height - sSuffixFont->getLineHeight() - (F32)mStyle->textPadTop - (F32)sTopPad;
                 sSuffixFont->render(mLabelSuffix, suffix_offset, match_string_left, yy, sFilterTextColor,
                     LLFontGL::LEFT, LLFontGL::BOTTOM, LLFontGL::NORMAL, LLFontGL::NO_SHADOW,

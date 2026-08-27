@@ -28,6 +28,7 @@
 #include "llui_libtest.h"
 
 // project includes
+#include "alparamfingerprint.h"
 #include "llwidgetreg.h"
 
 // linden library includes
@@ -38,6 +39,7 @@
 #include "llfloater.h"
 #include "llfontfreetype.h"
 #include "llfontgl.h"
+#include "lltexture.h"
 #include "lltransutil.h"
 #include "llui.h"
 #include "lluictrlfactory.h"
@@ -63,6 +65,17 @@ const std::string& rlvGetAnonym(const LLAvatarName& avName)
 }
 // [/RLVa:KB]
 
+// LLUIImage's constructor caches getWidth()/getHeight(), and those dereference
+// the texture. Virtual dispatch is not yet active during that base-class
+// construction, so a subclass override cannot stand in for it -- the old
+// "NULL ImageGL, don't deref!" arrangement now crashes. Supply a real texture.
+class TestTexture : public LLTexture
+{
+public:
+    S32 getWidth(S32 discard_level = -1) const override { return 16; }
+    S32 getHeight(S32 discard_level = -1) const override { return 16; }
+};
+
 // We can't create LLImageGL objects because we have no window or rendering
 // context.  Provide enough of an LLUIImage to test the LLUI library without
 // an underlying image.
@@ -70,7 +83,7 @@ class TestUIImage : public LLUIImage
 {
 public:
     TestUIImage()
-    :   LLUIImage( std::string(), NULL ) // NULL ImageGL, don't deref!
+    :   LLUIImage( std::string(), new TestTexture() )
     { }
 
     /*virtual*/ S32 getWidth() const
@@ -85,29 +98,27 @@ public:
 };
 
 
-class LLTexture ;
 // We need to supply dummy images
 class TestImageProvider : public LLImageProviderInterface
 {
 public:
-    /*virtual*/ LLPointer<LLUIImage> getUIImage(const std::string& name, S32 priority)
+    LLPointer<LLUIImage> getUIImage(std::string_view name, S32 priority) override
     {
         return makeImage();
     }
 
-    /*virtual*/ LLPointer<LLUIImage> getUIImageByID(const LLUUID& id, S32 priority)
+    LLPointer<LLUIImage> getUIImageByID(const LLUUID& id, S32 priority) override
     {
         return makeImage();
     }
 
-    /*virtual*/ void cleanUp()
+    void cleanUp() override
     {
     }
 
     LLPointer<LLUIImage> makeImage()
     {
-        LLPointer<LLTexture> image_gl;
-        LLPointer<LLUIImage> image = new TestUIImage(); //LLUIImage( std::string(), image_gl);
+        LLPointer<LLUIImage> image = new TestUIImage();
         mImageList.push_back(image);
         return image;
     }
@@ -121,11 +132,7 @@ TestImageProvider gTestImageProvider;
 void init_llui()
 {
     // Font lookup needs directory support
-#if LL_DARWIN
-    const char* newview_path = "../../../../newview";
-#else
-    const char* newview_path = "../../../newview";
-#endif
+    const char* newview_path = LLUI_LIBTEST_APP_RO_DIR;
     gDirUtilp->initAppDirs("SecondLife", newview_path);
     gDirUtilp->setSkinFolder("default", "en");
 
@@ -133,7 +140,10 @@ void init_llui()
     LLUIColorTable::instance().loadFromSettings();
 
     std::string config_filename = gDirUtilp->getExpandedFilename(LL_PATH_APP_SETTINGS, "settings.xml");
-    gSavedSettings.loadFromFile(config_filename);
+    // This is the default settings file, so load it as defaults the way
+    // LLAppViewer does. Loading it as user settings marks every control
+    // PERSIST_ALWAYS, and the first one declared without a comment is fatal.
+    gSavedSettings.loadFromFile(config_filename, true);
 
     // See LLAppViewer::init()
     LLUI::settings_map_t settings;
@@ -142,11 +152,15 @@ void init_llui()
     settings["floater"] = &gSavedSettings;
     settings["account"] = &gSavedPerAccountSettings;
 
-    // Don't use real images as we don't have a GL context
-    LLUI::initClass(settings, &gTestImageProvider);
+    // Don't use real images as we don't have a GL context. LLUI's constructor
+    // stands up LLRender2D with the same provider, and there is no audio here.
+    LLUI::createInstance(settings, &gTestImageProvider, nullptr, nullptr);
 
-    const bool no_register_widgets = false;
-    LLWidgetReg::initClass( no_register_widgets );
+    // Each widget's own static registrar already runs, so registering here as
+    // well trips the duplicate-key check. This is only needed where the
+    // linker has dropped those translation units.
+    const bool register_widgets = false;
+    LLWidgetReg::initClass( register_widgets );
 
     // Otherwise we get translation warnings when setting up floaters
     // (tooltips for buttons)
@@ -171,58 +185,45 @@ void init_llui()
     gFloaterView = LLUICtrlFactory::create<LLFloaterView> (fvparams);
 }
 
-/*==========================================================================*|
-static std::string get_xui_dir()
-{
-    std::string delim = gDirUtilp->getDirDelimiter();
-    return gDirUtilp->getSkinBaseDir() + delim + "default" + delim + "xui" + delim;
-}
-
-// buildFromFile() no longer supports generate-output-LLXMLNode
-void export_test_floaters()
-{
-    // Convert all test floaters to new XML format
-    std::string delim = gDirUtilp->getDirDelimiter();
-    std::string xui_dir = get_xui_dir() + "en" + delim;
-    std::string filename;
-
-    LLDirIterator iter(xui_dir, "floater_test_*.xml");
-    while (iter.next(filename))
-    {
-        if (filename.find("_new.xml") != std::string::npos)
-        {
-            // don't re-export other test floaters
-            continue;
-        }
-        LL_INFOS() << "Converting " << filename << LL_ENDL;
-        // Build a floater and output new attributes
-        LLXMLNodePtr output_node = new LLXMLNode();
-        LLFloater* floater = new LLFloater(LLSD());
-        floater->buildFromFile( filename,
-                                //   false, // don't open floater
-                                output_node);
-        std::string out_filename = gDirUtilp->add(xui_dir, filename);
-        std::string::size_type extension_pos = out_filename.rfind(".xml");
-        out_filename.resize(extension_pos);
-        out_filename += "_new.xml";
-
-        LL_INFOS() << "Output: " << out_filename << LL_ENDL;
-        LLFILE* floater_file = LLFile::fopen(out_filename.c_str(), "w");
-        LLXMLNode::writeHeaderToFile(floater_file);
-        output_node->writeToFile(floater_file);
-        fclose(floater_file);
-    }
-}
-|*==========================================================================*/
-
 int main(int argc, char** argv)
 {
     // Must init LLError for llerrs to actually cause errors.
-    LLError::initForApplication(".");
+    LLError::initForApplication(".", ".");
+    // Loading settings logs a line per unrecognized variable, which buries
+    // anything this program actually prints.
+    LLError::setDefaultLevel(LLError::LEVEL_WARN);
 
     init_llui();
 
-//  export_test_floaters();
+    // All of these are off by default so the usual run stays silent.
+    //
+    // "--params" fingerprints every widget's parameter block. Reworking
+    // LLInitParam must leave this byte-identical, so it is the gate.
+    //
+    // "--census" reports what the parameter tables cost, "--sizes" what one
+    // instance of each block costs, and "--bench" what building one costs.
+    // All three are *expected* to move -- shrinking them is the point --
+    // which is why none of them shares a stream with the gate above.
+    for (int i = 1; i < argc; ++i)
+    {
+        const std::string arg(argv[i]);
+        if (arg == "--params")
+        {
+            ALParamFingerprint::collect(std::cout);
+        }
+        else if (arg == "--sizes")
+        {
+            std::cout << ALParamFingerprint::sizes();
+        }
+        else if (arg == "--census")
+        {
+            std::cout << ALParamFingerprint::census();
+        }
+        else if (arg == "--bench")
+        {
+            std::cout << ALParamFingerprint::bench();
+        }
+    }
 
     return 0;
 }

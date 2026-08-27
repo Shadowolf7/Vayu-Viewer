@@ -35,623 +35,36 @@
 
 
 #include <algorithm>
+#include <cctype>
+#include <cerrno>
+#include <charconv>
+#include <cstdlib>
 #include <fstream>
+#if LL_DARWIN
+#include <xlocale.h>
+#endif
 #include <vector>
-#include <boost/tokenizer.hpp>
-#include <boost/bind.hpp>
-//#include <boost/spirit/include/qi.hpp>
-#include <boost/spirit/include/classic_core.hpp>
 
 #include "lluicolor.h"
 #include "v3math.h"
-using namespace BOOST_SPIRIT_CLASSIC_NS;
 
 const S32 MAX_STRING_ATTRIBUTE_SIZE = 40;
 
-static  LLInitParam::Parser::parser_read_func_map_t sXSDReadFuncs;
-static  LLInitParam::Parser::parser_write_func_map_t sXSDWriteFuncs;
-static  LLInitParam::Parser::parser_inspect_func_map_t sXSDInspectFuncs;
 
 static  LLInitParam::Parser::parser_read_func_map_t sSimpleXUIReadFuncs;
 static  LLInitParam::Parser::parser_write_func_map_t sSimpleXUIWriteFuncs;
-static  LLInitParam::Parser::parser_inspect_func_map_t sSimpleXUIInspectFuncs;
 
 const char* NO_VALUE_MARKER = "no_value";
 
-struct MaxOccursValues : public LLInitParam::TypeValuesHelper<U32, MaxOccursValues>
-{
-    static void declareValues()
-    {
-        declare("unbounded", U32_MAX);
-    }
-};
-
-struct Occurs : public LLInitParam::Block<Occurs>
-{
-    Optional<U32>                   minOccurs;
-    Optional<U32, MaxOccursValues>  maxOccurs;
-
-    Occurs()
-    :   minOccurs("minOccurs", 0),
-        maxOccurs("maxOccurs", U32_MAX)
-
-    {}
-};
-
-typedef enum
-{
-    USE_REQUIRED,
-    USE_OPTIONAL
-} EUse;
-
-namespace LLInitParam
-{
-    template<>
-    struct TypeValues<EUse> : public TypeValuesHelper<EUse>
-    {
-        static void declareValues()
-        {
-            declare("required", USE_REQUIRED);
-            declare("optional", USE_OPTIONAL);
-        }
-    };
-}
-
-struct Element;
-struct Group;
-struct Sequence;
-
-struct All : public LLInitParam::Block<All, Occurs>
-{
-    Multiple< Lazy<Element, IS_A_BLOCK> > elements;
-
-    All()
-    :   elements("element")
-    {
-        maxOccurs = 1;
-    }
-};
-
-struct Attribute : public LLInitParam::Block<Attribute>
-{
-    Mandatory<std::string>  name,
-                            type;
-    Mandatory<EUse>         use;
-
-    Attribute()
-    :   name("name"),
-        type("type"),
-        use("use")
-    {}
-};
-
-struct Any : public LLInitParam::Block<Any, Occurs>
-{
-    Optional<std::string> _namespace;
-
-    Any()
-    :   _namespace("namespace")
-    {}
-};
-
-struct Choice : public LLInitParam::ChoiceBlock<Choice, Occurs>
-{
-    Alternative< Lazy<Element, IS_A_BLOCK> >    element;
-    Alternative< Lazy<Group, IS_A_BLOCK> >      group;
-    Alternative< Lazy<Choice, IS_A_BLOCK> >     choice;
-    Alternative< Lazy<Sequence, IS_A_BLOCK> >   sequence;
-    Alternative< Lazy<Any> >                    any;
-
-    Choice()
-    :   element("element"),
-        group("group"),
-        choice("choice"),
-        sequence("sequence"),
-        any("any")
-    {}
-
-};
-
-struct Sequence : public LLInitParam::ChoiceBlock<Sequence, Occurs>
-{
-    Alternative< Lazy<Element, IS_A_BLOCK> >    element;
-    Alternative< Lazy<Group, IS_A_BLOCK> >      group;
-    Alternative< Lazy<Choice> >                 choice;
-    Alternative< Lazy<Sequence, IS_A_BLOCK> >   sequence;
-    Alternative< Lazy<Any> >                    any;
-};
-
-struct GroupContents : public LLInitParam::ChoiceBlock<GroupContents, Occurs>
-{
-    Alternative<All>        all;
-    Alternative<Choice>     choice;
-    Alternative<Sequence>   sequence;
-
-    GroupContents()
-    :   all("all"),
-        choice("choice"),
-        sequence("sequence")
-    {}
-};
-
-struct Group : public LLInitParam::Block<Group, GroupContents>
-{
-    Optional<std::string>   name,
-                            ref;
-
-    Group()
-    :   name("name"),
-        ref("ref")
-    {}
-};
-
-struct Restriction : public LLInitParam::Block<Restriction>
-{
-};
-
-struct Extension : public LLInitParam::Block<Extension>
-{
-};
-
-struct SimpleContent : public LLInitParam::ChoiceBlock<SimpleContent>
-{
-    Alternative<Restriction> restriction;
-    Alternative<Extension> extension;
-
-    SimpleContent()
-    :   restriction("restriction"),
-        extension("extension")
-    {}
-};
-
-struct SimpleType : public LLInitParam::Block<SimpleType>
-{
-    // TODO
-};
-
-struct ComplexContent : public LLInitParam::Block<ComplexContent, SimpleContent>
-{
-    Optional<bool> mixed;
-
-    ComplexContent()
-    :   mixed("mixed", true)
-    {}
-};
-
-struct ComplexTypeContents : public LLInitParam::ChoiceBlock<ComplexTypeContents>
-{
-    Alternative<SimpleContent>  simple_content;
-    Alternative<ComplexContent> complex_content;
-    Alternative<Group>          group;
-    Alternative<All>            all;
-    Alternative<Choice>         choice;
-    Alternative<Sequence>       sequence;
-
-    ComplexTypeContents()
-    :   simple_content("simpleContent"),
-        complex_content("complexContent"),
-        group("group"),
-        all("all"),
-        choice("choice"),
-        sequence("sequence")
-    {}
-};
-
-struct ComplexType : public LLInitParam::Block<ComplexType, ComplexTypeContents>
-{
-    Optional<std::string>           name;
-    Optional<bool>                  mixed;
-
-    Multiple<Attribute>             attribute;
-    Multiple< Lazy<Element, IS_A_BLOCK > >          elements;
-
-    ComplexType()
-    :   name("name"),
-        attribute("xs:attribute"),
-        elements("xs:element"),
-        mixed("mixed")
-    {
-    }
-};
-
-struct ElementContents : public LLInitParam::ChoiceBlock<ElementContents, Occurs>
-{
-    Alternative<SimpleType>     simpleType;
-    Alternative<ComplexType>    complexType;
-
-    ElementContents()
-    :   simpleType("simpleType"),
-        complexType("complexType")
-    {}
-};
-
-struct Element : public LLInitParam::Block<Element, ElementContents>
-{
-    Optional<std::string>   name,
-                            ref,
-                            type;
-
-    Element()
-    :   name("xs:name"),
-        ref("xs:ref"),
-        type("xs:type")
-    {}
-};
-
-struct Schema : public LLInitParam::Block<Schema>
-{
-private:
-    Mandatory<std::string>  targetNamespace,
-                            xmlns,
-                            xs;
-
-public:
-    Optional<std::string>   attributeFormDefault,
-                            elementFormDefault;
-
-    Mandatory<Element>      root_element;
-
-    void setNameSpace(const std::string& ns) {targetNamespace = ns; xmlns = ns;}
-
-    Schema(const std::string& ns = LLStringUtil::null)
-    :   attributeFormDefault("attributeFormDefault"),
-        elementFormDefault("elementFormDefault"),
-        xs("xmlns:xs"),
-        targetNamespace("targetNamespace"),
-        xmlns("xmlns"),
-        root_element("xs:element")
-    {
-        attributeFormDefault = "unqualified";
-        elementFormDefault = "qualified";
-        xs = "http://www.w3.org/2001/XMLSchema";
-        if (!ns.empty())
-        {
-            setNameSpace(ns);
-        };
-    }
-};
-
-//
-// LLXSDWriter
-//
-LLXSDWriter::LLXSDWriter()
-: Parser(sXSDReadFuncs, sXSDWriteFuncs, sXSDInspectFuncs)
-{
-    registerInspectFunc<bool>(boost::bind(&LLXSDWriter::writeAttribute, this, "xs:boolean", _1, _2, _3, _4));
-    registerInspectFunc<std::string>(boost::bind(&LLXSDWriter::writeAttribute, this, "xs:string", _1, _2, _3, _4));
-    registerInspectFunc<U8>(boost::bind(&LLXSDWriter::writeAttribute, this, "xs:unsignedByte", _1, _2, _3, _4));
-    registerInspectFunc<S8>(boost::bind(&LLXSDWriter::writeAttribute, this, "xs:signedByte", _1, _2, _3, _4));
-    registerInspectFunc<U16>(boost::bind(&LLXSDWriter::writeAttribute, this, "xs:unsignedShort", _1, _2, _3, _4));
-    registerInspectFunc<S16>(boost::bind(&LLXSDWriter::writeAttribute, this, "xs:signedShort", _1, _2, _3, _4));
-    registerInspectFunc<U32>(boost::bind(&LLXSDWriter::writeAttribute, this, "xs:unsignedInt", _1, _2, _3, _4));
-    registerInspectFunc<S32>(boost::bind(&LLXSDWriter::writeAttribute, this, "xs:integer", _1, _2, _3, _4));
-    registerInspectFunc<F32>(boost::bind(&LLXSDWriter::writeAttribute, this, "xs:float", _1, _2, _3, _4));
-    registerInspectFunc<F64>(boost::bind(&LLXSDWriter::writeAttribute, this, "xs:double", _1, _2, _3, _4));
-    registerInspectFunc<LLColor4>(boost::bind(&LLXSDWriter::writeAttribute, this, "xs:string", _1, _2, _3, _4));
-    registerInspectFunc<LLUIColor>(boost::bind(&LLXSDWriter::writeAttribute, this, "xs:string", _1, _2, _3, _4));
-    registerInspectFunc<LLUUID>(boost::bind(&LLXSDWriter::writeAttribute, this, "xs:string", _1, _2, _3, _4));
-    registerInspectFunc<LLSD>(boost::bind(&LLXSDWriter::writeAttribute, this, "xs:string", _1, _2, _3, _4));
-}
-
-LLXSDWriter::~LLXSDWriter() {}
-
-void LLXSDWriter::writeXSD(const std::string& type_name, LLXMLNodePtr node, const LLInitParam::BaseBlock& block, const std::string& xml_namespace)
-{
-    Schema schema(xml_namespace);
-
-    schema.root_element.name = type_name;
-    Choice& choice = schema.root_element.complexType.choice;
-
-    choice.minOccurs = 0;
-    choice.maxOccurs = "unbounded";
-
-    mSchemaNode = node;
-    //node->setName("xs:schema");
-    //node->createChild("attributeFormDefault", true)->setStringValue("unqualified");
-    //node->createChild("elementFormDefault", true)->setStringValue("qualified");
-    //node->createChild("targetNamespace", true)->setStringValue(xml_namespace);
-    //node->createChild("xmlns:xs", true)->setStringValue("http://www.w3.org/2001/XMLSchema");
-    //node->createChild("xmlns", true)->setStringValue(xml_namespace);
-
-    //node = node->createChild("xs:complexType", false);
-    //node->createChild("name", true)->setStringValue(type_name);
-    //node->createChild("mixed", true)->setStringValue("true");
-
-    //mAttributeNode = node;
-    //mElementNode = node->createChild("xs:choice", false);
-    //mElementNode->createChild("minOccurs", true)->setStringValue("0");
-    //mElementNode->createChild("maxOccurs", true)->setStringValue("unbounded");
-    block.inspectBlock(*this);
-
-    // duplicate element choices
-    LLXMLNodeList children;
-    mElementNode->getChildren("xs:element", children, false);
-    for (LLXMLNodeList::iterator child_it = children.begin(); child_it != children.end(); ++child_it)
-    {
-        LLXMLNodePtr child_copy = child_it->second->deepCopy();
-        std::string child_name;
-        child_copy->getAttributeString("name", child_name);
-        child_copy->setAttributeString("name", type_name + "." + child_name);
-        mElementNode->addChild(child_copy);
-    }
-
-    LLXMLNodePtr element_declaration_node = mSchemaNode->createChild("xs:element", false);
-    element_declaration_node->createChild("name", true)->setStringValue(type_name);
-    element_declaration_node->createChild("type", true)->setStringValue(type_name);
-}
-
-void LLXSDWriter::writeAttribute(const std::string& type, const Parser::name_stack_t& stack, S32 min_count, S32 max_count, const std::vector<std::string>* possible_values)
-{
-    name_stack_t non_empty_names;
-    std::string attribute_name;
-    for (name_stack_t::const_iterator it = stack.begin();
-        it != stack.end();
-        ++it)
-    {
-        const std::string& name = it->first;
-        if (!name.empty())
-        {
-            non_empty_names.push_back(*it);
-        }
-    }
-
-    for (name_stack_t::const_iterator it = non_empty_names.begin();
-        it != non_empty_names.end();
-        ++it)
-    {
-        if (!attribute_name.empty())
-        {
-            attribute_name += ".";
-        }
-        attribute_name += it->first;
-    }
-
-    // only flag non-nested attributes as mandatory, nested attributes have variant syntax
-    // that can't be properly constrained in XSD
-    // e.g. <foo mandatory.value="bar"/> vs <foo><mandatory value="bar"/></foo>
-    bool attribute_mandatory = min_count == 1 && max_count == 1 && non_empty_names.size() == 1;
-
-    // don't bother supporting "Multiple" params as xml attributes
-    if (max_count <= 1)
-    {
-        // add compound attribute to root node
-        addAttributeToSchema(mAttributeNode, attribute_name, type, attribute_mandatory, possible_values);
-    }
-
-    // now generated nested elements for compound attributes
-    if (non_empty_names.size() > 1 && !attribute_mandatory)
-    {
-        std::string element_name;
-
-        // traverse all but last element, leaving that as an attribute name
-        name_stack_t::const_iterator end_it = non_empty_names.end();
-        end_it--;
-
-        for (name_stack_t::const_iterator it = non_empty_names.begin();
-            it != end_it;
-            ++it)
-        {
-            if (it != non_empty_names.begin())
-            {
-                element_name += ".";
-            }
-            element_name += it->first;
-        }
-
-        std::string short_attribute_name = non_empty_names.back().first;
-
-        LLXMLNodePtr complex_type_node;
-
-        // find existing element node here, starting at tail of child list
-        if (mElementNode->mChildren.notNull())
-        {
-            for(LLXMLNodePtr element = mElementNode->mChildren->tail;
-                element.notNull();
-                element = element->mPrev)
-            {
-                std::string name;
-                if(element->getAttributeString("name", name) && name == element_name)
-                {
-                    complex_type_node = element->mChildren->head;
-                    break;
-                }
-            }
-        }
-        //create complex_type node
-        //
-        //<xs:element
-        //    maxOccurs="1"
-        //    minOccurs="0"
-        //    name="name">
-        //       <xs:complexType>
-        //       </xs:complexType>
-        //</xs:element>
-        if(complex_type_node.isNull())
-        {
-            complex_type_node = mElementNode->createChild("xs:element", false);
-
-            complex_type_node->createChild("minOccurs", true)->setIntValue(min_count);
-            complex_type_node->createChild("maxOccurs", true)->setIntValue(max_count);
-            complex_type_node->createChild("name",      true)->setStringValue(element_name);
-            complex_type_node = complex_type_node->createChild("xs:complexType", false);
-        }
-
-        addAttributeToSchema(complex_type_node, short_attribute_name, type, false, possible_values);
-    }
-}
-
-void LLXSDWriter::addAttributeToSchema(LLXMLNodePtr type_declaration_node, const std::string& attribute_name, const std::string& type, bool mandatory, const std::vector<std::string>* possible_values)
-{
-    if (!attribute_name.empty())
-    {
-        LLXMLNodePtr new_enum_type_node;
-        if (possible_values != NULL)
-        {
-            // custom attribute type, for example
-            //<xs:simpleType>
-             // <xs:restriction
-             //    base="xs:string">
-             //     <xs:enumeration
-             //      value="a" />
-             //     <xs:enumeration
-             //      value="b" />
-             //   </xs:restriction>
-             // </xs:simpleType>
-            new_enum_type_node = new LLXMLNode("xs:simpleType", false);
-
-            LLXMLNodePtr restriction_node = new_enum_type_node->createChild("xs:restriction", false);
-            restriction_node->createChild("base", true)->setStringValue("xs:string");
-
-            for (std::vector<std::string>::const_iterator it = possible_values->begin();
-                it != possible_values->end();
-                ++it)
-            {
-                LLXMLNodePtr enum_node = restriction_node->createChild("xs:enumeration", false);
-                enum_node->createChild("value", true)->setStringValue(*it);
-            }
-        }
-
-        string_set_t& attributes_written = mAttributesWritten[type_declaration_node];
-
-        string_set_t::iterator found_it = attributes_written.lower_bound(attribute_name);
-
-        // attribute not yet declared
-        if (found_it == attributes_written.end() || attributes_written.key_comp()(attribute_name, *found_it))
-        {
-            attributes_written.insert(found_it, attribute_name);
-
-            LLXMLNodePtr attribute_node = type_declaration_node->createChild("xs:attribute", false);
-
-            // attribute name
-            attribute_node->createChild("name", true)->setStringValue(attribute_name);
-
-            if (new_enum_type_node.notNull())
-            {
-                attribute_node->addChild(new_enum_type_node);
-            }
-            else
-            {
-                // simple attribute type
-                attribute_node->createChild("type", true)->setStringValue(type);
-            }
-
-            // required or optional
-            attribute_node->createChild("use", true)->setStringValue(mandatory ? "required" : "optional");
-        }
-         // attribute exists...handle collision of same name attributes with potentially different types
-        else
-        {
-            LLXMLNodePtr attribute_declaration;
-            if (type_declaration_node.notNull())
-            {
-                for(LLXMLNodePtr node = type_declaration_node->mChildren->tail;
-                    node.notNull();
-                    node = node->mPrev)
-                {
-                    std::string name;
-                    if (node->getAttributeString("name", name) && name == attribute_name)
-                    {
-                        attribute_declaration = node;
-                        break;
-                    }
-                }
-            }
-
-            bool new_type_is_enum = new_enum_type_node.notNull();
-            bool existing_type_is_enum = !attribute_declaration->hasAttribute("type");
-
-            // either type is enum, revert to string in collision
-            // don't bother to check for enum equivalence
-            if (new_type_is_enum || existing_type_is_enum)
-            {
-                if (attribute_declaration->hasAttribute("type"))
-                {
-                    attribute_declaration->setAttributeString("type", "xs:string");
-                }
-                else
-                {
-                    attribute_declaration->createChild("type", true)->setStringValue("xs:string");
-                }
-                attribute_declaration->deleteChildren("xs:simpleType");
-            }
-            else
-            {
-                // check for collision of different standard types
-                std::string existing_type;
-                attribute_declaration->getAttributeString("type", existing_type);
-                // if current type is not the same as the new type, revert to strnig
-                if (existing_type != type)
-                {
-                    // ...than use most general type, string
-                    attribute_declaration->setAttributeString("type", "string");
-                }
-            }
-        }
-    }
-}
-
-//
-// LLXUIXSDWriter
-//
-void LLXUIXSDWriter::writeXSD(const std::string& type_name, const std::string& path, const LLInitParam::BaseBlock& block)
-{
-    std::string file_name(path);
-    file_name += type_name + ".xsd";
-    LLXMLNodePtr root_nodep = new LLXMLNode();
-
-    LLXSDWriter::writeXSD(type_name, root_nodep, block, "http://www.lindenlab.com/xui");
-
-    // add includes for all possible children
-    const std::type_index& type = *LLWidgetTypeRegistry::instance().getValue(type_name);
-    const widget_registry_t* widget_registryp = LLChildRegistryRegistry::instance().getValue(type);
-
-    // add choices for valid children
-    if (widget_registryp)
-    {
-        // add include declarations for all valid children
-        for (widget_registry_t::Registrar::registry_map_t::const_iterator it = widget_registryp->currentRegistrar().beginItems();
-             it != widget_registryp->currentRegistrar().endItems();
-             ++it)
-        {
-            std::string widget_name = it->first;
-            if (widget_name == type_name)
-            {
-                continue;
-            }
-            LLXMLNodePtr nodep = new LLXMLNode("xs:include", false);
-            nodep->createChild("schemaLocation", true)->setStringValue(widget_name + ".xsd");
-
-            // add to front of schema
-            mSchemaNode->addChild(nodep);
-        }
-
-        for (widget_registry_t::Registrar::registry_map_t::const_iterator it = widget_registryp->currentRegistrar().beginItems();
-            it != widget_registryp->currentRegistrar().endItems();
-            ++it)
-        {
-            std::string widget_name = it->first;
-            //<xs:element name="widget_name" type="widget_name">
-            LLXMLNodePtr widget_node = mElementNode->createChild("xs:element", false);
-            widget_node->createChild("name", true)->setStringValue(widget_name);
-            widget_node->createChild("type", true)->setStringValue(widget_name);
-        }
-    }
-
-    LLFILE* xsd_file = LLFile::fopen(file_name.c_str(), LLFILE_MODE("w"));
-    LLXMLNode::writeHeaderToFile(xsd_file);
-    root_nodep->writeToFile(xsd_file);
-    fclose(xsd_file);
-}
 
 static  LLInitParam::Parser::parser_read_func_map_t sXUIReadFuncs;
 static  LLInitParam::Parser::parser_write_func_map_t sXUIWriteFuncs;
-static  LLInitParam::Parser::parser_inspect_func_map_t sXUIInspectFuncs;
 
 //
 // LLXUIParser
 //
 LLXUIParser::LLXUIParser()
-:   Parser(sXUIReadFuncs, sXUIWriteFuncs, sXUIInspectFuncs),
+:   Parser(sXUIReadFuncs, sXUIWriteFuncs),
     mCurReadDepth(0)
 {
     if (sXUIReadFuncs.empty())
@@ -674,6 +87,8 @@ LLXUIParser::LLXUIParser()
         registerParserFuncs<LLSD>(readSDValue, writeSDValue);
     }
 }
+
+static S32 pushDottedName(LLInitParam::Parser::name_stack_t& stack, const char* name);
 
 const LLXMLNodePtr DUMMY_NODE = new LLXMLNode();
 
@@ -703,9 +118,15 @@ bool LLXUIParser::readXUIImpl(LLXMLNodePtr nodep, LLInitParam::BaseBlock& block)
     bool values_parsed = false;
     bool silent = mCurReadDepth > 0;
 
-    // getSanitizedValue() does real work; compute it once and reuse it for both
+    // getSanitizedValue() does real work, and for most element nodes there is
+    // no work to do: whatever sits between child elements is whitespace, which
+    // sanitizes to nothing. Ask first, then compute once and reuse it for both
     // the empty-node check and the "value" parameter below.
-    std::string text_contents = nodep->getSanitizedValue();
+    std::string text_contents;
+    if (nodep->hasTextContents())
+    {
+        nodep->getSanitizedValue(text_contents);
+    }
 
     if (nodep->getFirstChild().isNull()
         && nodep->mAttributes.empty()
@@ -749,56 +170,41 @@ bool LLXUIParser::readXUIImpl(LLXMLNodePtr nodep, LLInitParam::BaseBlock& block)
     mCurReadDepth++;
     for(LLXMLNodePtr childp = nodep->getFirstChild(); childp.notNull();)
     {
-        std::string child_name(childp->getName()->mString);
+        // The name belongs to the string table and outlives this parse, so the
+        // stack can hold runs of it rather than copies.
+        const std::string_view child_name(childp->getName()->mString);
         S32 num_tokens_pushed = 0;
 
         // for non "dotted" child nodes check to see if child node maps to another widget type
         // and if not, treat as a child element of the current node
         // e.g. <button><rect left="10"/></button> will interpret <rect> as "button.rect"
         // since there is no widget named "rect"
-        if (child_name.find('.') == std::string::npos)
+        const std::size_t first_dot = child_name.find('.');
+        if (first_dot == std::string_view::npos)
         {
             mNameStack.emplace_back(child_name, true);
             num_tokens_pushed++;
         }
         else
         {
-            // parse out "dotted" name into individual tokens
-            typedef boost::tokenizer<boost::char_separator<char> > tokenizer;
-            const boost::char_separator<char> sep(".");
-            tokenizer name_tokens(child_name, sep);
-
-            tokenizer::iterator name_token_it = name_tokens.begin();
-            if(name_token_it == name_tokens.end())
-            {
-                childp = childp->getNextSibling();
-                continue;
-            }
-
-            // check for proper nesting
+            // check for proper nesting against the leading token
+            const std::string_view head = child_name.substr(0, first_dot);
             if (mNameStack.empty())
             {
-                if (*name_token_it != mRootNodeName)
+                if (head != mRootNodeName)
                 {
                     childp = childp->getNextSibling();
                     continue;
                 }
             }
-            else if(mNameStack.back().first != *name_token_it)
+            else if (mNameStack.back().first != head)
             {
                 childp = childp->getNextSibling();
                 continue;
             }
 
-            // now ignore first token
-            ++name_token_it;
-
-            // copy remaining tokens on to our running token list
-            for(tokenizer::iterator token_to_push = name_token_it; token_to_push != name_tokens.end(); ++token_to_push)
-            {
-                mNameStack.emplace_back(*token_to_push, true);
-                num_tokens_pushed++;
-            }
+            // push everything after the leading token
+            num_tokens_pushed += pushDottedName(mNameStack, childp->getName()->mString + first_dot + 1);
         }
 
         // recurse and visit children XML nodes
@@ -828,32 +234,48 @@ bool LLXUIParser::readXUIImpl(LLXMLNodePtr nodep, LLInitParam::BaseBlock& block)
 
 // A parameter name is a dot separated path, but almost never has a dot in it:
 // across the shipped skin, 349 of 109204 attribute names do. Splitting one that
-// holds no separator returns the name it was given, so build the tokenizer only
-// when there is something for it to separate. Returns how many names were pushed.
-S32 LLXUIParser::pushNameTokens(const char* name)
+// holds no separator returns the name it was given, so do nothing but push it.
+//
+// The name belongs to the caller and outlives the parse, so the pieces of a
+// dotted one are runs inside it rather than copies. Note that a run is not NUL
+// terminated -- anything wanting a C string from the stack must make one.
+// Returns how many names were pushed.
+static S32 pushDottedName(LLInitParam::Parser::name_stack_t& stack, const char* name)
 {
-    if (name[0] == '\0')
+    const std::string_view whole(name);
+    if (whole.empty())
     {
         return 0;
     }
 
-    if (strchr(name, '.') == NULL)
+    if (whole.find('.') == std::string_view::npos)
     {
-        mNameStack.emplace_back(name, true);
+        stack.emplace_back(whole, true);
         return 1;
     }
 
-    typedef boost::tokenizer<boost::char_separator<char> > tokenizer;
-    const boost::char_separator<char> sep(".");
-    const std::string dotted(name);
-
     S32 pushed = 0;
-    for (const std::string& token : tokenizer(dotted, sep))
+    for (std::size_t begin = 0; begin <= whole.size(); )
     {
-        mNameStack.emplace_back(token, true);
-        ++pushed;
+        const std::size_t dot = whole.find('.', begin);
+        const std::size_t end = (dot == std::string_view::npos) ? whole.size() : dot;
+        if (end > begin)
+        {
+            stack.emplace_back(whole.substr(begin, end - begin), true);
+            ++pushed;
+        }
+        if (dot == std::string_view::npos)
+        {
+            break;
+        }
+        begin = dot + 1;
     }
     return pushed;
+}
+
+S32 LLXUIParser::pushNameTokens(const char* name)
+{
+    return pushDottedName(mNameStack, name);
 }
 
 bool LLXUIParser::readAttributes(LLXMLNodePtr nodep, LLInitParam::BaseBlock& block)
@@ -913,16 +335,20 @@ LLXMLNodePtr LLXUIParser::getNode(name_stack_t& stack)
         }
 
 
-        out_nodes_t::iterator found_it = mOutNodes.find(it->first);
+        // A run inside a dotted name has no terminator of its own, so the
+        // write path materializes one. It runs for toolbars, keybindings
+        // and colors, not for building widgets.
+        const std::string name(it->first);
+        out_nodes_t::iterator found_it = mOutNodes.find(name);
 
         // node with this name not yet written
         if (found_it == mOutNodes.end() || it->second || force_new_node)
         {
             // make an attribute if we are the last element on the name stack
             bool is_attribute = next_it == stack.end();
-            LLXMLNodePtr new_node = new LLXMLNode(it->first.c_str(), is_attribute);
+            LLXMLNodePtr new_node = new LLXMLNode(name.c_str(), is_attribute);
             out_node->addChild(new_node);
-            mOutNodes[it->first] = new_node;
+            mOutNodes[name] = new_node;
             out_node = new_node;
             it->second = false;
         }
@@ -973,7 +399,10 @@ bool LLXUIParser::writeBoolValue(Parser& parser, const void* val_ptr, name_stack
 bool LLXUIParser::readStringValue(Parser& parser, void* val_ptr)
 {
     LLXUIParser& self = static_cast<LLXUIParser&>(parser);
-    *((std::string*)val_ptr) = self.mCurReadNode->getSanitizedValue();
+    // Assign straight into the destination: the value being read is nearly
+    // always an attribute, where this is one copy rather than a copy into a
+    // temporary and a move out of it.
+    self.mCurReadNode->getSanitizedValue(*(std::string*)val_ptr);
     return true;
 }
 
@@ -1322,7 +751,8 @@ bool LLXUIParser::writeSDValue(Parser& parser, const void* val_ptr, name_stack_t
         it != mNameStack.end();
         ++it)
     {
-        full_name += it->first + "."; // build up dotted names: "button.param.nestedparam."
+        full_name.append(it->first); // build up dotted names: "button.param.nestedparam."
+        full_name += '.';
     }
 
     return full_name;
@@ -1346,7 +776,7 @@ void LLXUIParser::parserError(const std::string& message)
 //
 
 LLSimpleXUIParser::LLSimpleXUIParser(LLSimpleXUIParser::element_start_callback_t element_cb)
-:   Parser(sSimpleXUIReadFuncs, sSimpleXUIWriteFuncs, sSimpleXUIInspectFuncs),
+:   Parser(sSimpleXUIReadFuncs, sSimpleXUIWriteFuncs),
     mCurReadDepth(0),
     mElementCB(element_cb)
 {
@@ -1388,8 +818,17 @@ bool LLSimpleXUIParser::readXUI(const std::string& filename, LLInitParam::BaseBl
         return false;
     }
 
-    mOutputStack.emplace_back(&block, 0);
+    // A completed parse leaves all of these empty, but an abandoned one does
+    // not, and readXUI is a public entry point that says nothing about having
+    // to be the first. Clear them rather than build on whatever is there.
     mNameStack.clear();
+    mOutputStack.clear();
+    mScope.clear();
+    mTokenSizeStack.clear();
+    mEmptyLeafNode.clear();
+    mTextContents.clear();
+
+    mOutputStack.emplace_back(&block, 0);
     mCurFileName = filename;
     mCurReadDepth = 0;
     setParseSilently(silent);
@@ -1467,6 +906,7 @@ void LLSimpleXUIParser::startElement(const pugi::xml_node& element)
 
     mOutputStack.back().second++;
     S32 num_tokens_pushed = 0;
+    bool ignore_element = false;
     std::string_view child_name(name);
 
     if (mOutputStack.back().second == 1)
@@ -1475,41 +915,34 @@ void LLSimpleXUIParser::startElement(const pugi::xml_node& element)
     }
     else
     {   // compound attribute
-        if (child_name.find('.') == std::string::npos)
+        const std::size_t first_dot = child_name.find('.');
+        if (first_dot == std::string_view::npos)
         {
             mNameStack.emplace_back(child_name, true);
             num_tokens_pushed++;
             mScope.emplace_back(child_name);
         }
+        else if (!mScope.empty() && child_name.substr(0, first_dot) != mScope.back())
+        {
+            // Addressed to some other block, so take nothing from it. An
+            // empty scope keeps anything nested inside it from matching
+            // either.
+            ignore_element = true;
+            mScope.emplace_back();
+        }
         else
         {
-            // parse out "dotted" name into individual tokens
-            typedef boost::tokenizer<boost::char_separator<char> > tokenizer;
-            const boost::char_separator<char> sep(".");
-            tokenizer name_tokens(std::string(child_name), sep);
-
-            tokenizer::iterator name_token_it = name_tokens.begin();
-            if(name_token_it == name_tokens.end())
+            // push everything after the leading token
+            num_tokens_pushed += pushDottedName(mNameStack, name + first_dot + 1);
+            if (num_tokens_pushed == 0)
             {
-                return;
+                ignore_element = true;
+                mScope.emplace_back();
             }
-
-            // check for proper nesting
-            if(!mScope.empty() && *name_token_it != mScope.back())
+            else
             {
-                return;
+                mScope.emplace_back(mNameStack.back().first);
             }
-
-            // now ignore first token
-            ++name_token_it;
-
-            // copy remaining tokens on to our running token list
-            for(tokenizer::iterator token_to_push = name_token_it; token_to_push != name_tokens.end(); ++token_to_push)
-            {
-                mNameStack.emplace_back(*token_to_push, true);
-                num_tokens_pushed++;
-            }
-            mScope.push_back(mNameStack.back().first);
         }
     }
 
@@ -1518,9 +951,15 @@ void LLSimpleXUIParser::startElement(const pugi::xml_node& element)
     // we are empty if we have no attributes
     mEmptyLeafNode.push_back(!element.first_attribute());
 
+    // Every element reaches endElement, which pops one entry from each of
+    // these, so an element being ignored still has to leave one behind.
+    // Returning early here instead unbalanced all three, and popped whatever
+    // an enclosing element had put there -- or nothing at all, at the top.
     mTokenSizeStack.push_back(num_tokens_pushed);
-    readAttributes(element);
-
+    if (!ignore_element)
+    {
+        readAttributes(element);
+    }
 }
 
 void LLSimpleXUIParser::endElement()
@@ -1557,28 +996,7 @@ void LLSimpleXUIParser::endElement()
 // As LLXUIParser::pushNameTokens, over this parser's own name stack.
 S32 LLSimpleXUIParser::pushNameTokens(const char* name)
 {
-    if (name[0] == '\0')
-    {
-        return 0;
-    }
-
-    if (strchr(name, '.') == NULL)
-    {
-        mNameStack.emplace_back(name, true);
-        return 1;
-    }
-
-    typedef boost::tokenizer<boost::char_separator<char> > tokenizer;
-    const boost::char_separator<char> sep(".");
-    const std::string dotted(name);
-
-    S32 pushed = 0;
-    for (const std::string& token : tokenizer(dotted, sep))
-    {
-        mNameStack.emplace_back(token, true);
-        ++pushed;
-    }
-    return pushed;
+    return pushDottedName(mNameStack, name);
 }
 
 bool LLSimpleXUIParser::readAttributes(const pugi::xml_node& element)
@@ -1626,7 +1044,8 @@ bool LLSimpleXUIParser::processText()
         it != mNameStack.end();
         ++it)
     {
-        full_name += it->first + "."; // build up dotted names: "button.param.nestedparam."
+        full_name.append(it->first); // build up dotted names: "button.param.nestedparam."
+        full_name += '.';
     }
 
     return full_name;
@@ -1667,6 +1086,129 @@ bool LLSimpleXUIParser::readBoolValue(Parser& parser, void* val_ptr)
     return false;
 }
 
+// The readers below replace boost::spirit::classic's parse(...).full, which
+// succeeded only when the whole attribute was consumed. from_chars gives the
+// same answer by comparing its end pointer against the end of the text, and
+// range-checks the narrow types, which assign_a into a U8 did not.
+//
+// One spirit behaviour has to be kept by hand: int_p and real_p accepted a
+// leading '+', and from_chars does not.
+namespace
+{
+    const char* skipParseSpace(const char* p, const char* end)
+    {
+        while (p != end && std::isspace(static_cast<unsigned char>(*p)))
+        {
+            ++p;
+        }
+        return p;
+    }
+
+    // libc++ marks the floating-point from_chars overloads unavailable before
+    // macOS 26, so a lower deployment target falls back to strtof/strtod. The
+    // checks below reject what strtod takes and from_chars does not: leading
+    // whitespace, a leading '+', and the hex form.
+#if defined(_LIBCPP_AVAILABILITY_HAS_FROM_CHARS_FLOATING_POINT) && !_LIBCPP_AVAILABILITY_HAS_FROM_CHARS_FLOATING_POINT
+
+    template <typename T>
+    std::from_chars_result fromChars(const char* begin, const char* end, T& out)
+        requires std::is_floating_point_v<T>
+    {
+        if (begin == end || std::isspace(static_cast<unsigned char>(*begin)) || *begin == '+')
+        {
+            return {begin, std::errc::invalid_argument};
+        }
+
+        const char* digits = (*begin == '-') ? begin + 1 : begin;
+        if (end - digits > 1 && digits[0] == '0' && (digits[1] == 'x' || digits[1] == 'X'))
+        {
+            return {begin, std::errc::invalid_argument};
+        }
+
+        // Safe: the text comes from std::string::data(), NUL-terminated at
+        // `end`, and strtod stops at the first character it cannot use.
+        char* stop = nullptr;
+        errno = 0;
+
+        // _l forms: from_chars ignores LC_NUMERIC, plain strtod does not.
+        // strtof, not narrowing: float overflow sets ERANGE in neither call.
+        T value{};
+        if constexpr (std::is_same_v<T, float>)
+        {
+            value = strtof_l(begin, &stop, LC_C_LOCALE);
+        }
+        else
+        {
+            value = static_cast<T>(strtod_l(begin, &stop, LC_C_LOCALE));
+        }
+
+        if (stop == begin || stop > end)
+        {
+            return {begin, std::errc::invalid_argument};
+        }
+        if (errno == ERANGE)
+        {
+            return {stop, std::errc::result_out_of_range};
+        }
+
+        out = value;
+        return {stop, std::errc{}};
+    }
+
+    template <typename T>
+    std::from_chars_result fromChars(const char* begin, const char* end, T& out)
+        requires (!std::is_floating_point_v<T>)
+    {
+        return std::from_chars(begin, end, out);
+    }
+
+#else
+
+    template <typename T>
+    std::from_chars_result fromChars(const char* begin, const char* end, T& out)
+    {
+        return std::from_chars(begin, end, out);
+    }
+
+#endif
+
+    template <typename T>
+    bool parseWholeValue(const std::string& text, T& out)
+    {
+        const char* begin = text.data();
+        const char* const end = begin + text.size();
+        if (begin != end && *begin == '+')
+        {
+            ++begin;
+        }
+        const std::from_chars_result result = fromChars(begin, end, out);
+        return result.ec == std::errc{} && result.ptr == end;
+    }
+
+    // Four reals separated by whitespace, as real_p >> real_p >> real_p >>
+    // real_p parsed with space_p as the skipper.
+    bool parseColor4Value(const std::string& text, LLColor4& value)
+    {
+        const char* p = text.data();
+        const char* const end = p + text.size();
+        for (S32 i = 0; i < 4; ++i)
+        {
+            p = skipParseSpace(p, end);
+            if (p != end && *p == '+')
+            {
+                ++p;
+            }
+            const std::from_chars_result result = fromChars(p, end, value.mV[i]);
+            if (result.ec != std::errc{})
+            {
+                return false;
+            }
+            p = result.ptr;
+        }
+        return skipParseSpace(p, end) == end;
+    }
+}
+
 bool LLSimpleXUIParser::readStringValue(Parser& parser, void* val_ptr)
 {
     LLSimpleXUIParser& self = static_cast<LLSimpleXUIParser&>(parser);
@@ -1677,49 +1219,49 @@ bool LLSimpleXUIParser::readStringValue(Parser& parser, void* val_ptr)
 bool LLSimpleXUIParser::readU8Value(Parser& parser, void* val_ptr)
 {
     LLSimpleXUIParser& self = static_cast<LLSimpleXUIParser&>(parser);
-    return parse(self.mCurAttributeValueBegin.c_str(), uint_p[assign_a(*(U8*)val_ptr)]).full;
+    return parseWholeValue(self.mCurAttributeValueBegin, *(U8*)val_ptr);
 }
 
 bool LLSimpleXUIParser::readS8Value(Parser& parser, void* val_ptr)
 {
     LLSimpleXUIParser& self = static_cast<LLSimpleXUIParser&>(parser);
-    return parse(self.mCurAttributeValueBegin.c_str(), int_p[assign_a(*(S8*)val_ptr)]).full;
+    return parseWholeValue(self.mCurAttributeValueBegin, *(S8*)val_ptr);
 }
 
 bool LLSimpleXUIParser::readU16Value(Parser& parser, void* val_ptr)
 {
     LLSimpleXUIParser& self = static_cast<LLSimpleXUIParser&>(parser);
-    return parse(self.mCurAttributeValueBegin.c_str(), uint_p[assign_a(*(U16*)val_ptr)]).full;
+    return parseWholeValue(self.mCurAttributeValueBegin, *(U16*)val_ptr);
 }
 
 bool LLSimpleXUIParser::readS16Value(Parser& parser, void* val_ptr)
 {
     LLSimpleXUIParser& self = static_cast<LLSimpleXUIParser&>(parser);
-    return parse(self.mCurAttributeValueBegin.c_str(), int_p[assign_a(*(S16*)val_ptr)]).full;
+    return parseWholeValue(self.mCurAttributeValueBegin, *(S16*)val_ptr);
 }
 
 bool LLSimpleXUIParser::readU32Value(Parser& parser, void* val_ptr)
 {
     LLSimpleXUIParser& self = static_cast<LLSimpleXUIParser&>(parser);
-    return parse(self.mCurAttributeValueBegin.c_str(), uint_p[assign_a(*(U32*)val_ptr)]).full;
+    return parseWholeValue(self.mCurAttributeValueBegin, *(U32*)val_ptr);
 }
 
 bool LLSimpleXUIParser::readS32Value(Parser& parser, void* val_ptr)
 {
     LLSimpleXUIParser& self = static_cast<LLSimpleXUIParser&>(parser);
-    return parse(self.mCurAttributeValueBegin.c_str(), int_p[assign_a(*(S32*)val_ptr)]).full;
+    return parseWholeValue(self.mCurAttributeValueBegin, *(S32*)val_ptr);
 }
 
 bool LLSimpleXUIParser::readF32Value(Parser& parser, void* val_ptr)
 {
     LLSimpleXUIParser& self = static_cast<LLSimpleXUIParser&>(parser);
-    return parse(self.mCurAttributeValueBegin.c_str(), real_p[assign_a(*(F32*)val_ptr)]).full;
+    return parseWholeValue(self.mCurAttributeValueBegin, *(F32*)val_ptr);
 }
 
 bool LLSimpleXUIParser::readF64Value(Parser& parser, void* val_ptr)
 {
     LLSimpleXUIParser& self = static_cast<LLSimpleXUIParser&>(parser);
-    return parse(self.mCurAttributeValueBegin.c_str(), real_p[assign_a(*(F64*)val_ptr)]).full;
+    return parseWholeValue(self.mCurAttributeValueBegin, *(F64*)val_ptr);
 }
 
 bool LLSimpleXUIParser::readColor4Value(Parser& parser, void* val_ptr)
@@ -1727,7 +1269,7 @@ bool LLSimpleXUIParser::readColor4Value(Parser& parser, void* val_ptr)
     LLSimpleXUIParser& self = static_cast<LLSimpleXUIParser&>(parser);
     LLColor4 value;
 
-    if (parse(self.mCurAttributeValueBegin.c_str(), real_p[assign_a(value.mV[0])] >> real_p[assign_a(value.mV[1])] >> real_p[assign_a(value.mV[2])] >> real_p[assign_a(value.mV[3])], space_p).full)
+    if (parseColor4Value(self.mCurAttributeValueBegin, value))
     {
         *(LLColor4*)(val_ptr) = value;
         return true;
@@ -1741,7 +1283,7 @@ bool LLSimpleXUIParser::readUIColorValue(Parser& parser, void* val_ptr)
     LLColor4 value;
     LLUIColor* colorp = (LLUIColor*)val_ptr;
 
-    if (parse(self.mCurAttributeValueBegin.c_str(), real_p[assign_a(value.mV[0])] >> real_p[assign_a(value.mV[1])] >> real_p[assign_a(value.mV[2])] >> real_p[assign_a(value.mV[3])], space_p).full)
+    if (parseColor4Value(self.mCurAttributeValueBegin, value))
     {
         colorp->set(value);
         return true;

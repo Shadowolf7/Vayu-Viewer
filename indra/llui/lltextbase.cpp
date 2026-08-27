@@ -367,8 +367,6 @@ bool LLTextBase::truncate()
 
 const LLStyle::Params& LLTextBase::getStyleParams()
 {
-    //FIXME: convert mDefaultStyle to a flyweight http://www.boost.org/doc/libs/1_40_0/libs/flyweight/doc/index.html
-    //and eliminate color member values
     if (mStyleDirty)
     {
           mStyle
@@ -378,8 +376,19 @@ const LLStyle::Params& LLTextBase::getStyleParams()
                   .font(mFont)
                   .drop_shadow(mFontShadow);
           mStyleDirty = false;
+          mDefaultStyle = nullptr;
     }
     return mStyle;
+}
+
+const LLStyleConstSP& LLTextBase::getDefaultStyle()
+{
+    const LLStyle::Params& params = getStyleParams();
+    if (mDefaultStyle.isNull())
+    {
+        mDefaultStyle = new LLStyle(params);
+    }
+    return mDefaultStyle;
 }
 
 void LLTextBase::beforeValueChange()
@@ -1098,8 +1107,7 @@ S32 LLTextBase::insertStringNoUndo(S32 pos, const LLWString &wstr, LLTextBase::s
     else
     {
         // create default editable segment to hold new text
-        LLStyleConstSP sp(new LLStyle(getStyleParams()));
-        default_segment = new LLNormalTextSegment( sp, pos, pos + insert_len, *this);
+        default_segment = new LLNormalTextSegment( getDefaultStyle(), pos, pos + insert_len, *this);
     }
 
     // shift remaining segments to right
@@ -1243,8 +1251,7 @@ void LLTextBase::createDefaultSegment()
     // ensures that there is always at least one segment
     if (mSegments.empty())
     {
-        LLStyleConstSP sp(new LLStyle(getStyleParams()));
-        LLTextSegmentPtr default_segment = new LLNormalTextSegment( sp, 0, getLength() + 1, *this);
+        LLTextSegmentPtr default_segment = new LLNormalTextSegment( getDefaultStyle(), 0, getLength() + 1, *this);
         mSegments.insert(default_segment);
         default_segment->linkToDocument(this);
     }
@@ -2767,6 +2774,19 @@ void LLTextBase::appendAndHighlightTextImpl(const std::string &new_text, S32 hig
     {
         LLStyle::Params highlight_params(style_params);
 
+        // An on-hover segment carries the style twice, the second copy with
+        // the font style forced to NORMAL. Only the colours vary per piece,
+        // so that copy is made once here: forcing NORMAL on highlight_params
+        // inside the loop left it there, and every piece after the first got
+        // a hovered style that was already NORMAL.
+        const bool needs_normal_style =
+            (underline_link == e_underline::UNDERLINE_ON_HOVER) || mSkipLinkUnderline;
+        LLStyle::Params normal_params(style_params);
+        if (needs_normal_style)
+        {
+            normal_params.font.style("NORMAL");
+        }
+
 // [SL:KB] - Patch: Control-TextParser | Checked: 2012-07-10 (Catznip-3.3)
         auto pieces = LLTextParser::instance().parsePartialLineHighlights(new_text, mHighlightsMask, (LLTextParser::EHighlightPosition)highlight_part);
         // Dedup uses mAppendTextFiredEntries (a LLTextBase member) so it spans every
@@ -2796,10 +2816,11 @@ void LLTextBase::appendAndHighlightTextImpl(const std::string &new_text, S32 hig
             S32 cur_length = getLength();
             LLStyleConstSP sp(new LLStyle(highlight_params));
             LLTextSegmentPtr segmentp;
-            if ((underline_link == e_underline::UNDERLINE_ON_HOVER) || mSkipLinkUnderline)
+            if (needs_normal_style)
             {
-                highlight_params.font.style("NORMAL");
-                LLStyleConstSP normal_sp(new LLStyle(highlight_params));
+                normal_params.color = highlight_params.color();
+                normal_params.readonly_color = highlight_params.readonly_color();
+                LLStyleConstSP normal_sp(new LLStyle(normal_params));
                 segmentp = new LLOnHoverChangeableTextSegment(sp, normal_sp, cur_length, cur_length + static_cast<S32>(wide_text.size()), *this);
             }
             else
@@ -4247,7 +4268,7 @@ bool LLNormalTextSegment::getDimensionsF32(S32 first_char, S32 num_chars, F32& w
         height = font->getLineSpacing();
 
         const LLWString& text = getWText();
-        width += mFontWidthBuffer.getWidth(font, text.c_str(), mStart + first_char, num_chars, true);
+        width += mFontWidthBuffer.getWidth(font, text, mStart + first_char, num_chars, true);
     }
     // if last character is a newline, then return true, forcing line break
     return false;
@@ -4256,7 +4277,7 @@ bool LLNormalTextSegment::getDimensionsF32(S32 first_char, S32 num_chars, F32& w
 S32 LLNormalTextSegment::getOffset(S32 segment_local_x_coord, S32 start_offset, S32 num_chars, bool round) const
 {
     const LLWString &text = getWText();
-    return mStyle->getFont()->charFromPixelOffset(text.c_str(), mStart + start_offset,
+    return mStyle->getFont()->charFromPixelOffset(text, mStart + start_offset,
                                                (F32)segment_local_x_coord,
                                                F32_MAX,
                                                num_chars,
@@ -4299,7 +4320,11 @@ S32 LLNormalTextSegment::getNumChars(S32 num_pixels, S32 segment_offset, S32 lin
             << getLength() << "\tsegment_offset:\t" << segment_offset << "\tmStart:\t" << mStart << "\tsegments\t" << mEditor.mSegments.size() << LL_ENDL;
     }
 
-    S32 num_chars = mStyle->getFont()->maxDrawableChars( text.c_str() + (segment_offset + mStart),
+    // Clamp rather than substr() straight from (segment_offset + mStart): the
+    // diagnostic above fires precisely when that runs past the text, and a view
+    // would throw there where the old pointer arithmetic quietly walked off.
+    const size_t seg_begin = llmin((size_t)llmax(segment_offset + mStart, 0), text.length());
+    S32 num_chars = mStyle->getFont()->maxDrawableChars( LLWStringView(text).substr(seg_begin),
                                                 (F32)num_pixels,
                                                 max_chars,
                                                 word_wrap_style);

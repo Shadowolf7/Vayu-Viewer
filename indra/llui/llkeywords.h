@@ -101,6 +101,15 @@ public:
     const LLWString&    getToolTip() const      { return mToolTip; }
     const LLWString&    getDelimiter() const    { return mDelimiter; }
 
+    // The style every segment of this token shares. A script has one segment
+    // per occurrence and only a few dozen tokens, so building one style per
+    // occurrence meant thousands of copies of a handful of values.
+    //
+    // The editor's font is the only input that varies. The colour is this
+    // token's own, which is what a freshly built style copied anyway, so the
+    // shared one follows a colour-table edit exactly as those did.
+    const LLStyleConstSP&   getStyle(const LLFontGL* font) const;
+
 #ifdef _DEBUG
     void        dump();
 #endif
@@ -111,6 +120,9 @@ private:
     LLUIColor    mColor;
     LLWString   mToolTip;
     LLWString   mDelimiter;
+
+    mutable LLStyleConstSP  mStyle;
+    mutable const LLFontGL* mStyleFont = nullptr;
 };
 
 class LLKeywords
@@ -186,19 +198,12 @@ public:
         const llwchar *mData;
         size_t mLength;
         bool mOwner;
-
-
-        LLUIColor            mColor;
     };
 
     typedef std::map<WStringMapIndex, LLKeywordToken*> word_token_map_t;
     typedef word_token_map_t::const_iterator keyword_iterator_t;
     keyword_iterator_t begin() const { return mWordTokenMap.begin(); }
     keyword_iterator_t end() const { return mWordTokenMap.end(); }
-
-    typedef std::map<WStringMapIndex, LLUIColor> group_color_map_t;
-    typedef group_color_map_t::const_iterator color_iterator_t;
-    group_color_map_t   mColorGroupMap;
 
 #ifdef _DEBUG
     void        dump();

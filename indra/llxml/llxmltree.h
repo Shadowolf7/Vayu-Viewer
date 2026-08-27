@@ -70,9 +70,11 @@ public:
     void            dump();
     void            dumpNode( LLXmlTreeNode* node, const std::string& prefix );
 
-    static LLStdStringHandle addAttributeString( const std::string& name)
+    // A view, so the fifty-odd call sites handing this a literal stop
+    // building a std::string to be thrown away.
+    static LLStdStringHandle addAttributeString(std::string_view name)
     {
-        return sAttributeKeys.addString( name );
+        return sAttributeKeys.addString(name);
     }
 
 public:
@@ -99,7 +101,12 @@ protected:
     LLXmlTreeNode( std::string name, LLXmlTreeNode* parent, LLXmlTree* tree );
 
 public:
-    virtual ~LLXmlTreeNode();
+    // Not virtual, and so this class has no vtable: nothing derives from it.
+    // The one thing that could hand back something that did is
+    // LLXmlTreeParser::CreateXmlTreeNode, which nothing overrides. Giving
+    // that hook a real subclass means making this virtual again -- a node is
+    // deleted through an LLXmlTreeNode* by its parent and by LLXmlTree.
+    ~LLXmlTreeNode();
 
     // Owns its children and its attribute values as raw pointers and deletes
     // every one of them, so a copy would free them twice.
@@ -110,12 +117,12 @@ public:
     {
         return mName;
     }
-    bool hasName( const std::string& name )
+    bool hasName( std::string_view name )
     {
         return mName == name;
     }
 
-    bool hasAttribute( const std::string& name );
+    bool hasAttribute( std::string_view name );
 
     // Fast versions use cannonical_name handlee to entru in LLXmlTree::sAttributeKeys string table
     bool            getFastAttributeBOOL(       LLStdStringHandle cannonical_name, bool& value );
@@ -136,24 +143,26 @@ public:
     bool            getFastAttributeUUID(       LLStdStringHandle cannonical_name, LLUUID& value );
     bool            getFastAttributeString(     LLStdStringHandle cannonical_name, std::string& value );
 
-    // Normal versions find 'name' in LLXmlTree::sAttributeKeys then call fast versions
-    virtual bool        getAttributeBOOL(       const std::string& name, bool& value );
-    virtual bool        getAttributeU8(         const std::string& name, U8& value );
-    virtual bool        getAttributeS8(         const std::string& name, S8& value );
-    virtual bool        getAttributeU16(        const std::string& name, U16& value );
-    virtual bool        getAttributeS16(        const std::string& name, S16& value );
-    virtual bool        getAttributeU32(        const std::string& name, U32& value );
-    virtual bool        getAttributeS32(        const std::string& name, S32& value );
-    virtual bool        getAttributeF32(        const std::string& name, F32& value );
-    virtual bool        getAttributeF64(        const std::string& name, F64& value );
-    virtual bool        getAttributeColor(      const std::string& name, LLColor4& value );
-    virtual bool        getAttributeColor4(     const std::string& name, LLColor4& value );
-    virtual bool        getAttributeColor4U(    const std::string& name, LLColor4U& value );
-    virtual bool        getAttributeVector3(    const std::string& name, LLVector3& value );
-    virtual bool        getAttributeVector3d(   const std::string& name, LLVector3d& value );
-    virtual bool        getAttributeQuat(       const std::string& name, LLQuaternion& value );
-    virtual bool        getAttributeUUID(       const std::string& name, LLUUID& value );
-    virtual bool        getAttributeString(     const std::string& name, std::string& value );
+    // Normal versions find 'name' in LLXmlTree::sAttributeKeys then call
+    // the fast versions. Not virtual: nothing derives from this class, and
+    // the tree hands out LLXmlTreeNode* rather than anything to dispatch on.
+    bool                getAttributeBOOL(       std::string_view name, bool& value );
+    bool                getAttributeU8(         std::string_view name, U8& value );
+    bool                getAttributeS8(         std::string_view name, S8& value );
+    bool                getAttributeU16(        std::string_view name, U16& value );
+    bool                getAttributeS16(        std::string_view name, S16& value );
+    bool                getAttributeU32(        std::string_view name, U32& value );
+    bool                getAttributeS32(        std::string_view name, S32& value );
+    bool                getAttributeF32(        std::string_view name, F32& value );
+    bool                getAttributeF64(        std::string_view name, F64& value );
+    bool                getAttributeColor(      std::string_view name, LLColor4& value );
+    bool                getAttributeColor4(     std::string_view name, LLColor4& value );
+    bool                getAttributeColor4U(    std::string_view name, LLColor4U& value );
+    bool                getAttributeVector3(    std::string_view name, LLVector3& value );
+    bool                getAttributeVector3d(   std::string_view name, LLVector3d& value );
+    bool                getAttributeQuat(       std::string_view name, LLQuaternion& value );
+    bool                getAttributeUUID(       std::string_view name, LLUUID& value );
+    bool                getAttributeString(     std::string_view name, std::string& value );
 
     const std::string& getContents()
     {
@@ -165,7 +174,7 @@ public:
     LLXmlTreeNode*  getFirstChild();
     LLXmlTreeNode*  getNextChild();
     S32             getChildCount()                     { return (S32)mChildren.size(); }
-    LLXmlTreeNode*  getChildByName( const std::string& name );  // returns first child with name, nullptr if none
+    LLXmlTreeNode*  getChildByName( std::string_view name );  // returns first child with name, nullptr if none
     LLXmlTreeNode*  getNextNamedChild();                // returns next child with name, nullptr if none
 
 protected:
@@ -176,7 +185,7 @@ protected:
     }
 
 private:
-    void            addAttribute( const std::string& name, std::string value );
+    void            addAttribute( std::string_view name, std::string value );
     void            appendContents( const char* str, std::string::size_type len );
     void            addChild( LLXmlTreeNode* child );
 
@@ -220,7 +229,9 @@ public:
 protected:
     void buildTree(const pugi::xml_node& root_element);
 
-    //template method pattern
+    // Template method pattern, unused: no subclass of this parser exists, so
+    // every node the tree holds is an LLXmlTreeNode. See its destructor
+    // before returning anything else from here.
     virtual LLXmlTreeNode* CreateXmlTreeNode(std::string name, LLXmlTreeNode* parent);
 
 protected:

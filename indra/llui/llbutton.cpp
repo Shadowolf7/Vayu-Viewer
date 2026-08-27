@@ -199,11 +199,6 @@ LLButton::LLButton(const LLButton::Params& p)
         F32 flash_rate = p.button_flash_rate.isProvided()? p.button_flash_rate : 0.0f;
         mFlashingTimer  = new LLFlashTimer((LLFlashTimer::callback_t) nullptr, flash_count, flash_rate);
     }
-    else
-    {
-        mButtonFlashCount = p.button_flash_count;
-        mButtonFlashRate = p.button_flash_rate;
-    }
 
     static LLUICachedControl<S32> llbutton_orig_h_pad ("UIButtonOrigHPad", 0);
     static Params default_params(LLUICtrlFactory::getDefaultParams<LLButton>());
@@ -1068,7 +1063,6 @@ void LLButton::setFlashing(bool b, bool force_flashing/* = false */)
     else if (b != mFlashing)
     {
         mFlashing = b;
-        mFrameTimer.reset();
     }
 }
 
@@ -1164,7 +1158,7 @@ void LLButton::autoResize()
 void LLButton::resize(const LLUIString& label)
 {
     // get label length
-    S32 label_width = mGLFont->getWidth(label.getWString().c_str());
+    S32 label_width = mGLFont->getWidth(label.getWString());
     // get current btn length
     S32 btn_width =getRect().getWidth();
     // check if it need resize

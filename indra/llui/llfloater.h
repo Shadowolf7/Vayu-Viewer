@@ -227,7 +227,6 @@ public:
     virtual ~LLFloater();
 
     // Don't export top/left for rect, only height/width
-    static void setupParamsForExport(Params& p, LLView* parent);
     bool buildFromFile(const std::string &filename);
 
     boost::signals2::connection setMinimizeCallback( const commit_signal_t::slot_type& cb );
@@ -235,7 +234,7 @@ public:
     boost::signals2::connection setCloseCallback( const commit_signal_t::slot_type& cb );
 
     void initFromParams(const LLFloater::Params& p);
-    bool initFloaterXML(LLXMLNodePtr node, LLView *parent, const std::string& filename, LLXMLNodePtr output_node = NULL);
+    bool initFloaterXML(LLXMLNodePtr node, LLView *parent, const std::string& filename);
 
     /*virtual*/ void handleReshape(const LLRect& new_rect, bool by_user = false);
     /*virtual*/ bool canSnapTo(const LLView* other_view);
@@ -664,11 +663,8 @@ private:
     LLRect              mToolbarLeftRect;
     LLRect              mToolbarBottomRect;
     LLRect              mToolbarRightRect;
-    LLRect              mToolbarTopRect;
     LLHandle<LLView>    mSnapView;
     bool            mFocusCycleMode;
-    S32             mSnapOffsetBottom;
-    S32             mSnapOffsetRight;
     S32             mMinimizePositionVOffset;
     typedef std::vector<std::pair<LLHandle<LLFloater>, boost::signals2::connection> > hidden_floaters_t;
     hidden_floaters_t mHiddenFloaters;
