@@ -28,12 +28,15 @@
 
 #include "llxuiparser.h"
 
+#include "alxmldocument.h"
+
 #include "llxmlnode.h"
 #include "llfasttimer.h"
 
-#include <expat.h>
 
+#include <algorithm>
 #include <fstream>
+#include <vector>
 #include <boost/tokenizer.hpp>
 #include <boost/bind.hpp>
 //#include <boost/spirit/include/qi.hpp>
@@ -697,9 +700,6 @@ void LLXUIParser::readXUI(LLXMLNodePtr node, LLInitParam::BaseBlock& block, cons
 
 bool LLXUIParser::readXUIImpl(LLXMLNodePtr nodep, LLInitParam::BaseBlock& block)
 {
-    typedef boost::tokenizer<boost::char_separator<char> > tokenizer;
-    boost::char_separator<char> sep(".");
-
     bool values_parsed = false;
     bool silent = mCurReadDepth > 0;
 
@@ -764,6 +764,8 @@ bool LLXUIParser::readXUIImpl(LLXMLNodePtr nodep, LLInitParam::BaseBlock& block)
         else
         {
             // parse out "dotted" name into individual tokens
+            typedef boost::tokenizer<boost::char_separator<char> > tokenizer;
+            const boost::char_separator<char> sep(".");
             tokenizer name_tokens(child_name, sep);
 
             tokenizer::iterator name_token_it = name_tokens.begin();
@@ -824,29 +826,47 @@ bool LLXUIParser::readXUIImpl(LLXMLNodePtr nodep, LLInitParam::BaseBlock& block)
     return values_parsed;
 }
 
+// A parameter name is a dot separated path, but almost never has a dot in it:
+// across the shipped skin, 349 of 109204 attribute names do. Splitting one that
+// holds no separator returns the name it was given, so build the tokenizer only
+// when there is something for it to separate. Returns how many names were pushed.
+S32 LLXUIParser::pushNameTokens(const char* name)
+{
+    if (name[0] == '\0')
+    {
+        return 0;
+    }
+
+    if (strchr(name, '.') == NULL)
+    {
+        mNameStack.emplace_back(name, true);
+        return 1;
+    }
+
+    typedef boost::tokenizer<boost::char_separator<char> > tokenizer;
+    const boost::char_separator<char> sep(".");
+    const std::string dotted(name);
+
+    S32 pushed = 0;
+    for (const std::string& token : tokenizer(dotted, sep))
+    {
+        mNameStack.emplace_back(token, true);
+        ++pushed;
+    }
+    return pushed;
+}
+
 bool LLXUIParser::readAttributes(LLXMLNodePtr nodep, LLInitParam::BaseBlock& block)
 {
-    typedef boost::tokenizer<boost::char_separator<char> > tokenizer;
-    boost::char_separator<char> sep(".");
-
     bool any_parsed = false;
     bool silent = mCurReadDepth > 0;
 
-    for(LLXMLAttribList::const_iterator attribute_it = nodep->mAttributes.begin();
-        attribute_it != nodep->mAttributes.end();
-        ++attribute_it)
+    for (const auto& [name_entry, attribute_node] : nodep->mAttributes)
     {
-        S32 num_tokens_pushed = 0;
-        std::string attribute_name(attribute_it->first->mString);
-        mCurReadNode = attribute_it->second;
+        const char* const attribute_name = name_entry->mString;
+        mCurReadNode = attribute_node;
 
-        tokenizer name_tokens(attribute_name, sep);
-        // copy remaining tokens on to our running token list
-        for(tokenizer::iterator token_to_push = name_tokens.begin(); token_to_push != name_tokens.end(); ++token_to_push)
-        {
-            mNameStack.emplace_back(*token_to_push, true);
-            num_tokens_pushed++;
-        }
+        S32 num_tokens_pushed = pushNameTokens(attribute_name);
 
         // child nodes are not necessarily valid attributes, so don't complain once we've recursed
         any_parsed |= block.submitValue(mNameStack, *this, silent);
@@ -1325,37 +1345,6 @@ void LLXUIParser::parserError(const std::string& message)
 // LLSimpleXUIParser
 //
 
-struct ScopedFile
-{
-    ScopedFile( const std::string& filename, const LLFile::fopen_flags_t* accessmode )
-    {
-        mFile = LLFile::fopen(filename, accessmode);
-    }
-
-    ~ScopedFile()
-    {
-        if (mFile)
-        {
-            fclose(mFile);
-            mFile = NULL;
-        }
-    }
-
-    S32 getRemainingBytes()
-    {
-        if (!isOpen()) return 0;
-
-        S32 cur_pos = ftell(mFile);
-        fseek(mFile, 0L, SEEK_END);
-        S32 file_size = ftell(mFile);
-        fseek(mFile, cur_pos, SEEK_SET);
-        return file_size - cur_pos;
-    }
-
-    bool isOpen() { return mFile != NULL; }
-
-    LLFILE* mFile;
-};
 LLSimpleXUIParser::LLSimpleXUIParser(LLSimpleXUIParser::element_start_callback_t element_cb)
 :   Parser(sSimpleXUIReadFuncs, sSimpleXUIWriteFuncs, sSimpleXUIInspectFuncs),
     mCurReadDepth(0),
@@ -1390,10 +1379,14 @@ bool LLSimpleXUIParser::readXUI(const std::string& filename, LLInitParam::BaseBl
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_UI;
 
-    mParser = XML_ParserCreate(NULL);
-    XML_SetUserData(mParser, this);
-    XML_SetElementHandler(          mParser,    startElementHandler, endElementHandler);
-    XML_SetCharacterDataHandler(    mParser,    characterDataHandler);
+    ALXmlDocument document;
+    if (!document.loadFile(filename))
+    {
+        LL_WARNS("ReadXUI") << "Error while reading file " << filename
+                << ": " << document.errorDescription()
+                << " on line " << document.errorLine() << LL_ENDL;
+        return false;
+    }
 
     mOutputStack.emplace_back(&block, 0);
     mNameStack.clear();
@@ -1401,77 +1394,67 @@ bool LLSimpleXUIParser::readXUI(const std::string& filename, LLInitParam::BaseBl
     mCurReadDepth = 0;
     setParseSilently(silent);
 
-    ScopedFile file(filename, LLFILE_MODE("rb"));
-    if( !file.isOpen() )
-    {
-        LL_WARNS("ReadXUI") << "Unable to open file " << filename << LL_ENDL;
-        XML_ParserFree( mParser );
-        return false;
-    }
-
-    S32 bytes_read = 0;
-
-    S32 buffer_size = file.getRemainingBytes();
-    void* buffer = XML_GetBuffer(mParser, buffer_size);
-    if( !buffer )
-    {
-        LL_WARNS("ReadXUI") << "Unable to allocate XML buffer while reading file " << filename << LL_ENDL;
-        XML_ParserFree( mParser );
-        return false;
-    }
-
-    bytes_read = (S32)fread(buffer, 1, buffer_size, file.mFile);
-    if( bytes_read <= 0 )
-    {
-        LL_WARNS("ReadXUI") << "Error while reading file  " << filename << LL_ENDL;
-        XML_ParserFree( mParser );
-        return false;
-    }
-
     mEmptyLeafNode.push_back(false);
 
-    if( !XML_ParseBuffer(mParser, bytes_read, true ) )
+    // An explicit stack rather than recursion, since nothing bounds how deeply
+    // a document nests. The second member says the element is being left, so
+    // that its close is reached after everything inside it, and text is visited
+    // in document order alongside the elements it sits between.
+    std::vector<std::pair<pugi::xml_node, bool> > pending;
+    if (pugi::xml_node root_element = document.document().document_element())
     {
-        LL_WARNS("ReadXUI") << "Error while parsing file  " << filename << LL_ENDL;
-        XML_ParserFree( mParser );
-        return false;
+        pending.emplace_back(root_element, false);
+    }
+
+    while (!pending.empty())
+    {
+        const pugi::xml_node node = pending.back().first;
+        const bool leaving = pending.back().second;
+        pending.pop_back();
+
+        if (leaving)
+        {
+            endElement();
+            continue;
+        }
+
+        if (node.type() == pugi::node_pcdata || node.type() == pugi::node_cdata)
+        {
+            mTextContents.append(node.value());
+            continue;
+        }
+
+        startElement(node);
+
+        pending.emplace_back(node, true);
+
+        const size_t first_child = pending.size();
+        for (pugi::xml_node child : node.children())
+        {
+            switch (child.type())
+            {
+            case pugi::node_element:
+            case pugi::node_pcdata:
+            case pugi::node_cdata:
+                pending.emplace_back(child, false);
+                break;
+
+            default:
+                break;
+            }
+        }
+        std::reverse(pending.begin() + first_child, pending.end());
     }
 
     mEmptyLeafNode.pop_back();
-
-    XML_ParserFree( mParser );
     return true;
 }
 
-void LLSimpleXUIParser::startElementHandler(void *userData, const char *name, const char **atts)
-{
-    LLSimpleXUIParser* self = reinterpret_cast<LLSimpleXUIParser*>(userData);
-    self->startElement(name, atts);
-}
-
-void LLSimpleXUIParser::endElementHandler(void *userData, const char *name)
-{
-    LLSimpleXUIParser* self = reinterpret_cast<LLSimpleXUIParser*>(userData);
-    self->endElement(name);
-}
-
-void LLSimpleXUIParser::characterDataHandler(void *userData, const char *s, int len)
-{
-    LLSimpleXUIParser* self = reinterpret_cast<LLSimpleXUIParser*>(userData);
-    self->characterData(s, len);
-}
-
-void LLSimpleXUIParser::characterData(const char *s, int len)
-{
-    mTextContents.append(s, len);
-}
-
-void LLSimpleXUIParser::startElement(const char *name, const char **atts)
+void LLSimpleXUIParser::startElement(const pugi::xml_node& element)
 {
     processText();
 
-    typedef boost::tokenizer<boost::char_separator<char> > tokenizer;
-    boost::char_separator<char> sep(".");
+    const char* const name = element.name();
 
     if (mElementCB)
     {
@@ -1501,6 +1484,8 @@ void LLSimpleXUIParser::startElement(const char *name, const char **atts)
         else
         {
             // parse out "dotted" name into individual tokens
+            typedef boost::tokenizer<boost::char_separator<char> > tokenizer;
+            const boost::char_separator<char> sep(".");
             tokenizer name_tokens(std::string(child_name), sep);
 
             tokenizer::iterator name_token_it = name_tokens.begin();
@@ -1531,14 +1516,14 @@ void LLSimpleXUIParser::startElement(const char *name, const char **atts)
     // parent node is not empty
     mEmptyLeafNode.back() = false;
     // we are empty if we have no attributes
-    mEmptyLeafNode.push_back(atts[0] == NULL);
+    mEmptyLeafNode.push_back(!element.first_attribute());
 
     mTokenSizeStack.push_back(num_tokens_pushed);
-    readAttributes(atts);
+    readAttributes(element);
 
 }
 
-void LLSimpleXUIParser::endElement(const char *name)
+void LLSimpleXUIParser::endElement()
 {
     bool has_text = processText();
 
@@ -1569,25 +1554,41 @@ void LLSimpleXUIParser::endElement(const char *name)
     mEmptyLeafNode.pop_back();
 }
 
-bool LLSimpleXUIParser::readAttributes(const char **atts)
+// As LLXUIParser::pushNameTokens, over this parser's own name stack.
+S32 LLSimpleXUIParser::pushNameTokens(const char* name)
 {
-    typedef boost::tokenizer<boost::char_separator<char> > tokenizer;
-    boost::char_separator<char> sep(".");
-
-    bool any_parsed = false;
-    for(S32 i = 0; atts[i] && atts[i+1]; i += 2 )
+    if (name[0] == '\0')
     {
-        std::string attribute_name(atts[i]);
-        mCurAttributeValueBegin = atts[i+1];
+        return 0;
+    }
 
-        S32 num_tokens_pushed = 0;
-        tokenizer name_tokens(attribute_name, sep);
-        // copy remaining tokens on to our running token list
-        for(tokenizer::iterator token_to_push = name_tokens.begin(); token_to_push != name_tokens.end(); ++token_to_push)
-        {
-            mNameStack.emplace_back(*token_to_push, true);
-            num_tokens_pushed++;
-        }
+    if (strchr(name, '.') == NULL)
+    {
+        mNameStack.emplace_back(name, true);
+        return 1;
+    }
+
+    typedef boost::tokenizer<boost::char_separator<char> > tokenizer;
+    const boost::char_separator<char> sep(".");
+    const std::string dotted(name);
+
+    S32 pushed = 0;
+    for (const std::string& token : tokenizer(dotted, sep))
+    {
+        mNameStack.emplace_back(token, true);
+        ++pushed;
+    }
+    return pushed;
+}
+
+bool LLSimpleXUIParser::readAttributes(const pugi::xml_node& element)
+{
+    bool any_parsed = false;
+    for (pugi::xml_attribute attribute : element.attributes())
+    {
+        mCurAttributeValueBegin = attribute.value();
+
+        S32 num_tokens_pushed = pushNameTokens(attribute.name());
 
         // child nodes are not necessarily valid attributes, so don't complain once we've recursed
         any_parsed |= mOutputStack.back().first->submitValue(mNameStack, *this, mParseSilently);

@@ -2022,6 +2022,7 @@ target_link_libraries(${VIEWER_BINARY_NAME}
         ll::tinygltf
         ll::tinyexr
         ll::minizip
+        ll::pugixml
         )
 
 if (TARGET ll::velopack)
@@ -2565,7 +2566,7 @@ if (BUILD_TESTING)
     llviewercontrollistener.cpp
     ../llxml/llcontrol.cpp
     ../llxml/llxmltree.cpp
-    ../llxml/llxmlparser.cpp
+    ../llxml/alxmldocument.cpp
     ../llcommon/commoncontrol.cpp
   )
 
@@ -2593,7 +2594,7 @@ if (BUILD_TESTING)
     lltextureinfo.cpp
     ../llxml/llcontrol.cpp
     ../llxml/llxmltree.cpp
-    ../llxml/llxmlparser.cpp
+    ../llxml/alxmldocument.cpp
     ../llcommon/commoncontrol.cpp
   )
   LL_ADD_INTEGRATION_TEST(lltextureinfo "${lltextureinfo_test_sources}" "${test_libs}" "${test_project}")

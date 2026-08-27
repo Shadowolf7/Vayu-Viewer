@@ -31,8 +31,9 @@
 #include <map>
 #include <list>
 #include "llstring.h"
-#include "llxmlparser.h"
 #include "llstringtable.h"
+
+namespace pugi { class xml_node; }
 
 class LLColor4;
 class LLColor4U;
@@ -53,6 +54,13 @@ class LLXmlTree
 public:
     LLXmlTree();
     virtual ~LLXmlTree();
+
+    // Owns mRoot and deletes it, so a copy would free the tree twice. Moving
+    // hands the root over and leaves the source empty.
+    LLXmlTree(const LLXmlTree&) = delete;
+    LLXmlTree& operator=(const LLXmlTree&) = delete;
+    LLXmlTree(LLXmlTree&& other) noexcept;
+    LLXmlTree& operator=(LLXmlTree&& other) noexcept;
     void cleanup();
 
     virtual bool    parseFile(const std::string &path, bool keep_contents = true);
@@ -88,10 +96,15 @@ class LLXmlTreeNode
 
 protected:
     // Protected since nodes are only created and destroyed by friend classes and other LLXmlTreeNodes
-    LLXmlTreeNode( const std::string& name, LLXmlTreeNode* parent, LLXmlTree* tree );
+    LLXmlTreeNode( std::string name, LLXmlTreeNode* parent, LLXmlTree* tree );
 
 public:
     virtual ~LLXmlTreeNode();
+
+    // Owns its children and its attribute values as raw pointers and deletes
+    // every one of them, so a copy would free them twice.
+    LLXmlTreeNode(const LLXmlTreeNode&) = delete;
+    LLXmlTreeNode& operator=(const LLXmlTreeNode&) = delete;
 
     const std::string&  getName()
     {
@@ -152,8 +165,8 @@ public:
     LLXmlTreeNode*  getFirstChild();
     LLXmlTreeNode*  getNextChild();
     S32             getChildCount()                     { return (S32)mChildren.size(); }
-    LLXmlTreeNode*  getChildByName( const std::string& name );  // returns first child with name, NULL if none
-    LLXmlTreeNode*  getNextNamedChild();                // returns next child with name, NULL if none
+    LLXmlTreeNode*  getChildByName( const std::string& name );  // returns first child with name, nullptr if none
+    LLXmlTreeNode*  getNextNamedChild();                // returns next child with name, nullptr if none
 
 protected:
     const std::string* getAttribute( LLStdStringHandle name)
@@ -163,25 +176,25 @@ protected:
     }
 
 private:
-    void            addAttribute( const std::string& name, const std::string& value );
+    void            addAttribute( const std::string& name, std::string value );
     void            appendContents( const char* str, std::string::size_type len );
     void            addChild( LLXmlTreeNode* child );
 
     void            dump( const std::string& prefix );
 
 protected:
-    typedef std::map<LLStdStringHandle, const std::string*> attribute_map_t;
+    using attribute_map_t = std::map<LLStdStringHandle, const std::string*>;
     attribute_map_t                     mAttributes;
 
 private:
     std::string                         mName;
     std::string                         mContents;
 
-    typedef std::vector<class LLXmlTreeNode *> children_t;
+    using children_t = std::vector<class LLXmlTreeNode*>;
     children_t                          mChildren;
     children_t::iterator                mChildrenIter;
 
-    typedef std::multimap<LLStdStringHandle, LLXmlTreeNode *> child_map_t;
+    using child_map_t = std::multimap<LLStdStringHandle, LLXmlTreeNode*>;
     child_map_t                         mChildMap;      // for fast name lookups
     child_map_t::iterator               mChildMapIter;
     child_map_t::iterator               mChildMapEndIter;
@@ -193,7 +206,7 @@ private:
 //////////////////////////////////////////////////////////////
 // LLXmlTreeParser
 
-class LLXmlTreeParser : public LLXmlParser
+class LLXmlTreeParser
 {
 public:
     LLXmlTreeParser(LLXmlTree* tree);
@@ -201,34 +214,21 @@ public:
 
     bool parseFile(const std::string &path, LLXmlTreeNode** root, bool keep_contents );
 
-protected:
-    const std::string& tabs();
+    S32                 getCurrentLineNumber() const { return mErrorLine; }
+    const std::string&  getErrorString() const { return mErrorString; }
 
-    // Overrides from LLXmlParser
-    virtual void    startElement(const char *name, const char **attributes);
-    virtual void    endElement(const char *name);
-    virtual void    characterData(const char *s, int len);
-    virtual void    processingInstruction(const char *target, const char *data);
-    virtual void    comment(const char *data);
-    virtual void    startCdataSection();
-    virtual void    endCdataSection();
-    virtual void    defaultData(const char *s, int len);
-    virtual void    unparsedEntityDecl(
-        const char* entity_name,
-        const char* base,
-        const char* system_id,
-        const char* public_id,
-        const char* notation_name);
+protected:
+    void buildTree(const pugi::xml_node& root_element);
 
     //template method pattern
-    virtual LLXmlTreeNode* CreateXmlTreeNode(const std::string& name, LLXmlTreeNode* parent);
+    virtual LLXmlTreeNode* CreateXmlTreeNode(std::string name, LLXmlTreeNode* parent);
 
 protected:
     LLXmlTree*      mTree;
     LLXmlTreeNode*  mRoot;
-    LLXmlTreeNode*  mCurrent;
-    bool            mDump;  // Dump parse tree to LL_INFOS() as it is read.
     bool            mKeepContents;
+    S32             mErrorLine;
+    std::string     mErrorString;
 };
 
 #endif  // LL_LLXMLTREE_H

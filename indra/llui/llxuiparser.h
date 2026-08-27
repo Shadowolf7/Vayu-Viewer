@@ -129,6 +129,7 @@ private:
         const LLInitParam::BaseBlock* diff_block);
     bool readXUIImpl(LLXMLNodePtr node, LLInitParam::BaseBlock& block);
     bool readAttributes(LLXMLNodePtr nodep, LLInitParam::BaseBlock& block);
+    S32  pushNameTokens(const char* name);
 
     //reader helper functions
     static bool readFlag(Parser& parser, void* val_ptr);
@@ -192,6 +193,8 @@ private:
 // ordering of child elements from base file to localized diff file.  Then we can use a pair
 // of coroutines to perform matching of xml nodes during parsing.  Not sure if the overhead
 // of coroutines would offset the gain from SAX parsing
+namespace pugi { class xml_node; }
+
 class LLSimpleXUIParserImpl;
 
 class LLSimpleXUIParser : public LLInitParam::Parser
@@ -231,18 +234,13 @@ private:
     static bool readSDValue(Parser&, void* val_ptr);
 
 private:
-    static void startElementHandler(void *userData, const char *name, const char **atts);
-    static void endElementHandler(void *userData, const char *name);
-    static void characterDataHandler(void *userData, const char *s, int len);
-
-    void startElement(const char *name, const char **atts);
-    void endElement(const char *name);
-    void characterData(const char *s, int len);
-    bool readAttributes(const char **atts);
+    void startElement(const pugi::xml_node& element);
+    void endElement();
+    bool readAttributes(const pugi::xml_node& element);
+    S32  pushNameTokens(const char* name);
     bool processText();
 
     Parser::name_stack_t            mNameStack;
-    struct XML_ParserStruct*        mParser;
     LLXMLNodePtr                    mLastWrittenChild;
     S32                             mCurReadDepth;
     std::string                     mCurFileName;

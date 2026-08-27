@@ -16,7 +16,6 @@ set(cmake_SOURCE_FILES
         CURL.cmake
         DBUS.cmake
         Discord.cmake
-        EXPAT.cmake
         FAudio.cmake
         FindPipeWire.cmake
         FMODSTUDIO.cmake
@@ -47,6 +46,7 @@ set(cmake_SOURCE_FILES
         OpenXR.cmake
         PluginAPI.cmake
         PNG.cmake
+        PugiXML.cmake
         Python.cmake
         RPMalloc.cmake
         run_build_test.py
