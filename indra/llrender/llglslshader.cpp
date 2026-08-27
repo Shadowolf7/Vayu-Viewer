@@ -804,6 +804,10 @@ bool LLGLSLShader::createShader(U32 variants)
         {
             LL_SHADER_LOADING_WARNS() << "Failed to link using shader level " << mShaderLevel << " trying again using shader level " << (mShaderLevel - 1) << LL_ENDL;
             mShaderLevel--;
+
+            // Drain error queue before trying again
+            log_glerror();
+
             return createShader(variants);
         }
         else
