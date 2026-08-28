@@ -216,4 +216,136 @@ namespace tut
         VayuImageBlockCompressor::setQueueBacklog(0);
         VayuImageBlockCompressor::setPreset(saved_preset);
     }
+
+    // Test 10: Non-power-of-two (NPOT) dimensions exercise both interior fast path and boundary clamping
+    template<> template<>
+    void block_compressor_object::test<10>()
+    {
+        const U32 width = 37, height = 53;
+
+        // 4-channel NPOT
+        {
+            std::vector<U8> rgba(width * height * 4);
+            for (size_t i = 0; i < width * height; ++i)
+            {
+                rgba[i * 4 + 0] = (U8)(i % 255);
+                rgba[i * 4 + 1] = (U8)((i * 3) % 255);
+                rgba[i * 4 + 2] = (U8)((i * 7) % 255);
+                rgba[i * 4 + 3] = 255;
+            }
+
+            VayuBlockCompressionResult result;
+            bool ok = VayuImageBlockCompressor::encode(rgba.data(), width, height, 4, result, EVayuBlockCompressionFormat::Auto);
+            ensure("NPOT 4-channel opaque encodes successfully", ok);
+            ensure("NPOT 4-channel opaque resolves to BC1", result.mFormat == EVayuBlockCompressionFormat::BC1);
+            ensure("NPOT buffer size is non-zero", result.mBuffer.size() > 0);
+        }
+
+        // 3-channel NPOT
+        {
+            std::vector<U8> rgb(width * height * 3);
+            for (size_t i = 0; i < width * height; ++i)
+            {
+                rgb[i * 3 + 0] = (U8)(i % 255);
+                rgb[i * 3 + 1] = (U8)((i * 3) % 255);
+                rgb[i * 3 + 2] = (U8)((i * 7) % 255);
+            }
+
+            VayuBlockCompressionResult result;
+            bool ok = VayuImageBlockCompressor::encode(rgb.data(), width, height, 3, result, EVayuBlockCompressionFormat::Auto);
+            ensure("NPOT 3-channel encodes successfully", ok);
+            ensure("NPOT 3-channel resolves to BC1", result.mFormat == EVayuBlockCompressionFormat::BC1);
+            ensure("NPOT buffer size is non-zero", result.mBuffer.size() > 0);
+        }
+    }
+
+    // Test 11: Vectorized alpha scan edge cases (tail cleanup and early detection)
+    template<> template<>
+    void block_compressor_object::test<11>()
+    {
+        const U32 width = 37, height = 53;
+        const size_t total_px = width * height;
+
+        // Case A: Cutout pixel placed at the very last pixel (tests tail cleanup)
+        {
+            std::vector<U8> rgba(total_px * 4, 255);
+            rgba[(total_px - 1) * 4 + 3] = 128; // Translucent pixel at the tail
+
+            VayuBlockCompressionResult result;
+            bool ok = VayuImageBlockCompressor::encode(rgba.data(), width, height, 4, result, EVayuBlockCompressionFormat::Auto);
+            ensure("Tail cutout encodes successfully", ok);
+            ensure("Tail cutout resolves to BC7", result.mFormat == EVayuBlockCompressionFormat::BC7);
+        }
+
+        // Case B: Cutout pixel placed early (index 2) (tests early SIMD exit)
+        {
+            std::vector<U8> rgba(total_px * 4, 255);
+            rgba[2 * 4 + 3] = 0; // Transparent cutout at index 2
+
+            VayuBlockCompressionResult result;
+            bool ok = VayuImageBlockCompressor::encode(rgba.data(), width, height, 4, result, EVayuBlockCompressionFormat::Auto);
+            ensure("Early cutout encodes successfully", ok);
+            ensure("Early cutout resolves to BC7", result.mFormat == EVayuBlockCompressionFormat::BC7);
+        }
+
+        // Case C: Fully opaque non-multiple-of-8 image resolves to BC1
+        {
+            std::vector<U8> rgba(total_px * 4, 255);
+
+            VayuBlockCompressionResult result;
+            bool ok = VayuImageBlockCompressor::encode(rgba.data(), width, height, 4, result, EVayuBlockCompressionFormat::Auto);
+            ensure("Fully opaque NPOT encodes successfully", ok);
+            ensure("Fully opaque NPOT resolves to BC1", result.mFormat == EVayuBlockCompressionFormat::BC1);
+        }
+    }
+
+    // Test 12: Downsampling across multiple mip levels for sRGB and Linear formats
+    template<> template<>
+    void block_compressor_object::test<12>()
+    {
+        // 4-channel sRGB mip pyramid
+        {
+            const U32 width = 8, height = 8;
+            std::vector<U8> rgba(width * height * 4);
+            for (size_t i = 0; i < width * height; ++i)
+            {
+                rgba[i * 4 + 0] = 128;
+                rgba[i * 4 + 1] = 64;
+                rgba[i * 4 + 2] = 32;
+                rgba[i * 4 + 3] = 255;
+            }
+
+            VayuBlockCompressionResult result;
+            bool ok = VayuImageBlockCompressor::encode(rgba.data(), width, height, 4, result, EVayuBlockCompressionFormat::BC1);
+            ensure("8x8 RGBA downsampling succeeds", ok);
+            ensure("8x8 produces 4 mip levels (8, 4, 2, 1)", result.mMipLevels == 4);
+        }
+
+        // 2-channel Linear (Normal map) mip pyramid
+        {
+            const U32 width = 4, height = 4;
+            std::vector<U8> rg(width * height * 2);
+            for (size_t i = 0; i < width * height; ++i)
+            {
+                rg[i * 2 + 0] = (i % 2 == 0) ? 100 : 200;
+                rg[i * 2 + 1] = (i % 2 == 0) ? 200 : 100;
+            }
+
+            VayuBlockCompressionResult result;
+            bool ok = VayuImageBlockCompressor::encode(rg.data(), width, height, 2, result, EVayuBlockCompressionFormat::BC5);
+            ensure("4x4 RG downsampling succeeds", ok);
+            ensure("4x4 produces 3 mip levels (4, 2, 1)", result.mMipLevels == 3);
+        }
+
+        // 1-channel Linear (Mask) mip pyramid
+        {
+            const U32 width = 4, height = 4;
+            std::vector<U8> gray(width * height, 128);
+
+            VayuBlockCompressionResult result;
+            bool ok = VayuImageBlockCompressor::encode(gray.data(), width, height, 1, result, EVayuBlockCompressionFormat::BC4);
+            ensure("4x4 Grayscale downsampling succeeds", ok);
+            ensure("4x4 produces 3 mip levels (4, 2, 1)", result.mMipLevels == 3);
+        }
+    }
 }

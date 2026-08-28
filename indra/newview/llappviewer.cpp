@@ -1400,7 +1400,6 @@ bool LLAppViewer::frame()
 bool LLAppViewer::doFrame()
 {
     LL_PROFILE_ZONE_SCOPED;
-    LL_PROFILE_GPU_ZONE("doFrame");
 
     resumeMainloopTimeout("Main:doFrameStart");
 

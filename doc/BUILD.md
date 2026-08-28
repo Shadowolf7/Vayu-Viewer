@@ -502,6 +502,12 @@ Double-check the package list for your distro under [Platform setup → Linux](#
 - `libxkbcommon-dev`, `libwayland-dev`, `wayland-protocols` — required for SDL window and Wayland support
 - `libgstreamer-plugins-base1.0-dev` — required for the GStreamer media plugin
 
+### Linux: window has no titlebar/decorations on Wayland
+
+Upstream vcpkg's `sdl3` port hardcodes `SDL_WAYLAND_LIBDECOR=OFF` since [3.4.14](https://github.com/microsoft/vcpkg/commit/8f57207a8a1b96a4a864e11f85d57b0a252b3ac3) for build reproducibility (host-installed libs shouldn't silently change SDL's capabilities). That disables client-side decorations entirely on compositors with no server-side decoration support (GNOME/Mutter, Weston), regardless of whether `libdecor` is installed.
+
+Fixed via the `indra/vcpkg/ports/sdl3` overlay port, which re-enables the flag — safe here since `indra/cmake/SDL3.cmake` already hard-requires `libdecor-0` on the host at configure time, so this doesn't reintroduce the non-determinism upstream is guarding against. If decorations go missing again after a vcpkg baseline bump, check whether this overlay still matches upstream's portfile (a future SDL3 update could restructure the option or rename it).
+
 ### vcpkg curl build fails with "try_run() invoked in cross-compiling mode"
 
 Seen when building the vendored `curl` overlay port (`indra/vcpkg/ports/curl`, pinned to 7.54.1 for Linden's HTTP/1.1 pipelining patch — see [#67](https://github.com/Shadowolf7/Vayu-Viewer/issues/67)) with the Clang preset:

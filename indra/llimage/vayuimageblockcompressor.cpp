@@ -15,6 +15,10 @@
 #include <mutex>
 #include <cstring>
 
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
+#include <immintrin.h>
+#endif
+
 // Ensure compressed texture formats are defined without needing GL headers
 #ifndef GL_COMPRESSED_RGBA_S3TC_DXT1_EXT
 #define GL_COMPRESSED_RGBA_S3TC_DXT1_EXT  0x83F1
@@ -129,8 +133,8 @@ static void init_compression_tables()
     });
 }
 
-// Box-filter downsampling with linear-space colour averaging (sRGB correct)
-static void downsample_half_srgb(const uint8_t* src, uint32_t sw, uint32_t sh, S32 channels, uint8_t* dst)
+// Specialized box-filter downsampling for 4-channel sRGB (RGBA)
+static void downsample_half_srgb_4ch(const uint8_t* src, uint32_t sw, uint32_t sh, uint8_t* dst)
 {
     const uint32_t dw = llmax(1u, sw / 2);
     const uint32_t dh = llmax(1u, sh / 2);
@@ -139,32 +143,198 @@ static void downsample_half_srgb(const uint8_t* src, uint32_t sw, uint32_t sh, S
     {
         uint32_t sy0 = y * 2;
         uint32_t sy1 = (sy0 + 1 < sh) ? (sy0 + 1) : sy0;
-        const uint8_t* r0 = src + (size_t)sy0 * sw * channels;
-        const uint8_t* r1 = src + (size_t)sy1 * sw * channels;
-        uint8_t* out = dst + (size_t)y * dw * channels;
+        const uint8_t* r0 = src + (size_t)sy0 * sw * 4;
+        const uint8_t* r1 = src + (size_t)sy1 * sw * 4;
+        uint8_t* out = dst + (size_t)y * dw * 4;
 
-        for (uint32_t x = 0; x < dw; x++)
+        const uint32_t interior_dw = sw / 2;
+        for (uint32_t x = 0; x < interior_dw; x++)
+        {
+            const uint32_t sx = x * 2;
+            const uint8_t* a = r0 + (size_t)sx * 4;
+            const uint8_t* b = a + 4;
+            const uint8_t* c = r1 + (size_t)sx * 4;
+            const uint8_t* d = c + 4;
+
+            const float lin_r = (g_srgb_to_linear[a[0]] + g_srgb_to_linear[b[0]] +
+                                 g_srgb_to_linear[c[0]] + g_srgb_to_linear[d[0]]) * 0.25f;
+            const float lin_g = (g_srgb_to_linear[a[1]] + g_srgb_to_linear[b[1]] +
+                                 g_srgb_to_linear[c[1]] + g_srgb_to_linear[d[1]]) * 0.25f;
+            const float lin_b = (g_srgb_to_linear[a[2]] + g_srgb_to_linear[b[2]] +
+                                 g_srgb_to_linear[c[2]] + g_srgb_to_linear[d[2]]) * 0.25f;
+
+            out[0] = linear_to_srgb_u8(lin_r);
+            out[1] = linear_to_srgb_u8(lin_g);
+            out[2] = linear_to_srgb_u8(lin_b);
+            out[3] = (uint8_t)((a[3] + b[3] + c[3] + d[3] + 2) >> 2);
+            out += 4;
+        }
+
+        for (uint32_t x = interior_dw; x < dw; x++)
         {
             uint32_t sx0 = x * 2;
             uint32_t sx1 = (sx0 + 1 < sw) ? (sx0 + 1) : sx0;
-            const uint8_t* a = r0 + (size_t)sx0 * channels;
-            const uint8_t* b = r0 + (size_t)sx1 * channels;
-            const uint8_t* c = r1 + (size_t)sx0 * channels;
-            const uint8_t* d = r1 + (size_t)sx1 * channels;
+            const uint8_t* a = r0 + (size_t)sx0 * 4;
+            const uint8_t* b = r0 + (size_t)sx1 * 4;
+            const uint8_t* c = r1 + (size_t)sx0 * 4;
+            const uint8_t* d = r1 + (size_t)sx1 * 4;
 
-            const int color_channels = llmin(channels, 3);
-            for (int ch = 0; ch < color_channels; ch++)
-            {
-                const float lin = (g_srgb_to_linear[a[ch]] + g_srgb_to_linear[b[ch]] +
-                                   g_srgb_to_linear[c[ch]] + g_srgb_to_linear[d[ch]]) * 0.25f;
-                out[ch] = linear_to_srgb_u8(lin);
-            }
-            if (channels == 4)
-            {
-                // Alpha is linear, average directly
-                out[3] = (uint8_t)((a[3] + b[3] + c[3] + d[3] + 2) / 4);
-            }
-            out += channels;
+            const float lin_r = (g_srgb_to_linear[a[0]] + g_srgb_to_linear[b[0]] +
+                                 g_srgb_to_linear[c[0]] + g_srgb_to_linear[d[0]]) * 0.25f;
+            const float lin_g = (g_srgb_to_linear[a[1]] + g_srgb_to_linear[b[1]] +
+                                 g_srgb_to_linear[c[1]] + g_srgb_to_linear[d[1]]) * 0.25f;
+            const float lin_b = (g_srgb_to_linear[a[2]] + g_srgb_to_linear[b[2]] +
+                                 g_srgb_to_linear[c[2]] + g_srgb_to_linear[d[2]]) * 0.25f;
+
+            out[0] = linear_to_srgb_u8(lin_r);
+            out[1] = linear_to_srgb_u8(lin_g);
+            out[2] = linear_to_srgb_u8(lin_b);
+            out[3] = (uint8_t)((a[3] + b[3] + c[3] + d[3] + 2) >> 2);
+            out += 4;
+        }
+    }
+}
+
+// Specialized box-filter downsampling for 3-channel sRGB (RGB)
+static void downsample_half_srgb_3ch(const uint8_t* src, uint32_t sw, uint32_t sh, uint8_t* dst)
+{
+    const uint32_t dw = llmax(1u, sw / 2);
+    const uint32_t dh = llmax(1u, sh / 2);
+
+    for (uint32_t y = 0; y < dh; y++)
+    {
+        uint32_t sy0 = y * 2;
+        uint32_t sy1 = (sy0 + 1 < sh) ? (sy0 + 1) : sy0;
+        const uint8_t* r0 = src + (size_t)sy0 * sw * 3;
+        const uint8_t* r1 = src + (size_t)sy1 * sw * 3;
+        uint8_t* out = dst + (size_t)y * dw * 3;
+
+        const uint32_t interior_dw = sw / 2;
+        for (uint32_t x = 0; x < interior_dw; x++)
+        {
+            const uint32_t sx = x * 2;
+            const uint8_t* a = r0 + (size_t)sx * 3;
+            const uint8_t* b = a + 3;
+            const uint8_t* c = r1 + (size_t)sx * 3;
+            const uint8_t* d = c + 3;
+
+            const float lin_r = (g_srgb_to_linear[a[0]] + g_srgb_to_linear[b[0]] +
+                                 g_srgb_to_linear[c[0]] + g_srgb_to_linear[d[0]]) * 0.25f;
+            const float lin_g = (g_srgb_to_linear[a[1]] + g_srgb_to_linear[b[1]] +
+                                 g_srgb_to_linear[c[1]] + g_srgb_to_linear[d[1]]) * 0.25f;
+            const float lin_b = (g_srgb_to_linear[a[2]] + g_srgb_to_linear[b[2]] +
+                                 g_srgb_to_linear[c[2]] + g_srgb_to_linear[d[2]]) * 0.25f;
+
+            out[0] = linear_to_srgb_u8(lin_r);
+            out[1] = linear_to_srgb_u8(lin_g);
+            out[2] = linear_to_srgb_u8(lin_b);
+            out += 3;
+        }
+
+        for (uint32_t x = interior_dw; x < dw; x++)
+        {
+            uint32_t sx0 = x * 2;
+            uint32_t sx1 = (sx0 + 1 < sw) ? (sx0 + 1) : sx0;
+            const uint8_t* a = r0 + (size_t)sx0 * 3;
+            const uint8_t* b = r0 + (size_t)sx1 * 3;
+            const uint8_t* c = r1 + (size_t)sx0 * 3;
+            const uint8_t* d = r1 + (size_t)sx1 * 3;
+
+            const float lin_r = (g_srgb_to_linear[a[0]] + g_srgb_to_linear[b[0]] +
+                                 g_srgb_to_linear[c[0]] + g_srgb_to_linear[d[0]]) * 0.25f;
+            const float lin_g = (g_srgb_to_linear[a[1]] + g_srgb_to_linear[b[1]] +
+                                 g_srgb_to_linear[c[1]] + g_srgb_to_linear[d[1]]) * 0.25f;
+            const float lin_b = (g_srgb_to_linear[a[2]] + g_srgb_to_linear[b[2]] +
+                                 g_srgb_to_linear[c[2]] + g_srgb_to_linear[d[2]]) * 0.25f;
+
+            out[0] = linear_to_srgb_u8(lin_r);
+            out[1] = linear_to_srgb_u8(lin_g);
+            out[2] = linear_to_srgb_u8(lin_b);
+            out += 3;
+        }
+    }
+}
+
+// Specialized box-filter downsampling for 2-channel linear (Normal maps)
+static void downsample_half_linear_2ch(const uint8_t* src, uint32_t sw, uint32_t sh, uint8_t* dst)
+{
+    const uint32_t dw = llmax(1u, sw / 2);
+    const uint32_t dh = llmax(1u, sh / 2);
+
+    for (uint32_t y = 0; y < dh; y++)
+    {
+        uint32_t sy0 = y * 2;
+        uint32_t sy1 = (sy0 + 1 < sh) ? (sy0 + 1) : sy0;
+        const uint8_t* r0 = src + (size_t)sy0 * sw * 2;
+        const uint8_t* r1 = src + (size_t)sy1 * sw * 2;
+        uint8_t* out = dst + (size_t)y * dw * 2;
+
+        const uint32_t interior_dw = sw / 2;
+        for (uint32_t x = 0; x < interior_dw; x++)
+        {
+            const uint32_t sx = x * 2;
+            const uint8_t* a = r0 + (size_t)sx * 2;
+            const uint8_t* b = a + 2;
+            const uint8_t* c = r1 + (size_t)sx * 2;
+            const uint8_t* d = c + 2;
+
+            out[0] = (uint8_t)((a[0] + b[0] + c[0] + d[0] + 2) >> 2);
+            out[1] = (uint8_t)((a[1] + b[1] + c[1] + d[1] + 2) >> 2);
+            out += 2;
+        }
+
+        for (uint32_t x = interior_dw; x < dw; x++)
+        {
+            uint32_t sx0 = x * 2;
+            uint32_t sx1 = (sx0 + 1 < sw) ? (sx0 + 1) : sx0;
+            const uint8_t* a = r0 + (size_t)sx0 * 2;
+            const uint8_t* b = r0 + (size_t)sx1 * 2;
+            const uint8_t* c = r1 + (size_t)sx0 * 2;
+            const uint8_t* d = r1 + (size_t)sx1 * 2;
+
+            out[0] = (uint8_t)((a[0] + b[0] + c[0] + d[0] + 2) >> 2);
+            out[1] = (uint8_t)((a[1] + b[1] + c[1] + d[1] + 2) >> 2);
+            out += 2;
+        }
+    }
+}
+
+// Specialized box-filter downsampling for 1-channel linear (Masks / Roughness)
+static void downsample_half_linear_1ch(const uint8_t* src, uint32_t sw, uint32_t sh, uint8_t* dst)
+{
+    const uint32_t dw = llmax(1u, sw / 2);
+    const uint32_t dh = llmax(1u, sh / 2);
+
+    for (uint32_t y = 0; y < dh; y++)
+    {
+        uint32_t sy0 = y * 2;
+        uint32_t sy1 = (sy0 + 1 < sh) ? (sy0 + 1) : sy0;
+        const uint8_t* r0 = src + (size_t)sy0 * sw;
+        const uint8_t* r1 = src + (size_t)sy1 * sw;
+        uint8_t* out = dst + (size_t)y * dw;
+
+        const uint32_t interior_dw = sw / 2;
+        for (uint32_t x = 0; x < interior_dw; x++)
+        {
+            const uint32_t sx = x * 2;
+            const uint8_t a = r0[sx];
+            const uint8_t b = r0[sx + 1];
+            const uint8_t c = r1[sx];
+            const uint8_t d = r1[sx + 1];
+
+            out[x] = (uint8_t)((a + b + c + d + 2) >> 2);
+        }
+
+        for (uint32_t x = interior_dw; x < dw; x++)
+        {
+            uint32_t sx0 = x * 2;
+            uint32_t sx1 = (sx0 + 1 < sw) ? (sx0 + 1) : sx0;
+            const uint8_t a = r0[sx0];
+            const uint8_t b = r0[sx1];
+            const uint8_t c = r1[sx0];
+            const uint8_t d = r1[sx1];
+
+            out[x] = (uint8_t)((a + b + c + d + 2) >> 2);
         }
     }
 }
@@ -172,32 +342,60 @@ static void downsample_half_srgb(const uint8_t* src, uint32_t sw, uint32_t sh, S
 // Box-filter downsampling for linear channels (normal maps, roughness, masks)
 static void downsample_half_linear(const uint8_t* src, uint32_t sw, uint32_t sh, S32 channels, uint8_t* dst)
 {
-    const uint32_t dw = llmax(1u, sw / 2);
-    const uint32_t dh = llmax(1u, sh / 2);
-
-    for (uint32_t y = 0; y < dh; y++)
+    if (channels == 1)
     {
-        uint32_t sy0 = y * 2;
-        uint32_t sy1 = (sy0 + 1 < sh) ? (sy0 + 1) : sy0;
-        const uint8_t* r0 = src + (size_t)sy0 * sw * channels;
-        const uint8_t* r1 = src + (size_t)sy1 * sw * channels;
-        uint8_t* out = dst + (size_t)y * dw * channels;
+        downsample_half_linear_1ch(src, sw, sh, dst);
+    }
+    else if (channels == 2)
+    {
+        downsample_half_linear_2ch(src, sw, sh, dst);
+    }
+    else
+    {
+        const uint32_t dw = llmax(1u, sw / 2);
+        const uint32_t dh = llmax(1u, sh / 2);
 
-        for (uint32_t x = 0; x < dw; x++)
+        for (uint32_t y = 0; y < dh; y++)
         {
-            uint32_t sx0 = x * 2;
-            uint32_t sx1 = (sx0 + 1 < sw) ? (sx0 + 1) : sx0;
-            const uint8_t* a = r0 + (size_t)sx0 * channels;
-            const uint8_t* b = r0 + (size_t)sx1 * channels;
-            const uint8_t* c = r1 + (size_t)sx0 * channels;
-            const uint8_t* d = r1 + (size_t)sx1 * channels;
+            uint32_t sy0 = y * 2;
+            uint32_t sy1 = (sy0 + 1 < sh) ? (sy0 + 1) : sy0;
+            const uint8_t* r0 = src + (size_t)sy0 * sw * channels;
+            const uint8_t* r1 = src + (size_t)sy1 * sw * channels;
+            uint8_t* out = dst + (size_t)y * dw * channels;
 
-            for (int ch = 0; ch < channels; ch++)
+            for (uint32_t x = 0; x < dw; x++)
             {
-                out[ch] = (uint8_t)((a[ch] + b[ch] + c[ch] + d[ch] + 2) / 4);
+                uint32_t sx0 = x * 2;
+                uint32_t sx1 = (sx0 + 1 < sw) ? (sx0 + 1) : sx0;
+                const uint8_t* a = r0 + (size_t)sx0 * channels;
+                const uint8_t* b = r0 + (size_t)sx1 * channels;
+                const uint8_t* c = r1 + (size_t)sx0 * channels;
+                const uint8_t* d = r1 + (size_t)sx1 * channels;
+
+                for (int ch = 0; ch < channels; ch++)
+                {
+                    out[ch] = (uint8_t)((a[ch] + b[ch] + c[ch] + d[ch] + 2) >> 2);
+                }
+                out += channels;
             }
-            out += channels;
         }
+    }
+}
+
+// Box-filter downsampling with linear-space colour averaging (sRGB correct)
+static void downsample_half_srgb(const uint8_t* src, uint32_t sw, uint32_t sh, S32 channels, uint8_t* dst)
+{
+    if (channels == 4)
+    {
+        downsample_half_srgb_4ch(src, sw, sh, dst);
+    }
+    else if (channels == 3)
+    {
+        downsample_half_srgb_3ch(src, sw, sh, dst);
+    }
+    else
+    {
+        downsample_half_linear(src, sw, sh, channels, dst);
     }
 }
 
@@ -293,7 +491,6 @@ bool VayuImageBlockCompressor::encode(const U8* src_data, U32 width, U32 height,
 
     // 1. Resolve format
     EVayuBlockCompressionFormat resolved = format;
-    bool force_opaque = false;
 
     if (resolved == EVayuBlockCompressionFormat::Auto)
     {
@@ -316,13 +513,48 @@ bool VayuImageBlockCompressor::encode(const U8* src_data, U32 width, U32 height,
             // 2. Genuine cutout / transparency / transparent layers -> BC7 (preserves exact alpha)
             const size_t total_px = (size_t)width * height;
             uint8_t min_a = 255;
-            for (size_t i = 0; i < total_px; i++)
+            size_t vec_px = 0;
+
+#if defined(__AVX2__)
+            const __m256i alpha_mask = _mm256_set1_epi32((int)0xFF000000);
+            vec_px = (total_px / 8) * 8;
+            for (size_t i = 0; i < vec_px; i += 8)
             {
-                uint8_t a = src_data[i * 4 + 3];
-                if (a < 255)
+                __m256i px = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(src_data + i * 4));
+                __m256i alphas = _mm256_and_si256(px, alpha_mask);
+                __m256i cmp = _mm256_cmpeq_epi32(alphas, alpha_mask);
+                if ((uint32_t)_mm256_movemask_epi8(cmp) != 0xFFFFFFFF)
                 {
-                    min_a = a;
+                    min_a = 0;
                     break;
+                }
+            }
+#elif defined(__SSE2__) || defined(_M_X64) || (defined(_M_IX86_FP) && _M_IX86_FP >= 2)
+            const __m128i alpha_mask = _mm_set1_epi32((int)0xFF000000);
+            vec_px = (total_px / 4) * 4;
+            for (size_t i = 0; i < vec_px; i += 4)
+            {
+                __m128i px = _mm_loadu_si128(reinterpret_cast<const __m128i*>(src_data + i * 4));
+                __m128i alphas = _mm_and_si128(px, alpha_mask);
+                __m128i cmp = _mm_cmpeq_epi32(alphas, alpha_mask);
+                if (_mm_movemask_epi8(cmp) != 0xFFFF)
+                {
+                    min_a = 0;
+                    break;
+                }
+            }
+#endif
+
+            if (min_a == 255)
+            {
+                for (size_t i = vec_px; i < total_px; i++)
+                {
+                    uint8_t a = src_data[i * 4 + 3];
+                    if (a < 255)
+                    {
+                        min_a = a;
+                        break;
+                    }
                 }
             }
 
@@ -449,43 +681,109 @@ bool VayuImageBlockCompressor::encode(const U8* src_data, U32 width, U32 height,
         {
             for (uint32_t bx = 0; bx < bw; bx++)
             {
-                // Extract 4x4 block of RGBA pixels (or single/two-channel) with edge clamping
-                uint8_t block_rgba[64];
-                memset(block_rgba, 0, sizeof(block_rgba));
+                // Extract 4x4 block of RGBA pixels (or single/two-channel)
+                alignas(16) uint8_t block_rgba[64];
 
-                for (uint32_t py = 0; py < 4; py++)
+                if (bx * 4 + 4 <= mw && by * 4 + 4 <= mh)
                 {
-                    uint32_t y = (by * 4 + py < mh) ? (by * 4 + py) : (mh - 1);
-                    for (uint32_t px = 0; px < 4; px++)
-                    {
-                        uint32_t x = (bx * 4 + px < mw) ? (bx * 4 + px) : (mw - 1);
-                        const uint8_t* pixel_src = src + ((size_t)y * mw + x) * components;
-                        uint8_t* pixel_dst = &block_rgba[(py * 4 + px) * 4];
+                    // Fast path: interior blocks have no edge clamping
+                    const uint8_t* block_src = src + ((size_t)by * 4 * mw + bx * 4) * components;
+                    const size_t row_stride = (size_t)mw * components;
 
-                        if (components == 4)
+                    if (components == 4)
+                    {
+                        // 4 RGBA pixels = 16 bytes per row
+                        memcpy(block_rgba + 0,  block_src,                  16);
+                        memcpy(block_rgba + 16, block_src + row_stride,     16);
+                        memcpy(block_rgba + 32, block_src + row_stride * 2, 16);
+                        memcpy(block_rgba + 48, block_src + row_stride * 3, 16);
+                    }
+                    else if (components == 3)
+                    {
+                        for (uint32_t py = 0; py < 4; py++)
                         {
-                            memcpy(pixel_dst, pixel_src, 4);
+                            const uint8_t* row = block_src + py * row_stride;
+                            uint8_t* dst = block_rgba + py * 16;
+                            for (uint32_t px = 0; px < 4; px++)
+                            {
+                                dst[px * 4 + 0] = row[px * 3 + 0];
+                                dst[px * 4 + 1] = row[px * 3 + 1];
+                                dst[px * 4 + 2] = row[px * 3 + 2];
+                                dst[px * 4 + 3] = 255;
+                            }
                         }
-                        else if (components == 3)
+                    }
+                    else if (components == 2)
+                    {
+                        for (uint32_t py = 0; py < 4; py++)
                         {
-                            pixel_dst[0] = pixel_src[0];
-                            pixel_dst[1] = pixel_src[1];
-                            pixel_dst[2] = pixel_src[2];
-                            pixel_dst[3] = 255;
+                            const uint8_t* row = block_src + py * row_stride;
+                            uint8_t* dst = block_rgba + py * 16;
+                            for (uint32_t px = 0; px < 4; px++)
+                            {
+                                dst[px * 4 + 0] = row[px * 2 + 0];
+                                dst[px * 4 + 1] = row[px * 2 + 1];
+                                dst[px * 4 + 2] = 0;
+                                dst[px * 4 + 3] = 255;
+                            }
                         }
-                        else if (components == 2)
+                    }
+                    else if (components == 1)
+                    {
+                        for (uint32_t py = 0; py < 4; py++)
                         {
-                            pixel_dst[0] = pixel_src[0];
-                            pixel_dst[1] = pixel_src[1];
-                            pixel_dst[2] = 0;
-                            pixel_dst[3] = 255;
+                            const uint8_t* row = block_src + py * row_stride;
+                            uint8_t* dst = block_rgba + py * 16;
+                            for (uint32_t px = 0; px < 4; px++)
+                            {
+                                const uint8_t g = row[px];
+                                dst[px * 4 + 0] = g;
+                                dst[px * 4 + 1] = g;
+                                dst[px * 4 + 2] = g;
+                                dst[px * 4 + 3] = 255;
+                            }
                         }
-                        else if (components == 1)
+                    }
+                }
+                else
+                {
+                    // Fallback path: boundary blocks with edge clamping
+                    memset(block_rgba, 0, sizeof(block_rgba));
+
+                    for (uint32_t py = 0; py < 4; py++)
+                    {
+                        uint32_t y = (by * 4 + py < mh) ? (by * 4 + py) : (mh - 1);
+                        for (uint32_t px = 0; px < 4; px++)
                         {
-                            pixel_dst[0] = pixel_src[0];
-                            pixel_dst[1] = pixel_src[0];
-                            pixel_dst[2] = pixel_src[0];
-                            pixel_dst[3] = 255;
+                            uint32_t x = (bx * 4 + px < mw) ? (bx * 4 + px) : (mw - 1);
+                            const uint8_t* pixel_src = src + ((size_t)y * mw + x) * components;
+                            uint8_t* pixel_dst = &block_rgba[(py * 4 + px) * 4];
+
+                            if (components == 4)
+                            {
+                                memcpy(pixel_dst, pixel_src, 4);
+                            }
+                            else if (components == 3)
+                            {
+                                pixel_dst[0] = pixel_src[0];
+                                pixel_dst[1] = pixel_src[1];
+                                pixel_dst[2] = pixel_src[2];
+                                pixel_dst[3] = 255;
+                            }
+                            else if (components == 2)
+                            {
+                                pixel_dst[0] = pixel_src[0];
+                                pixel_dst[1] = pixel_src[1];
+                                pixel_dst[2] = 0;
+                                pixel_dst[3] = 255;
+                            }
+                            else if (components == 1)
+                            {
+                                pixel_dst[0] = pixel_src[0];
+                                pixel_dst[1] = pixel_src[0];
+                                pixel_dst[2] = pixel_src[0];
+                                pixel_dst[3] = 255;
+                            }
                         }
                     }
                 }
