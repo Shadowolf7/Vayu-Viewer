@@ -1499,8 +1499,24 @@ LLVector3 LLAgent::getReferenceUpVector()
         }
         else if (camera_mode == CAMERA_MODE_MOUSELOOK)
         {
-            // make the up vector point to the avatar's +z axis
-            up_vector = up_vector * gAgentAvatarp->mDrawable->getRotation();
+            static LLCachedControl<bool> decouple_vehicle_tilt(gSavedSettings, "VayuMouselookDecoupleVehicleTilt", false);
+            LLViewerObject* root_object = (LLViewerObject*)gAgentAvatarp->getRoot();
+            if (decouple_vehicle_tilt && root_object && !root_object->flagCameraDecoupled())
+            {
+                // In roll-decoupled mouselook, the reference up vector must be the roll-free
+                // up vector in parent frame so horizontal mouse look (yaw) does not induce roll.
+                LLQuaternion vehicle_rot = ((LLViewerObject*)gAgentAvatarp->getParent())->getRenderRotation();
+                F32 roll, pitch, yaw;
+                vehicle_rot.getEulerAngles(&roll, &pitch, &yaw);
+                LLQuaternion vehicle_rot_no_roll;
+                vehicle_rot_no_roll.setEulerAngles(0.f, pitch, yaw);
+                up_vector = (LLVector3::z_axis * vehicle_rot_no_roll) * ~vehicle_rot;
+            }
+            else
+            {
+                // make the up vector point to the avatar's +z axis
+                up_vector = up_vector * gAgentAvatarp->mDrawable->getRotation();
+            }
         }
     }
 
@@ -2559,13 +2575,21 @@ void LLAgent::endAnimationUpdateUI()
             {
                 LLVector3 at_axis = LLViewerCamera::getInstance()->getAtAxis();
                 LLViewerObject* root_object = (LLViewerObject*)gAgentAvatarp->getRoot();
-                if (root_object->flagCameraDecoupled())
+                if (root_object && root_object->flagCameraDecoupled())
                 {
                     resetAxes(at_axis);
                 }
                 else
                 {
-                    resetAxes(at_axis * ~((LLViewerObject*)gAgentAvatarp->getParent())->getRenderRotation());
+                    static LLCachedControl<bool> decouple_vehicle_tilt(gSavedSettings, "VayuMouselookDecoupleVehicleTilt", false);
+                    LLQuaternion vehicle_rot = ((LLViewerObject*)gAgentAvatarp->getParent())->getRenderRotation();
+                    if (decouple_vehicle_tilt)
+                    {
+                        F32 roll, pitch, yaw;
+                        vehicle_rot.getEulerAngles(&roll, &pitch, &yaw);
+                        vehicle_rot.setEulerAngles(0.f, pitch, yaw);
+                    }
+                    resetAxes(at_axis * ~vehicle_rot);
                 }
             }
         }
