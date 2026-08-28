@@ -437,7 +437,26 @@ void send_complete_agent_movement(const LLHost& sim_host)
     msg->addUUIDFast(_PREHASH_AgentID, gAgent.getID());
     msg->addUUIDFast(_PREHASH_SessionID, gAgent.getSessionID());
     msg->addU32Fast(_PREHASH_CircuitCode, msg->mOurCircuitCode);
-    msg->sendReliable(sim_host);
+
+    // build a lambda to be used as callback on ACK or timeout
+    void (*complete_agent_movement_callback)(void**, S32) = [](void**, S32 result)
+    {
+        if(LLApp::isExiting()) return;
+        if (result != LL_ERR_NOERR)
+        {
+            LL_WARNS("Messaging") << "CompleteAgentMovement failed with err=" << result << LL_ENDL;
+        }
+    };
+
+    // We use same retry strategy as UseCircuitCode because this is a crucial message
+    // that MUST arrive else we'll suffer a failed login/teleport/region-cross
+    msg->sendReliable(
+        sim_host,
+        gSavedSettings.getS32("UseCircuitCodeMaxRetries"),
+        false,
+        (F32Seconds)gSavedSettings.getF32("UseCircuitCodeTimeout"),
+        complete_agent_movement_callback,
+        NULL);
 }
 
 void process_logout_reply(LLMessageSystem* msg, void**)
@@ -1701,6 +1720,11 @@ void LLOfferInfo::handleRespond(const LLSD& notification, const LLSD& response)
     mRespondFunctions[name](notification, response);
 }
 
+static std::string no_link(const std::string& text)
+{
+    return "<nolink>" + text + "</nolink>";
+}
+
 bool LLOfferInfo::inventory_offer_callback(const LLSD& notification, const LLSD& response)
 {
     LLChat chat;
@@ -1814,7 +1838,7 @@ bool LLOfferInfo::inventory_offer_callback(const LLSD& notification, const LLSD&
         //don't spam them if they are getting flooded
         if (check_offer_throttle(mFromName, true))
         {
-            log_message = "<nolink>" + chatHistory_string + "</nolink> " + LLTrans::getString("InvOfferGaveYou") + " " + getSanitizedDescription() + LLTrans::getString(".");
+            log_message = no_link(chatHistory_string) + " " + LLTrans::getString("InvOfferGaveYou") + " " + getSanitizedDescription() + LLTrans::getString(".");
             LLSD args;
             args["MESSAGE"] = log_message;
             LLNotificationsUtil::add("SystemMessageTip", args);
@@ -1947,16 +1971,16 @@ bool LLOfferInfo::inventory_task_offer_callback(const LLSD& notification, const 
                     quot + mFromName + quot + " " +
                     LLTrans::getString("InvOfferOwnedByGroup") + " " +
                     quot + group_name + quot;
-                chatHistory_string = mFromName + " " +
+                chatHistory_string = no_link(mFromName) + " " +
                     LLTrans::getString("InvOfferOwnedByGroup") + " " +
-                    quot + group_name + quot;
+                    quot + no_link(group_name) + quot;
             }
             else
             {
                 from_string = LLTrans::getString("InvOfferAnObjectNamed") + " " +
                     quot + mFromName + quot + " " +
                     LLTrans::getString("InvOfferOwnedByUnknownGroup");
-                chatHistory_string = mFromName + " " +
+                chatHistory_string = no_link(mFromName) + " " +
                     LLTrans::getString("InvOfferOwnedByUnknownGroup");
             }
         }
@@ -1995,13 +2019,14 @@ bool LLOfferInfo::inventory_task_offer_callback(const LLSD& notification, const 
 
             from_string = LLTrans::getString("InvOfferAnObjectNamed") + " "+ LLTrans::getString("'") + mFromName
                 + LLTrans::getString("'")+" " + LLTrans::getString("InvOfferOwnedBy") + name_slurl;
-            chatHistory_string = mFromName + " " + LLTrans::getString("InvOfferOwnedBy") + " " + name_slurl;
+            chatHistory_string = no_link(mFromName) + " " + LLTrans::getString("InvOfferOwnedBy") + " " + name_slurl;
 // [/SL:KB]
         }
     }
     else
     {
-        from_string = chatHistory_string = mFromName;
+        from_string = mFromName;
+        chatHistory_string = no_link(mFromName);
     }
 
     LLUUID destination;
@@ -2043,7 +2068,7 @@ bool LLOfferInfo::inventory_task_offer_callback(const LLSD& notification, const 
             //don't spam user if flooded
             if (check_offer_throttle(mFromName, true))
             {
-                log_message = "<nolink>" + chatHistory_string + "</nolink> " + LLTrans::getString("InvOfferGaveYou") + " " + getSanitizedDescription() + LLTrans::getString(".");
+                log_message = chatHistory_string + " " + LLTrans::getString("InvOfferGaveYou") + " " + getSanitizedDescription() + LLTrans::getString(".");
                 LLSD args;
                 args["MESSAGE"] = log_message;
                 LLNotificationsUtil::add("SystemMessageTip", args);
@@ -4582,11 +4607,12 @@ void process_avatar_appearance(LLMessageSystem *mesgsys, void **user_data)
     if (avatarp)
     {
         avatarp->processAvatarAppearance( mesgsys );
+        return;
     }
-    else
-    {
-        LL_WARNS("Messaging") << "avatar_appearance sent for unknown avatar " << uuid << LL_ENDL;
-    }
+    // The avatar object doesn't exist yet.
+    // We will re-request its appearance data after it is created.
+    LLVOAvatar::registerEarlyAppearance(uuid);
+    LL_WARNS("Messaging") << "AvatarAppearance received for avatar " << uuid << " before object created" << LL_ENDL;
 }
 
 void process_camera_constraint(LLMessageSystem *mesgsys, void **user_data)

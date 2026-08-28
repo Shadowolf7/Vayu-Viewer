@@ -59,6 +59,7 @@ public:
     {
         mStopping = true;
         mSleepMsecs = 1;
+        setQuitting();
     }
 
     void run() override
@@ -124,6 +125,11 @@ bool LLWatchdogTimeout::isAlive() const
     return (mTimer.getStarted() && !mTimer.hasExpired());
 }
 
+bool LLWatchdogTimeout::hasExpired() const
+{
+    return mTimer.hasExpired();
+}
+
 bool LLWatchdogTimeout::started() const
 {
     return mTimer.getStarted();
@@ -180,6 +186,11 @@ LLWatchdog::LLWatchdog()
 
 LLWatchdog::~LLWatchdog()
 {
+    // cleanup() is normally driven by the application, but on any path that
+    // skips it the timer thread would outlive the singleton and its next
+    // iteration would call getInstance() on an instance already being
+    // destroyed. cleanup() is idempotent, so running it again costs nothing.
+    cleanup();
 }
 
 void LLWatchdog::add(LLWatchdogEntry* e)
@@ -233,11 +244,23 @@ void LLWatchdog::init(
     mCrashOnFreeze = crash_on_freeze;
 }
 
-void LLWatchdog::cleanup()
+void LLWatchdog::shutdown()
 {
     if (mTimer)
     {
         mTimer->stop();
+    }
+}
+
+void LLWatchdog::cleanup()
+{
+    LL_PROFILE_ZONE_SCOPED;
+    if (mTimer)
+    {
+        // ~LLWatchdogTimerThread signals and joins the worker itself, so the
+        // stop/shutdown pair belongs to exactly one of the two -- calling it
+        // here as well would run setQuitting() again after shutdown() had
+        // already freed the thread's mutex.
         delete mTimer;
         mTimer = nullptr;
     }

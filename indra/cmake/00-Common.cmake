@@ -210,8 +210,12 @@ if(WINDOWS)
   )
 
   # Flags to support building with newer instruction sets.
-  # https://learn.microsoft.com/en-us/cpp/build/reference/arch-x64?view=msvc-170
-  if(USE_AVX2)
+  # https://learn.microsoft.com/en-us/cpp/build/reference/arch-x64?view=msvc-180
+  if(USE_AVX512)
+    add_compile_options(
+      /arch:AVX512
+    )
+  elseif(USE_AVX2)
     add_compile_options(
       /arch:AVX2
     )
@@ -339,6 +343,10 @@ if(LINUX)
     add_compile_options(
       -march=native
       -mtune=native
+    )
+  elseif(USE_AVX512)
+    add_compile_options(
+      -march=x86-64-v4
     )
   elseif(USE_AVX2)
     add_compile_options(

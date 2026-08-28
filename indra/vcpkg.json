@@ -10,6 +10,7 @@
     "boost-fiber",
     "boost-graph",
     "boost-iostreams",
+    "boost-process",
     "boost-program-options",
     "boost-random",
     "boost-regex",

@@ -61,6 +61,7 @@
 #include "lltooltip.h"
 #include "llmenugl.h"
 #include "llchatmentionhelper.h"
+#include "llgestureautocompletehelper.h"
 
 #include <queue>
 #include "llcombobox.h"
@@ -508,7 +509,7 @@ void LLTextEditor::replaceTextAll(const std::string& search_text, const std::str
 
 S32 LLTextEditor::prevWordPos(S32 cursorPos) const
 {
-    LLWString wtext(getWText());
+    const LLWString& wtext = getWText();
     while( (cursorPos > 0) && (wtext[cursorPos-1] == ' ') )
     {
         cursorPos--;
@@ -525,7 +526,7 @@ S32 LLTextEditor::prevWordPos(S32 cursorPos) const
 
 S32 LLTextEditor::nextWordPos(S32 cursorPos) const
 {
-    LLWString wtext(getWText());
+    const LLWString& wtext = getWText();
     while( (cursorPos < getLength()) && LLWStringUtil::isPartOfWord( wtext[cursorPos] ) )
     {
         cursorPos++;
@@ -600,7 +601,7 @@ bool LLTextEditor::selectionContainsLineBreaks()
         S32 left = llmin(mSelectionStart, mSelectionEnd);
         S32 right = left + llabs(mSelectionStart - mSelectionEnd);
 
-        LLWString wtext = getWText();
+        const LLWString& wtext = getWText();
         for( S32 i = left; i < right; i++ )
         {
             if (wtext[i] == '\n')
@@ -637,7 +638,7 @@ S32 LLTextEditor::indentLine( S32 pos, S32 spaces )
         // Unindent
         for(S32 i=0; i < -spaces; i++)
         {
-            LLWString wtext = getWText();
+            const LLWString& wtext = getWText();
             if (wtext[pos] == ' ')
             {
                 delta_spaces -= remove( pos, 1, false );
@@ -652,7 +653,9 @@ void LLTextEditor::indentSelectedLines( S32 spaces )
 {
     if( hasSelection() )
     {
-        LLWString text = getWText();
+        // A reference, so the indentLine() calls below are visible through it
+        // without re-copying the document once per line.
+        const LLWString& text = getWText();
         S32 left = llmin( mSelectionStart, mSelectionEnd );
         S32 right = left + llabs( mSelectionStart - mSelectionEnd );
         bool cursor_on_right = (mSelectionEnd > mSelectionStart);
@@ -700,8 +703,6 @@ void LLTextEditor::indentSelectedLines( S32 spaces )
                 cur += delta_spaces;
             }
             right += delta_spaces;
-
-            text = getWText();
 
             // Find the next new line
             while( (cur < right) && (text[cur] != '\n') )
@@ -1062,7 +1063,7 @@ bool LLTextEditor::handleDoubleClick(S32 x, S32 y, MASK mask)
         setCursorAtLocalPos( x, y, false );
         deselect();
 
-        LLWString text = getWText();
+        const LLWString& text = getWText();
 
         // Prefer selecting a whole emoji cluster — covers both halves of the
         // glyph hit-test (cursor lands at cluster_start or cluster_end after
@@ -1221,7 +1222,7 @@ void LLTextEditor::removeCharOrTab()
     {
         S32 chars_to_remove = 1;
 
-        LLWString text = getWText();
+        const LLWString& text = getWText();
         if (text[mCursorPos - 1] == ' ')
         {
             // Try to remove a "tab"
@@ -1408,7 +1409,7 @@ void LLTextEditor::tryToShowEmojiHelper()
         return;
 
     S32 shortCodePos;
-    LLWString wtext(getWText());
+    const LLWString& wtext = getWText();
     if (LLEmojiHelper::isCursorInEmojiCode(wtext, mCursorPos, &shortCodePos))
     {
         const LLRect cursorRect(getLocalRectFromDocIndex(shortCodePos));
@@ -1429,7 +1430,7 @@ void LLTextEditor::tryToShowMentionHelper()
         return;
 
     S32 mention_start_pos;
-    LLWString text(getWText());
+    const LLWString& text = getWText();
     if (LLChatMentionHelper::instance().isCursorInNameMention(text, mCursorPos, &mention_start_pos))
     {
         const LLRect cursor_rect(getLocalRectFromDocIndex(mention_start_pos));
@@ -1823,27 +1824,24 @@ void LLTextEditor::pasteTextWithLinebreaks(LLWString & clean_string)
     LLWString::size_type start = 0;
     LLWString::size_type                  pos   = clean_string.find('\n', start);
 
-    while((pos != LLWString::npos) && (pos != clean_string.length() -1))
+    while (pos != LLWString::npos)
     {
-        if(pos!=start)
+        if (pos != start)
         {
             std::basic_string<llwchar> str = std::basic_string<llwchar>(clean_string,start,pos-start);
             setCursorPos(mCursorPos + insert(mCursorPos, str, true, LLTextSegmentPtr()));
         }
-        addLineBreakChar(true);         // Add a line break and group with the next addition.
+        const bool trailing_linebreak = (pos == clean_string.length() - 1);
+        addLineBreakChar(!trailing_linebreak);
 
         start = pos+1;
         pos = clean_string.find('\n',start);
     }
 
-    if (pos != start)
+    if (start < clean_string.length())
     {
         std::basic_string<llwchar> str = std::basic_string<llwchar>(clean_string,start,clean_string.length()-start);
         setCursorPos(mCursorPos + insert(mCursorPos, str, false, LLTextSegmentPtr()));
-    }
-    else
-    {
-        addLineBreakChar(false);        // Add a line break and end the grouping.
     }
 }
 
@@ -2063,7 +2061,7 @@ void LLTextEditor::unindentLineBeforeCloseBrace()
 {
     if( mCursorPos >= 1 )
     {
-        LLWString text = getWText();
+        const LLWString& text = getWText();
         if( ' ' == text[ mCursorPos - 1 ] )
         {
             S32 line = getLineNumFromDocIndex(mCursorPos, false);
@@ -2093,7 +2091,8 @@ bool LLTextEditor::handleKeyHere(KEY key, MASK mask )
     // not handled and let the parent take care of field movement.
     if (KEY_TAB == key && mTabsToNextField)
     {
-        return mShowChatMentionPicker && LLChatMentionHelper::instance().handleKey(this, key, mask);
+        return (mShowChatMentionPicker && LLChatMentionHelper::instance().handleKey(this, key, mask))
+            || LLGestureAutocompleteHelper::instance().handleKey(this, key, mask);
     }
 
     if (mReadOnly && mScroller)
@@ -2107,7 +2106,8 @@ bool LLTextEditor::handleKeyHere(KEY key, MASK mask )
         if (!mReadOnly)
         {
             if ((mShowEmojiHelper && LLEmojiHelper::instance().handleKey(this, key, mask)) ||
-                (mShowChatMentionPicker && LLChatMentionHelper::instance().handleKey(this, key, mask)))
+                (mShowChatMentionPicker && LLChatMentionHelper::instance().handleKey(this, key, mask)) ||
+                LLGestureAutocompleteHelper::instance().handleKey(this, key, mask))
             {
                 return true;
             }
@@ -2233,7 +2233,7 @@ void LLTextEditor::doDelete()
     {
         S32 i;
         S32 chars_to_remove = 1;
-        LLWString text = getWText();
+        const LLWString& text = getWText();
         if( (text[ mCursorPos ] == ' ') && (mCursorPos + SPACES_PER_TAB < getLength()) )
         {
             // Try to remove a full tab's worth of spaces
@@ -2502,7 +2502,7 @@ void LLTextEditor::drawPreeditMarker()
         return;
     }
 
-    const LLWString textString(getWText());
+    const LLWString& textString = getWText();
     const llwchar *text = textString.c_str();
     const S32 text_len = getLength();
     const S32 num_lines = getLineCount();
@@ -2674,7 +2674,7 @@ void LLTextEditor::autoIndent()
     S32 space_count = 0;
     S32 i;
 
-    LLWString text = getWText();
+    const LLWString& text = getWText();
     S32 offset = getLineOffsetFromDocIndex(mCursorPos);
     while(( ' ' == text[line_start] ) && (space_count < offset))
     {
@@ -2859,7 +2859,7 @@ bool LLTextEditor::tryToRevertToPristineState()
 
 void LLTextEditor::updateLinkSegments()
 {
-    LLWString wtext = getWText();
+    const LLWString& wtext = getWText();
 
     // update any segments that contain a link
     for (segment_set_t::iterator it = mSegments.begin(); it != mSegments.end(); ++it)
@@ -3236,7 +3236,7 @@ bool LLTextEditor::getPreeditLocation(S32 query_offset, LLCoordGL *coord, LLRect
         current_line++;
     }
 
-    const LLWString textString(getWText());
+    const LLWString& textString = getWText();
     const llwchar * const text = textString.c_str();
     // Multi-line iteration: match segment layout's line spacing (see above).
     const S32 line_height = mFont->getLineSpacing();

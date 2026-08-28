@@ -383,6 +383,7 @@ set(viewer_SOURCE_FILES
     llfloaterfonttest.cpp
     llfloaterforgetuser.cpp
     llfloatergesture.cpp
+    llfloatergestureautocompletepicker.cpp
     llfloatergodtools.cpp
     llfloatergotoline.cpp
     llfloatergridstatus.cpp
@@ -393,7 +394,6 @@ set(viewer_SOURCE_FILES
     llfloaterhelpbrowser.cpp
     llfloaterhexeditor.cpp
     llfloaterhoverheight.cpp
-    llfloaterhowto.cpp
     llfloaterhud.cpp
     llfloaterimagepreview.cpp
     llfloaterimsessiontab.cpp
@@ -713,6 +713,7 @@ set(viewer_SOURCE_FILES
     llpreviewtexture.cpp
     llproductinforequest.cpp
     llprogressview.cpp
+    llpublishedobjectmgr.cpp
     llrecentpeople.cpp
     llreflectionmap.cpp
     llreflectionmapmanager.cpp
@@ -1169,6 +1170,7 @@ set(viewer_HEADER_FILES
     llfloaterfonttest.h
     llfloaterforgetuser.h
     llfloatergesture.h
+    llfloatergestureautocompletepicker.h
     llfloatergodtools.h
     llfloatergotoline.h
     llfloatergridstatus.h
@@ -1179,7 +1181,6 @@ set(viewer_HEADER_FILES
     llfloaterhelpbrowser.h
     llfloaterhexeditor.h
     llfloaterhoverheight.h
-    llfloaterhowto.h
     llfloaterhud.h
     llfloaterimagepreview.h
     llfloaterimnearbychat.h
@@ -1487,6 +1488,7 @@ set(viewer_HEADER_FILES
     llpreviewtexture.h
     llproductinforequest.h
     llprogressview.h
+    llpublishedobjectmgr.h
     llrecentpeople.h
     llreflectionmap.h
     llreflectionmapmanager.h

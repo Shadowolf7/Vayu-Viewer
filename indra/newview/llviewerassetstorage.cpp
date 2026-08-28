@@ -502,7 +502,7 @@ void LLViewerAssetStorage::assetRequestCoro(
 
     if (!gAgent.getRegion()->capabilitiesReceived())
     {
-        LL_WARNS_ONCE("ViewerAsset") << "Waiting for capabilities" << LL_ENDL;
+        LL_INFOS_ONCE("ViewerAsset") << "Waiting for capabilities" << LL_ENDL;
 
         LLEventStream capsRecv("waitForCaps", true);
 
@@ -529,7 +529,7 @@ void LLViewerAssetStorage::assetRequestCoro(
             return;
         }
 
-        LL_WARNS_ONCE("ViewerAsset") << "capsRecv got event" << LL_ENDL;
+        LL_INFOS_ONCE("ViewerAsset") << "capsRecv got event" << LL_ENDL;
     }
 
     std::string viewerAssetUrl;

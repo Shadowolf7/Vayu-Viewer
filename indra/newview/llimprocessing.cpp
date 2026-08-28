@@ -1345,10 +1345,15 @@ void LLIMProcessing::processNewMessage(LLUUID from_id,
             // should happen after you get an "invitation"
             if (!gIMMgr->hasSession(session_id))
             {
-                return;
+                if (!gAgent.isInGroup(session_id) ||
+                    !gIMMgr->checkSnoozeExpiration(session_id) ||
+                    !gIMMgr->restoreSnoozedSession(session_id))
+                {
+                    return;
+                }
             }
 
-            else if (offline == IM_ONLINE && is_do_not_disturb)
+            if (offline == IM_ONLINE && is_do_not_disturb)
             {
 
                 // return a standard "do not disturb" message, but only do it to online IM
@@ -1876,7 +1881,8 @@ void LLIMProcessing::requestOfflineMessagesCoro(std::string url)
 
     if (!contents.size())
     {
-        LL_WARNS("Messaging") << "No contents received for offline messages via capability " << url << LL_ENDL;
+        // Received no offline messages on login.
+        LL_INFOS("Messaging") << "No contents received for offline messages via capability " << url << LL_ENDL;
         return;
     }
 
