@@ -213,7 +213,7 @@ static LL_FORCE_INLINE S32 aabb_in_frustum_avx2(const LLVector4a& center, const 
     for (U32 i = 0; i < max_planes; ++i)
     {
         if (skip_far_clip && i == 5) continue;
-        if (plane_mask[i] < PLANE_MASK_NUM)
+        if (plane_mask[i] < LLCamera::PLANE_MASK_NUM)
         {
             px[i] = planes[i][0];
             py[i] = planes[i][1];
