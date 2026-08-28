@@ -33,6 +33,7 @@
 #include "llvoavatar.h"
 #include "roles_constants.h"            // Group "powers"
 
+#include "llappviewer.h"
 #include "rlvui.h"
 #include "rlvhandler.h"
 #include "rlvextensions.h"
@@ -207,7 +208,7 @@ void RlvUIEnabler::onToggleShowMinimap()
     static bool fPrevVisibile = false;
     if ( (!fEnable) && ((fPrevVisibile = LLFloaterReg::instanceVisible("mini_map"))) )
         LLFloaterReg::hideInstance("mini_map");
-    else if ( (fEnable) && (fPrevVisibile) )
+    else if ( (fEnable) && (fPrevVisibile) && (!LLApp::isExiting()) && (!LLAppViewer::instance() || !LLAppViewer::instance()->isDisconnected()) )
         LLFloaterReg::showInstance("mini_map");
 
     // Break/reestablish the visibility connection for the nearby people panel embedded minimap instance
