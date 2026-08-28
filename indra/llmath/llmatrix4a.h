@@ -196,6 +196,15 @@ public:
 
     inline void rotate(const LLVector4a& v, LLVector4a& res) const
     {
+#if (defined(__AVX2__) || defined(__FMA__) || defined(__ARM_NEON) || defined(__aarch64__))
+        LLVector4a x = _mm_shuffle_ps(v, v, _MM_SHUFFLE(0, 0, 0, 0));
+        LLVector4a y = _mm_shuffle_ps(v, v, _MM_SHUFFLE(1, 1, 1, 1));
+        LLVector4a z = _mm_shuffle_ps(v, v, _MM_SHUFFLE(2, 2, 2, 2));
+
+        res = _mm_mul_ps(x, mMatrix[0]);
+        res = _mm_fmadd_ps(y, mMatrix[1], res);
+        res = _mm_fmadd_ps(z, mMatrix[2], res);
+#else
         LLVector4a y,z;
 
         res = _mm_shuffle_ps(v, v, _MM_SHUFFLE(0, 0, 0, 0));
@@ -208,10 +217,20 @@ public:
 
         res.add(y);
         res.add(z);
+#endif
     }
 
     inline void affineTransformSSE(const LLVector4a& v, LLVector4a& res) const
     {
+#if (defined(__AVX2__) || defined(__FMA__) || defined(__ARM_NEON) || defined(__aarch64__))
+        LLVector4a x = _mm_shuffle_ps(v, v, _MM_SHUFFLE(0, 0, 0, 0));
+        LLVector4a y = _mm_shuffle_ps(v, v, _MM_SHUFFLE(1, 1, 1, 1));
+        LLVector4a z = _mm_shuffle_ps(v, v, _MM_SHUFFLE(2, 2, 2, 2));
+
+        res = _mm_fmadd_ps(x, mMatrix[0], mMatrix[3]);
+        res = _mm_fmadd_ps(y, mMatrix[1], res);
+        res = _mm_fmadd_ps(z, mMatrix[2], res);
+#else
         LLVector4a x,y,z;
 
         x = _mm_shuffle_ps(v, v, _MM_SHUFFLE(0, 0, 0, 0));
@@ -225,6 +244,7 @@ public:
         x.add(y);
         z.add(mMatrix[3]);
         res.setAdd(x,z);
+#endif
     }
 
     inline void affineTransformNonSSE(const LLVector4a& v, LLVector4a& res) const
@@ -249,10 +269,17 @@ static_assert(std::is_trivial<LLMatrix4a>::value, "LLMatrix4a must be a trivial 
 inline LLVector4a rowMul(const LLVector4a &row, const LLMatrix4a &mat)
 {
     LLVector4a result;
+#if (defined(__AVX2__) || defined(__FMA__) || defined(__ARM_NEON) || defined(__aarch64__))
+    result = _mm_mul_ps(_mm_shuffle_ps(row, row, _MM_SHUFFLE(0, 0, 0, 0)), mat.mMatrix[0]);
+    result = _mm_fmadd_ps(_mm_shuffle_ps(row, row, _MM_SHUFFLE(1, 1, 1, 1)), mat.mMatrix[1], result);
+    result = _mm_fmadd_ps(_mm_shuffle_ps(row, row, _MM_SHUFFLE(2, 2, 2, 2)), mat.mMatrix[2], result);
+    result = _mm_fmadd_ps(_mm_shuffle_ps(row, row, _MM_SHUFFLE(3, 3, 3, 3)), mat.mMatrix[3], result);
+#else
     result = _mm_mul_ps(_mm_shuffle_ps(row, row, _MM_SHUFFLE(0, 0, 0, 0)), mat.mMatrix[0]);
     result = _mm_add_ps(result, _mm_mul_ps(_mm_shuffle_ps(row, row, _MM_SHUFFLE(1, 1, 1, 1)), mat.mMatrix[1]));
     result = _mm_add_ps(result, _mm_mul_ps(_mm_shuffle_ps(row, row, _MM_SHUFFLE(2, 2, 2, 2)), mat.mMatrix[2]));
     result = _mm_add_ps(result, _mm_mul_ps(_mm_shuffle_ps(row, row, _MM_SHUFFLE(3, 3, 3, 3)), mat.mMatrix[3]));
+#endif
     return result;
 }
 

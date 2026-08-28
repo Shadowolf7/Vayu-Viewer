@@ -204,6 +204,64 @@ bool LLCamera::isChanged()
     return changed;
 }
 
+#if defined(__AVX2__)
+static LL_FORCE_INLINE S32 aabb_in_frustum_avx2(const LLVector4a& center, const LLVector4a& radius, const LLPlane* planes, U32 max_planes, const U8* plane_mask, bool skip_far_clip)
+{
+    float px[8] = {0}, py[8] = {0}, pz[8] = {0}, pd[8] = {0};
+    int active_mask = 0;
+
+    for (U32 i = 0; i < max_planes; ++i)
+    {
+        if (skip_far_clip && i == 5) continue;
+        if (plane_mask[i] < PLANE_MASK_NUM)
+        {
+            px[i] = planes[i][0];
+            py[i] = planes[i][1];
+            pz[i] = planes[i][2];
+            pd[i] = planes[i][3];
+            active_mask |= (1 << i);
+        }
+    }
+
+    if (active_mask == 0) return 2;
+
+    const __m256 nx = _mm256_loadu_ps(px);
+    const __m256 ny = _mm256_loadu_ps(py);
+    const __m256 nz = _mm256_loadu_ps(pz);
+    const __m256 nd = _mm256_loadu_ps(pd);
+
+    const __m256 abs_nx = _mm256_andnot_ps(_mm256_set1_ps(-0.0f), nx);
+    const __m256 abs_ny = _mm256_andnot_ps(_mm256_set1_ps(-0.0f), ny);
+    const __m256 abs_nz = _mm256_andnot_ps(_mm256_set1_ps(-0.0f), nz);
+
+    const __m256 cx = _mm256_set1_ps(center[0]);
+    const __m256 cy = _mm256_set1_ps(center[1]);
+    const __m256 cz = _mm256_set1_ps(center[2]);
+    const __m256 rx = _mm256_set1_ps(radius[0]);
+    const __m256 ry = _mm256_set1_ps(radius[1]);
+    const __m256 rz = _mm256_set1_ps(radius[2]);
+
+    const __m256 dist = _mm256_fmadd_ps(cx, nx, _mm256_fmadd_ps(cy, ny, _mm256_fmadd_ps(cz, nz, nd)));
+    const __m256 r_eff = _mm256_fmadd_ps(rx, abs_nx, _mm256_fmadd_ps(ry, abs_ny, _mm256_mul_ps(rz, abs_nz)));
+
+    // Culled: dist > r_eff
+    const __m256 culled = _mm256_cmp_ps(dist, r_eff, _CMP_GT_OQ);
+    if ((_mm256_movemask_ps(culled) & active_mask) != 0)
+    {
+        return 0;
+    }
+
+    // Partial: dist + r_eff > 0
+    const __m256 partial = _mm256_cmp_ps(_mm256_add_ps(dist, r_eff), _mm256_setzero_ps(), _CMP_GT_OQ);
+    if ((_mm256_movemask_ps(partial) & active_mask) != 0)
+    {
+        return 1;
+    }
+
+    return 2;
+}
+#endif
+
 S32 LLCamera::AABBInFrustum(const LLVector4a &center, const LLVector4a& radius, const LLPlane* planes)
 {
     if(!planes)
@@ -212,11 +270,15 @@ S32 LLCamera::AABBInFrustum(const LLVector4a &center, const LLVector4a& radius, 
         planes = mAgentPlanes;
     }
 
+    U32 max_planes = llmin(mPlaneCount, (U32) AGENT_PLANE_USER_CLIP_NUM);       // mAgentPlanes[] size is 7
+
+#if defined(__AVX2__)
+    return aabb_in_frustum_avx2(center, radius, planes, max_planes, mPlaneMask, false);
+#else
     U8 mask = 0;
     bool result = false;
     LLVector4a rscale, maxp, minp;
     LLSimdScalar d;
-    U32 max_planes = llmin(mPlaneCount, (U32) AGENT_PLANE_USER_CLIP_NUM);       // mAgentPlanes[] size is 7
     for (U32 i = 0; i < max_planes; i++)
     {
         mask = mPlaneMask[i];
@@ -241,6 +303,7 @@ S32 LLCamera::AABBInFrustum(const LLVector4a &center, const LLVector4a& radius, 
     }
 
     return result?1:2;
+#endif
 }
 
 //exactly same as the function AABBInFrustum(...)
@@ -258,11 +321,15 @@ S32 LLCamera::AABBInFrustumNoFarClip(const LLVector4a& center, const LLVector4a&
         planes = mAgentPlanes;
     }
 
+    U32 max_planes = llmin(mPlaneCount, (U32) AGENT_PLANE_USER_CLIP_NUM);       // mAgentPlanes[] size is 7
+
+#if defined(__AVX2__)
+    return aabb_in_frustum_avx2(center, radius, planes, max_planes, mPlaneMask, true);
+#else
     U8 mask = 0;
     bool result = false;
     LLVector4a rscale, maxp, minp;
     LLSimdScalar d;
-    U32 max_planes = llmin(mPlaneCount, (U32) AGENT_PLANE_USER_CLIP_NUM);       // mAgentPlanes[] size is 7
     for (U32 i = 0; i < max_planes; i++)
     {
         mask = mPlaneMask[i];
@@ -287,6 +354,7 @@ S32 LLCamera::AABBInFrustumNoFarClip(const LLVector4a& center, const LLVector4a&
     }
 
     return result?1:2;
+#endif
 }
 
 //exactly same as the function AABBInFrustumNoFarClip(...)

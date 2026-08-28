@@ -61,13 +61,13 @@
         #endif // GLM_FORCE_SSE42
     #else
         #if defined(__AVX2__)
-            #include <smmintrin.h>
+            #include <immintrin.h>
 
             #ifndef GLM_FORCE_AVX2
             #define GLM_FORCE_AVX2 1
             #endif // GLM_FORCE_AVX2
         #elif defined(__AVX__)
-            #include <smmintrin.h>
+            #include <immintrin.h>
 
             #ifndef GLM_FORCE_AVX
             #define GLM_FORCE_AVX 1
