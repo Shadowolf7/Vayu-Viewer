@@ -154,6 +154,10 @@ public:
     void orphanize(LLViewerObject *childp, U32 parent_id, U32 ip, U32 port);
     void findOrphans(LLViewerObject* objectp, U32 ip, U32 port);
 
+    // Re-evaluates spatial partitions, updates bounding extents, and forces
+    // full geometry rebuilds on all live drawables in the scene.
+    void refreshAllObjects();
+
     // Vehicle/seat root kills are inherently racy around region crossings -
     // the outgoing sim's copy can die before or after the new sim's copy
     // exists (see Vayu issue #74). Rather than deciding instantly whether a

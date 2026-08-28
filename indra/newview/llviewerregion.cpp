@@ -96,10 +96,9 @@
 // out the two lists of capabilities for analysis.
 //#define DEBUG_CAPS_GRANTS
 
-// The server only keeps our pending agent info for 60 seconds.
-// We want to allow for seed cap retry, but its not useful after that 60 seconds.
-// Even though we gave up on login, keep trying for caps after we are logged in:
-const S32 MAX_CAP_REQUEST_ATTEMPTS = 30;
+// Use graduated exponential backoff (50ms -> 100ms -> 200ms -> 400ms -> 500ms max)
+// for transient 502/503/499 HTTP hiccups across a bounded retry sequence (~1.8s total).
+const S32 MAX_CAP_REQUEST_ATTEMPTS = 6;
 const U32 DEFAULT_MAX_REGION_WIDE_PRIM_COUNT = 15000;
 
 bool LLViewerRegion::sVOCacheCullingEnabled = false;
@@ -351,7 +350,8 @@ void LLViewerRegionImpl::requestBaseCapabilitiesCoro(U64 regionHandle)
         {
             LL_WARNS("AppInit", "Capabilities") << "Malformed response" << LL_ENDL;
             ++(impl->mSeedCapAttempts);
-            // setup for retry.
+            F32 backoff = llmin(0.05f * static_cast<F32>(1 << llmin(impl->mSeedCapAttempts - 1, 4)), 0.5f);
+            llcoro::suspendUntilTimeout(backoff);
             continue;
         }
 
@@ -359,9 +359,10 @@ void LLViewerRegionImpl::requestBaseCapabilitiesCoro(U64 regionHandle)
         LLCore::HttpStatus status = LLCoreHttpUtil::HttpCoroutineAdapter::getStatusFromLLSD(httpResults);
         if (!status)
         {
-            LL_WARNS("AppInit", "Capabilities") << "HttpStatus error " << LL_ENDL;
+            LL_WARNS("AppInit", "Capabilities") << "HttpStatus error " << status.toString() << LL_ENDL;
             ++(impl->mSeedCapAttempts);
-            // setup for retry.
+            F32 backoff = llmin(0.05f * static_cast<F32>(1 << llmin(impl->mSeedCapAttempts - 1, 4)), 0.5f);
+            llcoro::suspendUntilTimeout(backoff);
             continue;
         }
 
@@ -372,7 +373,8 @@ void LLViewerRegionImpl::requestBaseCapabilitiesCoro(U64 regionHandle)
         {
             LL_WARNS("AppInit", "Capabilities") << "Received results for a stale capabilities request!" << LL_ENDL;
             ++(impl->mSeedCapAttempts);
-            // setup for retry.
+            F32 backoff = llmin(0.05f * static_cast<F32>(1 << llmin(impl->mSeedCapAttempts - 1, 4)), 0.5f);
+            llcoro::suspendUntilTimeout(backoff);
             continue;
         }
 
@@ -582,7 +584,9 @@ void LLViewerRegionImpl::requestSimulatorFeatureCoro(std::string url, U64 region
         LLCore::HttpStatus status = LLCoreHttpUtil::HttpCoroutineAdapter::getStatusFromLLSD(httpResults);
         if (!status)
         {
-            LL_WARNS("AppInit", "SimulatorFeatures") << "HttpStatus error retrying" << LL_ENDL;
+            LL_WARNS("AppInit", "SimulatorFeatures") << "HttpStatus error retrying: " << status.toString() << LL_ENDL;
+            F32 backoff = llmin(0.05f * static_cast<F32>(1 << llmin(attemptNumber - 1, 4)), 0.5f);
+            llcoro::suspendUntilTimeout(backoff);
             continue;
         }
 

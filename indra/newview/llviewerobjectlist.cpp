@@ -1776,6 +1776,28 @@ void LLViewerObjectList::repartitionObjects()
     }
 }
 
+void LLViewerObjectList::refreshAllObjects()
+{
+    repartitionObjects();
+    for (vobj_list_t::iterator iter = mObjects.begin(); iter != mObjects.end(); ++iter)
+    {
+        LLViewerObject* objectp = *iter;
+        if (objectp && !objectp->isDead())
+        {
+            LLDrawable* drawable = objectp->mDrawable;
+            if (drawable && !drawable->isDead())
+            {
+                gPipeline.markRebuild(drawable, LLDrawable::REBUILD_ALL);
+            }
+        }
+    }
+    if (isAgentAvatarValid())
+    {
+        gAgentAvatarp->rebuildAttachments();
+    }
+    LL_INFOS("Renderer") << "Refreshed all scene objects and drawables" << LL_ENDL;
+}
+
 //debug code
 bool LLViewerObjectList::hasMapObjectInRegion(LLViewerRegion* regionp)
 {

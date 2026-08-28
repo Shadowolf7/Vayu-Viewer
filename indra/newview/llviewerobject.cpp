@@ -2705,25 +2705,43 @@ void LLViewerObject::interpolateLinearMotion(const F64SecondsImplicit& frame_tim
             }
             else
             {
-                // Check for how long we are crossing.
-                // Note: theoretically we can find time from velocity, acceleration and
-                // distance from border to new position, but it is not going to work
-                // if 'phase_out' activates
-                if (mRegionCrossExpire == 0)
+                static LLCachedControl<U32> crossing_movement_mode(gSavedSettings, "RegionCrossingMovementMode", 0);
+                if (crossing_movement_mode == 1)
                 {
-                    // Workaround: we can't accurately figure out time when we cross border
-                    // so just write down time 'after the fact', it is far from optimal in
-                    // case of lags, but for lags sMaxUpdateInterpolationTime will kick in first
-                    LL_DEBUGS("Interpolate") << "Predicted region crossing, new position " << new_pos << LL_ENDL;
-                    mRegionCrossExpire = frame_time + sMaxRegionCrossingInterpolationTime;
-                }
-                else if (frame_time > mRegionCrossExpire)
-                {
-                    // Predicting crossing over 1s, stop motion
-                    // Stop motion
-                    LL_DEBUGS("Interpolate") << "Predicting region crossing for too long, stopping at " << new_pos << LL_ENDL;
+                    // Stop at boundary mode: clamp to region edge, freeze position, and zero linear and angular velocity
+                    LLVector3 border_pos = getPositionRegion();
+                    border_pos.mV[VX] = llclamp(border_pos.mV[VX], 0.f, mRegionp->getWidth());
+                    border_pos.mV[VY] = llclamp(border_pos.mV[VY], 0.f, mRegionp->getWidth());
+                    new_pos = border_pos;
                     new_v.clear();
                     setAcceleration(LLVector3::zero);
+                    setAngularVelocity(LLVector3::zero);
+                    mRegionCrossExpire = 0;
+                }
+                else if (crossing_movement_mode == 0)
+                {
+                    // Predict mode (clamped to sMaxRegionCrossingInterpolationTime):
+                    if (mRegionCrossExpire == 0)
+                    {
+                        // Workaround: we can't accurately figure out time when we cross border
+                        // so just write down time 'after the fact', it is far from optimal in
+                        // case of lags, but for lags sMaxUpdateInterpolationTime will kick in first
+                        LL_DEBUGS("Interpolate") << "Predicted region crossing, new position " << new_pos << LL_ENDL;
+                        mRegionCrossExpire = frame_time + sMaxRegionCrossingInterpolationTime;
+                    }
+                    else if (frame_time > mRegionCrossExpire)
+                    {
+                        // Predicting crossing over 1s, stop motion
+                        LL_DEBUGS("Interpolate") << "Predicting region crossing for too long, stopping at " << new_pos << LL_ENDL;
+                        new_v.clear();
+                        setAcceleration(LLVector3::zero);
+                        setAngularVelocity(LLVector3::zero);
+                        mRegionCrossExpire = 0;
+                    }
+                }
+                else
+                {
+                    // Unlimited mode (legacy): let dead reckoning proceed without boundary expiration clamp
                     mRegionCrossExpire = 0;
                 }
             }

@@ -2472,6 +2472,12 @@ function="World.EnvPreset"
              function="Advanced.RefreshAttachments" />
         </menu_item_call>
         <menu_item_call
+         label="Refresh Objects"
+         name="Refresh Objects">
+            <menu_item_call.on_click
+             function="Advanced.RefreshObjects" />
+        </menu_item_call>
+        <menu_item_call
            label="Set UI Size to Default"
            name="Set UI Size to Default"           shortcut="control|alt|shift|R">
           <menu_item_call.on_click

@@ -311,18 +311,16 @@ void LLFollowCam::update()
             (focusOffsetDirection * (focusOffsetDistance - mFocusThreshold));
         if ( focusOffsetDistance > mFocusThreshold )
         {
-            // this version normalizes focus threshold by distance
-            // so that the effect is not changed with distance
-            /*
-            F32 focusThresholdNormalizedByDistance = distanceFromCameraToSubject * mFocusThreshold;
-            if ( focusOffsetDistance > focusThresholdNormalizedByDistance )
+            if ( focusOffsetDistance > mMaxCameraDistantFromSubject )
             {
-                LLVector3 focusOffsetDirection = focusOffset / focusOffsetDistance;
-                F32 force = focusOffsetDistance - focusThresholdNormalizedByDistance;
-            */
-
-            F32 focusLagLerp = LLSmoothInterpolation::getInterpolant( mFocusLag );
-            focus_pt_agent = lerp( focus_pt_agent, whereFocusWantsToBe, focusLagLerp );
+                // Snap focus if simulated focus is wildly out of range (e.g. after region transition or teleport)
+                focus_pt_agent = offsetSubjectPosition;
+            }
+            else
+            {
+                F32 focusLagLerp = LLSmoothInterpolation::getInterpolant( mFocusLag );
+                focus_pt_agent = lerp( focus_pt_agent, whereFocusWantsToBe, focusLagLerp );
+            }
             mSimulatedFocusGlobal = gAgent.getPosGlobalFromAgent(focus_pt_agent);
         }
         mRelativeFocus = lerp(mRelativeFocus, (focus_pt_agent - mSubjectPosition) * ~mSubjectRotation, LLSmoothInterpolation::getInterpolant(0.05f));
@@ -408,8 +406,16 @@ void LLFollowCam::update()
         //-------------------------------------------------------------------------------------------------
         if ( distanceFromPositionToIdealPosition > mPositionThreshold )
         {
-            F32 positionPullLerp = LLSmoothInterpolation::getInterpolant( mPositionLag );
-            simulated_pos_agent = lerp( simulated_pos_agent, whereCameraPositionWantsToBe, positionPullLerp );
+            if ( distanceFromPositionToIdealPosition > mMaxCameraDistantFromSubject || distanceFromCameraToSubject > mMaxCameraDistantFromSubject )
+            {
+                // Snap position to ideal position if simulated position is wildly out of range (e.g. after region transition or teleport)
+                simulated_pos_agent = idealCameraPosition;
+            }
+            else
+            {
+                F32 positionPullLerp = LLSmoothInterpolation::getInterpolant( mPositionLag );
+                simulated_pos_agent = lerp( simulated_pos_agent, whereCameraPositionWantsToBe, positionPullLerp );
+            }
         }
 
         //--------------------------------------------------------------------

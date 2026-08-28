@@ -1638,6 +1638,17 @@
       <key>Value</key>
       <integer>0</integer>
     </map>
+    <key>RegionCrossingMovementMode</key>
+    <map>
+      <key>Comment</key>
+      <string>Movement behavior when crossing region boundaries: 0 = Predict trajectory (clamped to 1s), 1 = Stop at boundary, 2 = Unlimited prediction (legacy)</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>U32</string>
+      <key>Value</key>
+      <integer>0</integer>
+    </map>
     <key>VayuVehicleUnseatGracePeriod</key>
     <map>
       <key>Comment</key>

@@ -2337,6 +2337,11 @@ void handle_refresh_attachments()
 }
 // [/SL:KB]
 
+void handle_refresh_objects()
+{
+    gObjectList.refreshAllObjects();
+}
+
 #if 1 //ndef LL_RELEASE_FOR_DOWNLOAD
 ///////////////////////////
 // DEBUG AVATAR TEXTURES //
@@ -10791,6 +10796,7 @@ void initialize_menus()
 // [SL:KB] - Patch: Appearance-PhantomAttach | Checked: Catznip-5.0
     commit.add("Advanced.RefreshAttachments", boost::bind(&handle_refresh_attachments));
 // [/SL:KB]
+    commit.add("Advanced.RefreshObjects", boost::bind(&handle_refresh_objects));
     view_listener_t::addMenu(new LLAdvancedDebugAvatarTextures(), "Advanced.DebugAvatarTextures");
     view_listener_t::addMenu(new LLAdvancedDumpAvatarLocalTextures(), "Advanced.DumpAvatarLocalTextures");
     // Advanced > Network
