@@ -25,13 +25,19 @@ This isn't exhaustive — Alchemy carries roughly 80 of its own settings beyond 
 ### Camera & movement
 
 - **Mouselook eye-height offset** — dial in your first-person camera height, with a master toggle so your saved value survives being switched off. Preferences → Move → Mouse Input, also in Quick Settings.
-- **Vehicle-tilt decoupling** — mouselook camera no longer tilts with the vehicle's roll/pitch while driving.
+- **Vehicle-tilt decoupling** — mouselook camera stays level with the horizon, decoupling vehicle bank/roll while heading and pitch track the vehicle smoothly across all mouse movement without resetting or drifting.
+- **Region-crossing movement modes** — choose how vehicles and avatars behave while crossing region boundaries (Preferences → Move → General under "At region crossing:"):
+  - *Predict trajectory (clamped)* (default): smooth dead reckoning clamped to 1.0s to prevent runaway projections.
+  - *Stop at boundary*: clamps position at the border and zeroes linear and angular velocity so vehicles don't spin or drift into the void during delayed server handoffs.
+  - *Unlimited prediction*: unconstrained legacy extrapolation.
+- **Follow-cam crossing damping** — camera snap guards in follow-cam eliminate the jarring 256m coordinate-origin rubberband/lag when driving vehicles across sim borders.
 
 ### Environment
 
 - **Classic clouds** — a real Linden Lab feature removed in 2011, restored and modernized: a proper wind-driven 3D cloud layer instead of the flat Windlight sky-dome. Includes client-side density synthesis since modern regions mostly no longer send real cloud data.
 - **Driver mode** — while seated on a vehicle, region/parcel crossings no longer swap your sky/water/day environment out from under you; snaps back to your actual location the instant you dismount.
-- Both available in Quick Settings' Environment section.
+- **Quick Settings EEP state sync & persistence** — preset dropdowns for Sky, Water, and Day Cycle in both the status-bar pulldown and floating Quick Settings panels stay synchronized in real time with active environment state, persist when reopened, and allow resetting back to region defaults directly from the dropdowns.
+- Available in Quick Settings' Environment section.
 
 ### Ported from Firestorm
 
@@ -55,6 +61,8 @@ Pose stand, Windlight quick-select, an FPS limiter, and a VRAM-triggered draw-di
 - Mesh loading no longer hangs waiting objects when a mesh header retry runs out of attempts.
 - Fixed an asset/mesh loading regression introduced by a curl upgrade.
 - **Vehicle unseating on region crossings** — a kill of the vehicle/seat you're on (or a passenger's) is now held briefly instead of acted on immediately, so an ordinary crossing-timing race doesn't unseat anyone for no reason. A genuinely dead seat — e.g. a parcel-ban ejection — still resolves correctly, just after a short grace period instead of leaving you stuck. ([fa665aa70f](https://github.com/Shadowolf7/Vayu-Viewer/commit/fa665aa70f))
+- **Neighbor capability retry resilience** — simulator capability and feature requests on region crossings now use graduated exponential backoff (50ms → 500ms max over 6 retries) instead of aggressive spin-retrying, preventing circuit handoff stalls.
+- **Scene & object visibility refresh** — added **Advanced → Refresh Objects** (`LLViewerObjectList::refreshAllObjects()`) to instantly force a full scene partition, drawable, and attachment rebuild after crossing hitches or desyncs.
 - **Texture cache memory growth in crowded areas** — writes queued for the block-compression disk cache no longer hold a second copy of every texture, and the queue is now bounded rather than growing until memory runs out. Both mattered most exactly where it hurt: arriving somewhere with a lot of textures or avatars.
 - **Crash reports now point at the actual crash** — the signal handler used to re-signal itself before the OS could record where the fault happened, so every crash dump described the handler rather than the bug. Genuine faults are now handed to the OS intact, which is what makes a crash dump worth collecting.
 
