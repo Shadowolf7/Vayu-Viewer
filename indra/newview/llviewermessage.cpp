@@ -1787,7 +1787,8 @@ bool LLOfferInfo::inventory_offer_callback(const LLSD& notification, const LLSD&
                 // end has already copied the items into your inventory,
                 // so we can fetch it out of our inventory.
 // [RLVa:KB] - Checked: 2010-04-18 (RLVa-1.2.0)
-                if ( (rlv_handler_t::isEnabled()) && (!RlvSettings::getForbidGiveToRLV()) && (LLAssetType::AT_CATEGORY == mType) && (mDesc.find(RLV_PUTINV_PREFIX) == 0) )
+                if ( (rlv_handler_t::isEnabled()) && (!RlvSettings::getForbidGiveToRLV()) && (LLAssetType::AT_CATEGORY == mType) &&
+                     ( (mDesc.find(RLV_PUTINV_PREFIX) == 0) || (mDesc.find(RLV_ROOT_FOLDER "/") == 0) ) )
                 {
                     RlvGiveToRLVAgentOffer* pOfferObserver = new RlvGiveToRLVAgentOffer(mObjectID);
                     pOfferObserver->startFetch();
@@ -2041,7 +2042,8 @@ bool LLOfferInfo::inventory_task_offer_callback(const LLSD& notification, const 
             //   - the user has enabled the feature
             //   - the inventory offer came from a script (and specifies a folder)
             //   - the name starts with the prefix - mDesc format: '[OBJECTNAME]'  ( http://slurl.com/... )
-            if ( (rlv_handler_t::isEnabled()) && (IM_TASK_INVENTORY_OFFERED == mIM) && (LLAssetType::AT_CATEGORY == mType) && (mDesc.find(RLV_PUTINV_PREFIX) == 1) )
+            if ( (rlv_handler_t::isEnabled()) && (IM_TASK_INVENTORY_OFFERED == mIM) && (LLAssetType::AT_CATEGORY == mType) &&
+                 ( (mDesc.find(RLV_PUTINV_PREFIX) == 1) || (mDesc.find(RLV_ROOT_FOLDER "/") == 1) ) )
             {
                 if (!RlvSettings::getForbidGiveToRLV())
                 {
@@ -2090,7 +2092,8 @@ bool LLOfferInfo::inventory_task_offer_callback(const LLSD& notification, const 
 
 // [RLVa:KB] - Checked: 2010-09-23 (RLVa-1.2.1e) | Added: RLVa-1.2.1e
             if ( (rlv_handler_t::isEnabled()) &&
-                 (IM_TASK_INVENTORY_OFFERED == mIM) && (LLAssetType::AT_CATEGORY == mType) && (mDesc.find(RLV_PUTINV_PREFIX) == 1) )
+                 (IM_TASK_INVENTORY_OFFERED == mIM) && (LLAssetType::AT_CATEGORY == mType) &&
+                 ( (mDesc.find(RLV_PUTINV_PREFIX) == 1) || (mDesc.find(RLV_ROOT_FOLDER "/") == 1) ) )
             {
                 std::string::size_type idxToken = mDesc.find("'  ( http://");
                 if (std::string::npos != idxToken)

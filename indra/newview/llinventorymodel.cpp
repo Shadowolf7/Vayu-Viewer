@@ -4157,7 +4157,7 @@ void LLInventoryModel::processBulkUpdateInventory(LLMessageSystem* msg, void**)
                         //      -> a better solution would be to only do the rename *after* the transaction completes but there doesn't seem
                         //         to be any way to accomplish that either *sighs*
                         if ( (rlv_handler_t::isEnabled()) && (!folderp->getName().empty()) && (tfolder->getName() != folderp->getName()) &&
-                            ((tfolder->getName().find(RLV_PUTINV_PREFIX) == 0)) )
+                            ((tfolder->getName().find(RLV_PUTINV_PREFIX) == 0) || (tfolder->getName().find(RLV_ROOT_FOLDER "/") == 0)) )
                         {
                             tfolder->rename(folderp->getName());
                         }

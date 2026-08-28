@@ -250,11 +250,17 @@ const LLUUID& RlvInventory::getSharedRootID() const
             const LLViewerInventoryCategory* pFolder;
             for (size_t idxFolder = 0, cntFolder = pFolders->size(); idxFolder < cntFolder; idxFolder++)
             {
-                if ( ((pFolder = pFolders->at(idxFolder)) != NULL) && (cstrSharedRoot == pFolder->getName()) )
+                if ((pFolder = pFolders->at(idxFolder)) != NULL)
                 {
-                    m_idRlvRoot = pFolder->getUUID();
-                    if (getDirectDescendentsFolderCount(pFolder) > 0)
-                        break;
+                    const std::string& name = pFolder->getName();
+                    if (LLStringUtil::compareInsensitive(name, cstrSharedRoot) == 0 ||
+                        LLStringUtil::compareInsensitive(name, ".RLV") == 0 ||
+                        LLStringUtil::compareInsensitive(name, "RLV") == 0)
+                    {
+                        m_idRlvRoot = pFolder->getUUID();
+                        if (getDirectDescendentsFolderCount(pFolder) > 0)
+                            break;
+                    }
                 }
             }
             if ( (m_idRlvRoot.notNull()) && (!gInventory.containsObserver((RlvInventory*)this)) )
@@ -375,13 +381,15 @@ bool RlvInventory::isGiveToRLVOffer(const LLOfferInfo& offerInfo)
         {
             return
                 (IM_TASK_INVENTORY_OFFERED == offerInfo.mIM) &&
-                (LLAssetType::AT_CATEGORY == offerInfo.mType) && (offerInfo.mDesc.find(RLV_PUTINV_PREFIX) == 1);
+                (LLAssetType::AT_CATEGORY == offerInfo.mType) &&
+                ( (offerInfo.mDesc.find(RLV_PUTINV_PREFIX) == 1) || (offerInfo.mDesc.find(RLV_ROOT_FOLDER "/") == 1) );
         }
         else
         {
             return
                 (IM_INVENTORY_OFFERED == offerInfo.mIM) &&
-                (LLAssetType::AT_CATEGORY == offerInfo.mType) && (offerInfo.mDesc.find(RLV_PUTINV_PREFIX) == 0);
+                (LLAssetType::AT_CATEGORY == offerInfo.mType) &&
+                ( (offerInfo.mDesc.find(RLV_PUTINV_PREFIX) == 0) || (offerInfo.mDesc.find(RLV_ROOT_FOLDER "/") == 0) );
         }
     }
     return false;
@@ -508,7 +516,7 @@ bool RlvGiveToRLVOffer::createDestinationFolder(const std::string& strPath)
     // NOTE: derived classes will delete the instance in their onDestinationCreated override, so don't do anything after triggering the callback
 
     m_DestPath.clear();
-    if (0 == strPath.find(RLV_PUTINV_PREFIX))
+    if (0 == strPath.find(RLV_PUTINV_PREFIX) || 0 == strPath.find(RLV_ROOT_FOLDER "/"))
     {
         boost::split(m_DestPath, strPath, boost::is_any_of(std::string(RLV_PUTINV_SEPARATOR)));
     }
@@ -516,7 +524,9 @@ bool RlvGiveToRLVOffer::createDestinationFolder(const std::string& strPath)
     if ( (m_DestPath.size() >= 2) && (m_DestPath.size() <= RLV_PUTINV_MAXDEPTH) )
     {
         const std::string strFolder = m_DestPath.front();
-        if (RLV_ROOT_FOLDER == strFolder)
+        if (LLStringUtil::compareInsensitive(strFolder, RLV_ROOT_FOLDER) == 0 ||
+            LLStringUtil::compareInsensitive(strFolder, ".RLV") == 0 ||
+            LLStringUtil::compareInsensitive(strFolder, "RLV") == 0)
         {
             m_DestPath.pop_front();
 
