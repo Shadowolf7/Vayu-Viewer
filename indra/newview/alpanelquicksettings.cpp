@@ -98,6 +98,10 @@ ALPanelQuickSettings::~ALPanelQuickSettings()
     {
         mRegionChangedSlot.disconnect();
     }
+    if (mEnvChangedConnection.connected())
+    {
+        mEnvChangedConnection.disconnect();
+    }
 }
 
 // virtual
@@ -142,6 +146,11 @@ bool ALPanelQuickSettings::postBuild()
     mDayPresetCombo->setCommitCallback(boost::bind(&ALPanelQuickSettings::onSelectDayPreset, this));
 
     getChild<LLButton>("reset_environment_btn")->setCommitCallback(boost::bind(&ALPanelQuickSettings::onResetEnvironment, this));
+
+    if (!mEnvChangedConnection.connected())
+    {
+        mEnvChangedConnection = LLEnvironment::instance().setEnvironmentChanged([this](LLEnvironment::EnvSelection_t, S32) { setSelectedEnvironment(); });
+    }
 
     loadEnvironmentPresets();
 
@@ -274,12 +283,6 @@ void ALPanelQuickSettings::loadEnvironmentPresets()
 
     auto fill_combo = [](LLComboBox* combo, const std::multimap<std::string, LLUUID>& preset_map)
     {
-        // Rescans (triggered by onVisibilityChange, see above) can happen
-        // after the user has already picked a preset -- preserve that
-        // selection across the rebuild instead of silently reverting to
-        // Region Default.
-        LLSD previous_value = combo->getSelectedValue();
-
         combo->removeall();
         combo->add("Region Default", LLSD(REGION_DEFAULT_VALUE));
         combo->addSeparator();
@@ -290,16 +293,52 @@ void ALPanelQuickSettings::loadEnvironmentPresets()
                 combo->add(name, LLSD(asset_id));
             }
         }
-
-        if (!previous_value.isDefined() || !combo->setSelectedByValue(previous_value, true))
-        {
-            combo->setCurrentByIndex(0);
-        }
     };
 
     fill_combo(mSkyPresetCombo, sky_map);
     fill_combo(mWaterPresetCombo, water_map);
     fill_combo(mDayPresetCombo, day_map);
+
+    setSelectedEnvironment();
+}
+
+void ALPanelQuickSettings::setSelectedEnvironment()
+{
+    if (!mSkyPresetCombo || !mWaterPresetCombo || !mDayPresetCombo)
+    {
+        return;
+    }
+
+    mSkyPresetCombo->setSelectedByValue(LLSD(REGION_DEFAULT_VALUE), true);
+    mWaterPresetCombo->setSelectedByValue(LLSD(REGION_DEFAULT_VALUE), true);
+    mDayPresetCombo->setSelectedByValue(LLSD(REGION_DEFAULT_VALUE), true);
+
+    if (LLEnvironment::instance().getSelectedEnvironment() == LLEnvironment::ENV_LOCAL)
+    {
+        if (LLSettingsDay::ptr_t day = LLEnvironment::instance().getEnvironmentDay(LLEnvironment::ENV_LOCAL))
+        {
+            if (day->getAssetId().notNull())
+            {
+                mDayPresetCombo->setSelectedByValue(LLSD(day->getAssetId()), true);
+            }
+        }
+
+        if (LLSettingsSky::ptr_t sky = LLEnvironment::instance().getEnvironmentFixedSky(LLEnvironment::ENV_LOCAL))
+        {
+            if (sky->getAssetId().notNull())
+            {
+                mSkyPresetCombo->setSelectedByValue(LLSD(sky->getAssetId()), true);
+            }
+        }
+
+        if (LLSettingsWater::ptr_t water = LLEnvironment::instance().getEnvironmentFixedWater(LLEnvironment::ENV_LOCAL))
+        {
+            if (water->getAssetId().notNull())
+            {
+                mWaterPresetCombo->setSelectedByValue(LLSD(water->getAssetId()), true);
+            }
+        }
+    }
 }
 
 void ALPanelQuickSettings::onSelectSkyPreset()
@@ -309,7 +348,11 @@ void ALPanelQuickSettings::onSelectSkyPreset()
         return;
     }
     LLSD value = mSkyPresetCombo->getSelectedValue();
-    if (value.isUUID() && value.asUUID().notNull())
+    if (value.asString() == REGION_DEFAULT_VALUE)
+    {
+        LLEnvironment::instance().setSharedEnvironment();
+    }
+    else if (value.isUUID() && value.asUUID().notNull())
     {
         LLEnvironment::instance().setEnvironment(LLEnvironment::ENV_LOCAL, value.asUUID());
         LLEnvironment::instance().setSelectedEnvironment(LLEnvironment::ENV_LOCAL);
@@ -323,7 +366,11 @@ void ALPanelQuickSettings::onSelectWaterPreset()
         return;
     }
     LLSD value = mWaterPresetCombo->getSelectedValue();
-    if (value.isUUID() && value.asUUID().notNull())
+    if (value.asString() == REGION_DEFAULT_VALUE)
+    {
+        LLEnvironment::instance().setSharedEnvironment();
+    }
+    else if (value.isUUID() && value.asUUID().notNull())
     {
         LLEnvironment::instance().setEnvironment(LLEnvironment::ENV_LOCAL, value.asUUID());
         LLEnvironment::instance().setSelectedEnvironment(LLEnvironment::ENV_LOCAL);
@@ -337,7 +384,11 @@ void ALPanelQuickSettings::onSelectDayPreset()
         return;
     }
     LLSD value = mDayPresetCombo->getSelectedValue();
-    if (value.isUUID() && value.asUUID().notNull())
+    if (value.asString() == REGION_DEFAULT_VALUE)
+    {
+        LLEnvironment::instance().setSharedEnvironment();
+    }
+    else if (value.isUUID() && value.asUUID().notNull())
     {
         LLEnvironment::instance().setEnvironment(LLEnvironment::ENV_LOCAL, value.asUUID());
         LLEnvironment::instance().setSelectedEnvironment(LLEnvironment::ENV_LOCAL);

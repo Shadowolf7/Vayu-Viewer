@@ -55,6 +55,7 @@ private:
 
     // Environment quick-select (sky/water/day-cycle presets)
     void loadEnvironmentPresets();
+    void setSelectedEnvironment();
     void onSelectSkyPreset();
     void onSelectWaterPreset();
     void onSelectDayPreset();
@@ -68,6 +69,7 @@ private:
     LLComboBox* mDayPresetCombo;
 
     boost::signals2::connection mRegionChangedSlot;
+    boost::signals2::connection mEnvChangedConnection;
 };
 
 #endif // AL_ALPANELQUICKSETTINGS_H
