@@ -30,6 +30,7 @@
 #include <future>
 #include <thread>
 #include <string.h>
+#include "api/audio/create_audio_device_module.h"
 #include "api/audio_codecs/audio_decoder_factory.h"
 #include "api/audio_codecs/audio_encoder_factory.h"
 #include "api/audio_codecs/builtin_audio_decoder_factory.h"
@@ -78,12 +79,36 @@ int32_t LLWebRTCAudioTransport::RecordedDataIsAvailable(const void* audio_data,
                                                         uint32_t&   new_mic_level)
 {
     auto* engine = engine_.load(std::memory_order_acquire);
+    const short* samples = (const short *) audio_data;
 
-    // 1) Deliver to engine (authoritative).
+    // 1) Trim to the level the user asked for, before the processing module
+    // sees it.  Trimming afterwards would fight the automatic gain control,
+    // which has already levelled the signal by then, and only reach the far
+    // side as clipping.
+    const void* trimmed_data = audio_data;
+    const float trim         = mGain.load(std::memory_order_relaxed);
+    if (trim != 1.0f)
+    {
+        const size_t count = number_of_frames * number_of_channels;
+        if (mTrimmed.size() < count)
+        {
+            mTrimmed.resize(count);
+        }
+        for (size_t index = 0; index < count; index++)
+        {
+            const float scaled = static_cast<float>(samples[index]) * trim;
+            mTrimmed[index]    = scaled >= 32767.0f    ? 32767
+                                 : scaled <= -32768.0f ? -32768
+                                                       : static_cast<int16_t>(scaled);
+        }
+        trimmed_data = mTrimmed.data();
+    }
+
+    // 2) Deliver to engine (authoritative).
     int32_t ret = 0;
     if (engine)
     {
-        ret = engine->RecordedDataIsAvailable(audio_data,
+        ret = engine->RecordedDataIsAvailable(trimmed_data,
                                               number_of_frames,
                                               bytes_per_frame,
                                               number_of_channels,
@@ -95,10 +120,9 @@ int32_t LLWebRTCAudioTransport::RecordedDataIsAvailable(const void* audio_data,
                                               new_mic_level);
     }
 
-    // 2) Calculate energy for microphone level monitoring
+    // 3) Calculate energy for microphone level monitoring
     // calculate the energy
-    float        energy  = 0;
-    const short *samples = (const short *) audio_data;
+    float energy = 0;
 
     for (size_t index = 0; index < number_of_frames * number_of_channels; index++)
     {
@@ -123,6 +147,7 @@ int32_t LLWebRTCAudioTransport::RecordedDataIsAvailable(const void* audio_data,
     return ret;
 }
 
+
 int32_t LLWebRTCAudioTransport::NeedMorePlayData(size_t   number_of_frames,
                                                  size_t   bytes_per_frame,
                                                  size_t   number_of_channels,
@@ -132,15 +157,28 @@ int32_t LLWebRTCAudioTransport::NeedMorePlayData(size_t   number_of_frames,
                                                  int64_t* elapsed_time_ms,
                                                  int64_t* ntp_time_ms)
 {
+    // bytes_per_frame already accounts for all channels, so do not multiply by
+    // number_of_channels again (that would overrun the playout buffer).
+    const size_t bytes = number_of_frames * bytes_per_frame;
+
+    // While previewing devices there is no engine audio to render, so play the
+    // captured audio back instead.
+    if (mEchoBuffer && mEchoBuffer->enabled())
+    {
+        if (!mEchoBuffer->read(static_cast<int16_t*>(audio_data), number_of_frames, number_of_channels, samples_per_sec))
+        {
+            memset(audio_data, 0, bytes);
+        }
+        number_of_samples_out = number_of_frames;
+        return 0;
+    }
+
     auto* engine = engine_.load(std::memory_order_acquire);
     if (!engine)
     {
         // No engine sink; output silence to be safe.
-        // bytes_per_frame already accounts for all channels, so do not multiply
-        // by number_of_channels again (that would overrun the playout buffer).
-        const size_t bytes = number_of_frames * bytes_per_frame;
         memset(audio_data, 0, bytes);
-        number_of_samples_out = bytes_per_frame;
+        number_of_samples_out = number_of_frames;
         return 0;
     }
 
@@ -172,7 +210,8 @@ void LLWebRTCAudioTransport::PullRenderData(int      bits_per_sample,
     }
 }
 
-LLCustomProcessor::LLCustomProcessor(LLCustomProcessorStatePtr state) : mSampleRateHz(0), mNumChannels(0), mState(state)
+LLCustomProcessor::LLCustomProcessor(LLCustomProcessorStatePtr state, std::shared_ptr<ALAudioEchoBuffer> echo)
+    : mSampleRateHz(0), mNumChannels(0), mState(state), mEchoBuffer(std::move(echo))
 {
     memset(mSumVector, 0, sizeof(mSumVector));
 }
@@ -186,7 +225,10 @@ void LLCustomProcessor::Initialize(int sample_rate_hz, int num_channels)
 
 void LLCustomProcessor::Process(webrtc::AudioBuffer *audio)
 {
-    if (audio->num_channels() < 1 || audio->num_frames() < 480)
+    // A 10ms buffer holds 480 frames at 48kHz but only 160 at 16kHz, the rate a
+    // headset delivers in hands-free mode, so the frame count says nothing about
+    // whether the buffer is usable.
+    if (audio->num_channels() < 1 || audio->num_frames() < 1)
     {
         return;
     }
@@ -203,7 +245,14 @@ void LLCustomProcessor::Process(webrtc::AudioBuffer *audio)
 
         // we've changed our desired gain, so set the incremental
         // gain change so that we smoothly step over 20ms
-        mGainStep = (desired_gain - mCurrentGain) / (mSampleRateHz / 50);
+        // 20ms of samples to ramp over, or an immediate step if the rate is
+        // not known yet.
+        const int ramp_samples = mSampleRateHz / 50;
+        mGainStep = ramp_samples > 0 ? (desired_gain - mCurrentGain) / ramp_samples : 0.0f;
+        if (ramp_samples <= 0)
+        {
+            mCurrentGain = desired_gain;
+        }
     }
 
     if (mRampFrames)
@@ -252,6 +301,13 @@ void LLCustomProcessor::Process(webrtc::AudioBuffer *audio)
     mSumVector[i] = energy;
     totalSum += energy;
     mState->setMicrophoneEnergy(std::sqrt(totalSum / (audio->num_channels() * audio->num_frames() * buffer_size)));
+
+    // Hand the processed capture to the preview, which renders it back so
+    // the user hears themselves as the far side will.
+    if (mEchoBuffer && mEchoBuffer->enabled())
+    {
+        mEchoBuffer->write(chans, audio->num_channels(), audio->num_frames(), static_cast<uint32_t>(mSampleRateHz));
+    }
 }
 
 
@@ -265,13 +321,13 @@ void LLWebRTCAudioDeviceModule::SetTuning(bool tuning, bool mute)
     if (tuning)
     {
         // Ensure capture is running (it's normally already running -- capture is
-        // session-long) so the mic-level meter works, and stop rendering the
-        // call while tuning.  The recording calls are no-ops if capture is
-        // already active, so this won't cold-start it.
+        // session-long) so the mic-level meter works.  The recording calls are
+        // no-ops if capture is already active, so this won't cold-start it.
+        // Playout is left up: the preview renders capture back so the user can
+        // hear the devices being previewed.
         inner_->InitMicrophone();
         inner_->InitRecording();
         inner_->StartRecording();
-        inner_->StopPlayout();
     }
     // On exit, capture is deliberately left running (mute is handled by gain,
     // not by stopping the device, so there's no AEC cold-start hiss).  Playout
@@ -318,14 +374,20 @@ void LLWebRTCImpl::init()
     mSignalingThread->SetName("WebRTCSignalingThread", nullptr);
     mSignalingThread->Start();
 
+    // Shared by the processing chain, which fills it, and the device module,
+    // which renders it back while previewing devices.
+    mEchoBuffer = std::make_shared<ALAudioEchoBuffer>();
+
     mWorkerThread->BlockingCall(
         [this]()
         {
             webrtc::scoped_refptr<webrtc::AudioDeviceModule> realADM =
-                webrtc::AudioDeviceModule::Create(webrtc::AudioDeviceModule::AudioLayer::kPlatformDefaultAudio,
-                                                  &mEnv.task_queue_factory());
+                webrtc::CreateAudioDeviceModule(mEnv, webrtc::AudioDeviceModule::AudioLayer::kPlatformDefaultAudio);
             mDeviceModule = webrtc::make_ref_counted<LLWebRTCAudioDeviceModule>(realADM);
-            mDeviceModule->SetObserver(this);
+            mDeviceModule->SetEchoBuffer(mEchoBuffer);
+            // Created here, and destroyed on this same thread in terminate(),
+            // because Windows balances its COM initialization per thread.
+            mDeviceNotifier = ALAudioDeviceNotifier::create(this);
             mDeviceModule->Init();
 
             mBuiltinNS = mDeviceModule->BuiltInNSIsAvailable();
@@ -340,7 +402,7 @@ void LLWebRTCImpl::init()
     // from after other audio processing such as AEC, AGC, etc.
     mPeerCustomProcessor = std::make_shared<LLCustomProcessorState>();
     webrtc::BuiltinAudioProcessingBuilder apb;
-    apb.SetCapturePostProcessing(std::make_unique<LLCustomProcessor>(mPeerCustomProcessor));
+    apb.SetCapturePostProcessing(std::make_unique<LLCustomProcessor>(mPeerCustomProcessor, mEchoBuffer));
     mAudioProcessingModule = apb.Build(webrtc::CreateEnvironment());
 
     // Initial software-APM state, matching setAudioConfig() so there's no
@@ -349,13 +411,12 @@ void LLWebRTCImpl::init()
     // disabled), so enable echo cancellation from the very first frame.
     webrtc::AudioProcessing::Config apm_config;
     apm_config.echo_canceller.enabled                    = true;
-    apm_config.echo_canceller.mobile_mode                = false;
     apm_config.gain_controller1.enabled                  = false;
     apm_config.gain_controller2.enabled                  = true;
     apm_config.gain_controller2.adaptive_digital.enabled = true; // auto-level speech
     apm_config.high_pass_filter.enabled                  = true;
     apm_config.noise_suppression.enabled                 = true;
-    apm_config.noise_suppression.level                   = webrtc::AudioProcessing::Config::NoiseSuppression::kVeryHigh;
+    apm_config.noise_suppression.level                   = webrtc::AudioProcessing::Config::NoiseSuppression::kHigh;
     apm_config.transient_suppression.enabled             = true;
     apm_config.pipeline.multi_channel_render             = true;
     apm_config.pipeline.multi_channel_capture            = true;
@@ -414,10 +475,7 @@ bool LLWebRTCImpl::terminate()
     // shutdown_thread, if detached, can outlive observer.
     mWorkerThread->BlockingCall([this]()
     {
-        if (mDeviceModule)
-        {
-            mDeviceModule->SetObserver(nullptr);
-        }
+        mDeviceNotifier.reset();
     });
     mVoiceDevicesObserverList.clear();
 
@@ -554,7 +612,6 @@ void LLWebRTCImpl::setAudioConfig(LLWebRTCDeviceInterface::AudioConfig config)
     // requested config without deferring to any built-in processor.
     webrtc::AudioProcessing::Config apm_config;
     apm_config.echo_canceller.enabled                    = config.mEchoCancellation;
-    apm_config.echo_canceller.mobile_mode                = false;
     apm_config.gain_controller1.enabled                  = false;
     apm_config.gain_controller2.enabled                  = config.mAGC;
     apm_config.gain_controller2.adaptive_digital.enabled = true; // auto-level speech
@@ -700,9 +757,10 @@ void LLWebRTCImpl::workerStartRecording()
 // changes go through workerDeployDevices(), which stops playout first.
 void LLWebRTCImpl::workerStartPlayout()
 {
-    // Only run playout while voice is enabled and there's a connection to
-    // render (running the output device otherwise is heard as a buzz).
-    if (!mDeviceModule || !mVoiceEnabled || mTuningMode || mDeviceModule->Playing() || mPeerConnections.empty())
+    // Only run playout while voice is enabled and there is something to render:
+    // either a connection, or the device preview echoing capture back.  Running
+    // the output device with neither is heard as a buzz.
+    if (!mDeviceModule || !mVoiceEnabled || mDeviceModule->Playing() || (!mTuningMode && mPeerConnections.empty()))
     {
         return;
     }
@@ -892,8 +950,8 @@ void LLWebRTCImpl::updateDevices()
 
 void LLWebRTCImpl::OnDevicesUpdated()
 {
-    // OnDevicesUpdated() is called on macOS CoreAudio's device-change callback
-    // thread.  Calling updateDevices() on that thread causes a deadlock.
+    // OnDevicesUpdated() arrives on a platform callback thread.  Calling
+    // updateDevices() from there causes a deadlock.
     mWorkerThread->PostTask([this] { updateDevices(); });
 }
 
@@ -901,24 +959,36 @@ void LLWebRTCImpl::OnDevicesUpdated()
 void LLWebRTCImpl::setTuningMode(bool enable)
 {
     mTuningMode = enable;
-    if (!mTuningMode
-        && !mMute
-        && mPeerCustomProcessor
-        && mPeerCustomProcessor->getGain() != mGain)
+    if (mEchoBuffer)
     {
-        mPeerCustomProcessor->setGain(mGain);
+        mEchoBuffer->setEnabled(enable);
+    }
+    if (mPeerCustomProcessor)
+    {
+        // A preview exists to be heard, so it is never muted; on the way out
+        // the peer path decides again.
+        mPeerCustomProcessor->setGain(enable ? 1.0f : (mMute ? 0.0f : 1.0f));
+    }
+    if (mDeviceModule)
+    {
+        // The preview trims capture with its own slider, and hands the peer
+        // path's trim back when it closes.
+        mDeviceModule->SetMicGain(enable ? mTuningGain : mGain);
     }
     mWorkerThread->PostTask(
         [this]
         {
             mDeviceModule->SetTuning(mTuningMode, mMute);
-            if (!mTuningMode)
+            if (!mTuningMode && mPeerConnections.empty())
             {
-                // Restore playout after tuning, gated on there being a
-                // connection to render (so the output device isn't left
-                // spinning with no engine data).
-                workerStartPlayout();
+                // The preview was the only thing being rendered; leaving it
+                // running would spin the output device on silence.
+                mDeviceModule->StopPlayout();
             }
+            // Bring playout up for the preview's echo on the way in, and
+            // restore it for the call on the way out.  Either way it stays
+            // gated on there being something to render.
+            workerStartPlayout();
             mSignalingThread->PostTask(
                 [this]
                 {
@@ -957,9 +1027,12 @@ float LLWebRTCImpl::getTuningAudioLevel()
 
 void LLWebRTCImpl::setTuningMicGain(float gain)
 {
+    // Remembered whether or not a preview is running, so one that arrives
+    // before the preview opens is not lost.
+    mTuningGain = gain;
     if (mTuningMode && mDeviceModule)
     {
-        mDeviceModule->SetTuningMicGain(gain);
+        mDeviceModule->SetMicGain(gain);
     }
 }
 
@@ -973,9 +1046,9 @@ float LLWebRTCImpl::getPeerConnectionAudioLevel()
 void LLWebRTCImpl::setMicGain(float gain)
 {
     mGain = gain;
-    if (!mTuningMode && mPeerCustomProcessor)
+    if (!mTuningMode && mDeviceModule)
     {
-        mPeerCustomProcessor->setGain(gain);
+        mDeviceModule->SetMicGain(gain);
     }
 }
 
@@ -996,9 +1069,18 @@ void LLWebRTCImpl::intSetMute(bool mute, int delay_ms)
     // muting/unmuting never stops or starts it -- that's what avoids the AEC
     // cold-start hiss on unmute.  Capture start/stop is tied to device
     // selection (workerStartRecording) and shutdown, not to mute.
+    if (mTuningMode)
+    {
+        // The preview owns this gain while it runs, and restores the peer
+        // path's on the way out.  Nothing is transmitted meanwhile: the sender
+        // tracks are disabled for the duration.
+        return;
+    }
     if (mPeerCustomProcessor)
     {
-        mPeerCustomProcessor->setGain(mMute ? 0.0f : mGain);
+        // Gain is applied ahead of the processing module now; all this stage
+        // decides is whether the result reaches anyone.
+        mPeerCustomProcessor->setGain(mMute ? 0.0f : 1.0f);
     }
 }
 
@@ -1720,9 +1802,12 @@ void LLWebRTCPeerConnectionImpl::OnSuccess(webrtc::SessionDescriptionInterface *
             opus_payload = std::to_string(payload_id);
             sdp_mangled_stream << "a=rtpmap:" << opus_payload << " opus/48000/2" << "\n";
         }
-        else if (sdp_line.find("a=fmtp:" + opus_payload) == 0)
+        else if (!opus_payload.empty() && sdp_line.find("a=fmtp:" + opus_payload) == 0)
         {
-            sdp_mangled_stream << sdp_line << "a=fmtp:" << opus_payload
+            // Replaces the line rather than trailing it.  Written end to end the
+            // two run together into something that is not an attribute at all,
+            // and every parameter below is lost with it.
+            sdp_mangled_stream << "a=fmtp:" << opus_payload
             << " minptime=10;useinbandfec=1;stereo=1;sprop-stereo=1;maxplaybackrate=48000;sprop-maxplaybackrate=48000;sprop-maxcapturerate=48000\n";
         }
         else

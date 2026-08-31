@@ -1,10 +1,14 @@
 # -*- cmake -*-
 
 set(llwebrtc_SOURCE_FILES
+    alaudiodevicenotifier.cpp
+    alaudioechobuffer.cpp
     llwebrtc.cpp
     )
 
 set(llwebrtc_HEADER_FILES
+    alaudiodevicenotifier.h
+    alaudioechobuffer.h
     llwebrtc.h
     llwebrtc_impl.h
     )
@@ -13,6 +17,15 @@ list(APPEND llwebrtc_SOURCE_FILES ${llwebrtc_HEADER_FILES})
 
 add_library(llwebrtc SHARED ${llwebrtc_SOURCE_FILES})
 set_target_properties(llwebrtc PROPERTIES PUBLIC_HEADER llwebrtc.h)
+
+# WebRTC is built with RTTI disabled (-fno-rtti / /GR-). Subclasses such as
+# LLWebRTCLogSink / LLCustomProcessor need matching flags or the linker looks
+# for typeinfo symbols that libwebrtc.a does not provide.
+if (WINDOWS)
+    target_compile_options(llwebrtc PRIVATE /GR-)
+else()
+    target_compile_options(llwebrtc PRIVATE -fno-rtti)
+endif()
 
 if (WINDOWS)
     set_target_properties(llwebrtc
@@ -29,7 +42,8 @@ if (WINDOWS)
                                        wmcodecdspuuid
                                        msdmo
                                        strmiids
-                                       iphlpapi)
+                                       iphlpapi
+                                       ole32)
 
     if (USE_BUGSPLAT)
         set_target_properties(llwebrtc PROPERTIES PDB_OUTPUT_DIRECTORY "${SYMBOLS_STAGING_DIR}")
@@ -57,7 +71,7 @@ elseif(DARWIN)
         endif()
     endif (USE_BUGSPLAT)
 else()
-    target_link_libraries(llwebrtc PRIVATE ll::webrtc)
+    target_link_libraries(llwebrtc PRIVATE ll::webrtc ${CMAKE_DL_LIBS})
     target_compile_options(llwebrtc PRIVATE -Wno-deprecated-declarations) # webrtc::CreateAudioDeviceWithDataObserver is deprecated
 endif (WINDOWS)
 

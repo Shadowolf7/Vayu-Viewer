@@ -39,6 +39,9 @@
 #endif
 
 #include "llwebrtc.h"
+#include "alaudiodevicenotifier.h"
+#include "alaudioechobuffer.h"
+#include <memory>
 // WebRTC Includes
 #ifdef WEBRTC_WIN
 #pragma warning(push)
@@ -172,13 +175,18 @@ public:
     float GetMicrophoneEnergy() { return mMicrophoneEnergy.load(std::memory_order_relaxed); }
     void  SetGain(float gain) { mGain.store(gain, std::memory_order_relaxed); }
 
+    // Rendered in place of engine audio while devices are being previewed.
+    // Set during startup, before any audio thread is running.
+    void SetEchoBuffer(std::shared_ptr<ALAudioEchoBuffer> buffer) { mEchoBuffer = std::move(buffer); }
+
 private:
     std::atomic<webrtc::AudioTransport*> engine_{ nullptr };
     static const int                     NUM_PACKETS_TO_FILTER = 30; // 300 ms of smoothing (30 frames)
     float                                mSumVector[NUM_PACKETS_TO_FILTER];
     std::atomic<float>                   mMicrophoneEnergy;
-    std::atomic<float>                   mGain{ 0.0f };
-
+    std::atomic<float>                   mGain{ 1.0f };
+    std::vector<int16_t>                 mTrimmed; // capture thread only
+    std::shared_ptr<ALAudioEchoBuffer>   mEchoBuffer;
 };
 
 
@@ -236,10 +244,7 @@ public:
     // --- Init/start/stop (forward) ---
     int32_t InitPlayout() override { return inner_->InitPlayout(); }
     bool    PlayoutIsInitialized() const override { return inner_->PlayoutIsInitialized(); }
-    int32_t StartPlayout() override {
-        if (tuning_) return 0;  // For tuning, don't allow playout
-        return inner_->StartPlayout();
-    }
+    int32_t StartPlayout() override { return inner_->StartPlayout(); }
     int32_t StopPlayout() override { return inner_->StopPlayout(); }
     bool    Playing() const override { return inner_->Playing(); }
 
@@ -331,13 +336,10 @@ public:
     virtual int GetRecordAudioParameters(AudioParameters* params) override { return inner_->GetRecordAudioParameters(params); }
 #endif // WEBRTC_IOS
 
-    virtual int32_t GetPlayoutDevice() const override { return inner_->GetPlayoutDevice(); }
-    virtual int32_t GetRecordingDevice() const override { return inner_->GetRecordingDevice(); }
-    virtual int32_t SetObserver(webrtc::AudioDeviceObserver* observer) override { return inner_->SetObserver(observer); }
-
     // tuning microphone energy calculations
     float GetMicrophoneEnergy() { return audio_transport_.GetMicrophoneEnergy(); }
-    void SetTuningMicGain(float gain) { audio_transport_.SetGain(gain); }
+    void SetMicGain(float gain) { audio_transport_.SetGain(gain); }
+    void SetEchoBuffer(std::shared_ptr<ALAudioEchoBuffer> buffer) { audio_transport_.SetEchoBuffer(std::move(buffer)); }
 
     void  SetTuning(bool tuning, bool mute);
 
@@ -381,7 +383,7 @@ using LLCustomProcessorStatePtr = std::shared_ptr<LLCustomProcessorState>;
 class LLCustomProcessor : public webrtc::CustomProcessing
 {
 public:
-    LLCustomProcessor(LLCustomProcessorStatePtr state);
+    LLCustomProcessor(LLCustomProcessorStatePtr state, std::shared_ptr<ALAudioEchoBuffer> echo);
     ~LLCustomProcessor() override {}
 
     // (Re-) Initializes the submodule.
@@ -404,12 +406,13 @@ protected:
     float mSumVector[NUM_PACKETS_TO_FILTER];
     friend LLCustomProcessorState;
     LLCustomProcessorStatePtr mState;
+    std::shared_ptr<ALAudioEchoBuffer> mEchoBuffer;
 };
 
 
 // Primary singleton implementation for interfacing
 // with the native webrtc library.
-class LLWebRTCImpl : public LLWebRTCDeviceInterface, public webrtc::AudioDeviceObserver
+class LLWebRTCImpl : public LLWebRTCDeviceInterface, public ALAudioDeviceNotifier::Observer
 {
   public:
     LLWebRTCImpl(LLWebRTCLogCallback* logCallback);
@@ -455,7 +458,7 @@ class LLWebRTCImpl : public LLWebRTCDeviceInterface, public webrtc::AudioDeviceO
     void intSetMute(bool mute, int delay_ms = 20);
 
     //
-    // AudioDeviceObserver
+    // ALAudioDeviceNotifier::Observer
     //
     void OnDevicesUpdated() override;
 
@@ -554,6 +557,7 @@ class LLWebRTCImpl : public LLWebRTCDeviceInterface, public webrtc::AudioDeviceO
     void deployDevices();
     std::atomic<int>                                           mDevicesDeploying;
     webrtc::scoped_refptr<LLWebRTCAudioDeviceModule>           mDeviceModule;
+    std::unique_ptr<ALAudioDeviceNotifier>                     mDeviceNotifier;
     std::vector<LLWebRTCDevicesObserver *>                     mVoiceDevicesObserverList;
 
     bool mBuiltinNS;
@@ -572,8 +576,10 @@ class LLWebRTCImpl : public LLWebRTCDeviceInterface, public webrtc::AudioDeviceO
     // Whether voice is enabled; gates whether the capture/playout devices run.
     bool                                                       mVoiceEnabled;
     float                                                      mGain;
+    float                                                      mTuningGain{ 0.0f };
 
     LLCustomProcessorStatePtr                                  mPeerCustomProcessor;
+    std::shared_ptr<ALAudioEchoBuffer>                         mEchoBuffer;
 
     // peer connections
     std::vector<webrtc::scoped_refptr<LLWebRTCPeerConnectionImpl>> mPeerConnections;
