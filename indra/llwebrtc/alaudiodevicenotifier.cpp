@@ -282,6 +282,19 @@ enum
     PA_SUBSCRIPTION_MASK_CARD   = 0x0200u,
 };
 
+enum
+{
+    PA_SUBSCRIPTION_EVENT_SINK          = 0x0000u,
+    PA_SUBSCRIPTION_EVENT_SOURCE        = 0x0001u,
+    PA_SUBSCRIPTION_EVENT_SERVER        = 0x0007u,
+    PA_SUBSCRIPTION_EVENT_CARD          = 0x0009u,
+    PA_SUBSCRIPTION_EVENT_FACILITY_MASK = 0x000Fu,
+    PA_SUBSCRIPTION_EVENT_NEW           = 0x0000u,
+    PA_SUBSCRIPTION_EVENT_CHANGE        = 0x0010u,
+    PA_SUBSCRIPTION_EVENT_REMOVE        = 0x0020u,
+    PA_SUBSCRIPTION_EVENT_TYPE_MASK     = 0x0030u,
+};
+
 // Sinks and sources cover endpoints coming and going, cards cover a device
 // changing profile, and the server event covers either default moving.
 constexpr int WATCHED_EVENTS = PA_SUBSCRIPTION_MASK_SINK | PA_SUBSCRIPTION_MASK_SOURCE |
@@ -462,8 +475,15 @@ class ALPulseNotifier final : public ALAudioDeviceNotifier
         self->mPulse.mainloop_signal(self->mMainloop, 0);
     }
 
-    static void onSubscribedEvent(pa_context*, int, uint32_t, void* context)
+    static void onSubscribedEvent(pa_context*, int event_type, uint32_t, void* context)
     {
+        const int event_facility = event_type & PA_SUBSCRIPTION_EVENT_FACILITY_MASK;
+        const int event_action   = event_type & PA_SUBSCRIPTION_EVENT_TYPE_MASK;
+        if (event_action == PA_SUBSCRIPTION_EVENT_CHANGE &&
+            (event_facility == PA_SUBSCRIPTION_EVENT_SINK || event_facility == PA_SUBSCRIPTION_EVENT_SOURCE))
+        {
+            return;
+        }
         static_cast<ALPulseNotifier*>(context)->mObserver->OnDevicesUpdated();
     }
 

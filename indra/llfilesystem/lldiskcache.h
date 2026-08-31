@@ -1,175 +1,144 @@
 /**
  * @file lldiskcache.h
- * @brief The disk cache implementation declarations.
+ * @brief Definition of the disk cache implementation.
  *
- * @Description:
- * This code implements a disk cache using the following ideas:
- * 1/ The metadata for a file can be encapsulated in the filename.
-      The filenames will be composed of the following fields:
-        Prefix:     Used to identify the file as a part of the cache.
-                    An additional reason for using a prefix is that it
-                    might be possible, either accidentally or maliciously
-                    to end up with the cache dir set to a non-cache
-                    location such as your OS system dir or a work folder.
-                    Purging files from that would obviously be a disaster
-                    so this is an extra step to help avoid that scenario.
-        ID:         Typically the asset ID (UUID) of the asset being
-                    saved but can be anything valid for a filename
-        Extra Info: A field for use in the future that can be used
-                    to store extra identifiers - e.g. the discard
-                    level of a JPEG2000 file
-        Asset Type: A text string created from the LLAssetType enum
-                    that identifies the type of asset being stored.
-        .asset      A file extension of .asset is used to help
-                    identify this as a Viewer asset file
- * 2/ The time of last access for a file can be updated instantly
- *    for file reads and automatically as part of the file writes.
- * 3/ The purge algorithm collects a list of all files in the
- *    directory, sorts them by date of last access (write) and then
- *    deletes any files based on age until the total size of all
- *    the files is less than the maximum size specified.
- * 4/ An LLSingleton idiom is used since there will only ever be
- *    a single cache and we want to access it from numerous places.
- * 5/ Performance on my modest system seems very acceptable. For
- *    example, in testing, I was able to purge a directory of
- *    10,000 files, deleting about half of them in ~ 1700ms. For
- *    the same sized directory of files, writing the last updated
- *    time to each took less than 600ms indicating that this
- *    important part of the mechanism has almost no overhead.
+ * $LicenseInfo:firstyear=2002&license=viewerlgpl$
  *
- * $LicenseInfo:firstyear=2009&license=viewerlgpl$
+ * Copyright (c) 2020, Linden Research, Inc. (c) 2021 Henri Beauchamp.
+ *
+ * Modifications by Henri Beauchamp:
+ *  - Pointless per-asset-type file naming removed.
+ *  - Use of LLFile faster operations and of the extended LLDiriterator where
+ *    possible.
+ *  - Cache structure changed to speed up file opening and reduce the risk of
+ *    hitting file-systems limitations (such as the max number of files per
+ *    directory).
+ *  - Proper cache validation and shutdown.
+ *  - Proper catching of throw()s and boost::filesystem errors.
+ *  - Track cache files size in real time (lock-less: just via an atomic
+ *    variable).
+ *  - Proper and threaded auto-purging of the cache when it exceeds 150% of
+ *    its nominal size.
+ *  - Multiple threads and multiple viewer instances deconfliction.
+ *
  * Second Life Viewer Source Code
- * Copyright (C) 2020, Linden Research, Inc.
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU Lesser General Public License as published by the
+ * Free Software Foundation; version 2.1 of the License only.
  *
- * This library is free software; you can redistribute it and/or
- * modify it under the terms of the GNU Lesser General Public
- * License as published by the Free Software Foundation;
- * version 2.1 of the License only.
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU Lesser General Public License
+ * for more details.
  *
- * This library is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public
- * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
- *
- * Linden Research, Inc., 945 Battery Street, San Francisco, CA  94111  USA
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with this library; if not, write to the Free Software Foundation, Inc.
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA"
  * $/LicenseInfo$
  */
 
-#ifndef _LLDISKCACHE
-#define _LLDISKCACHE
+#pragma once
 
-#include "llsingleton.h"
+#include "stdtypes.h"
+#include "llerror.h"
+#include "lluuid.h"
 
-class LLDiskCache :
-    public LLParamSingleton<LLDiskCache>
+#include <utility>
+#include <string>
+#include <atomic>
+
+class LLCachePurgeThread;
+
+// Purely static class
+class LL_COMMON_API LLDiskCache
 {
-    public:
-        /**
-         * Since this is using the LLSingleton pattern but we
-         * want to allow the constructor to be called first
-         * with various parameters, we also invoke the
-         * LLParamSingleton idiom and use it to initialize
-         * the class via a call in LLAppViewer.
-         */
-        LLSINGLETON(LLDiskCache,
-                    /**
-                     * The full name of the cache folder - typically a
-                     * a child of the main Viewer cache directory. Defined
-                     * by the setting at 'DiskCacheDirName'
-                     */
-                    const std::string& cache_dir,
-                    /**
-                     * The maximum size of the cache in bytes - Based on the
-                     * setting at 'CacheSize' and 'DiskCachePercentOfTotal'
-                     */
-                    const uintmax_t max_size_bytes,
-                    /**
-                     * A flag that enables extra cache debugging so that
-                     * if there are bugs, we can ask uses to enable this
-                     * setting and send us their logs
-                     */
-                    const bool enable_cache_debug_info);
-
-        virtual ~LLDiskCache() = default;
-
-    public:
-        /**
-         * Construct a filename and path to it based on the file meta data
-         * (id, asset type, additional 'extra' info like discard level perhaps)
-         * Worth pointing out that this function used to be in LLFileSystem but
-         * so many things had to be pushed back there to accomodate it, that I
-         * decided to move it here.  Still not sure that's completely right.
-         */
-        static std::filesystem::path metaDataToFilepath(const LLUUID& id, LLAssetType::EType at);
-
-        /**
-         * Purge the oldest items in the cache so that the combined size of all files
-         * is no bigger than mMaxSizeBytes.
-         *
-         * WARNING: purge() is called by LLPurgeDiskCacheThread. As such it must
-         * NOT touch any LLDiskCache data without introducing and locking a mutex!
-         *
-         * Purging the disk cache involves nontrivial work on the viewer's
-         * filesystem. If called on the main thread, this causes a noticeable
-         * freeze.
-         */
-        void purge();
-
-        /**
-         * Clear the cache by removing all the files in the specified cache
-         * directory individually. Only the files that contain a prefix defined
-         * by mCacheFilenamePrefix will be removed.
-         */
-        void clearCache();
-
-        /**
-         * Return some information about the cache for use in About Box etc.
-         */
-        const std::string getCacheInfo();
-
-        void removeOldVFSFiles();
-
-    private:
-        /**
-         * Utility function to gather the total size the files in a given
-         * directory. Primarily used here to determine the directory size
-         * before and after the cache purge
-         */
-        uintmax_t dirFileSize(const std::filesystem::path& dir);
-
-    private:
-        /**
-         * The maximum size of the cache in bytes. After purge is called, the
-         * total size of the cache files in the cache directory will be
-         * less than this value
-         */
-        uintmax_t mMaxSizeBytes;
-
-        /**
-         * The folder that holds the cached files. The consumer of this
-         * class must avoid letting the user set this location as a malicious
-         * setting could potentially point it at a non-cache directory (for example,
-         * the Windows System dir) with disastrous results.
-         */
-        static std::filesystem::path sCacheDir;
-
-        /**
-         * When enabled, displays additional debugging information in
-         * various parts of the code
-         */
-        bool mEnableCacheDebugInfo;
-};
-
-class LLPurgeDiskCacheThread : public LLThread
-{
-public:
-    LLPurgeDiskCacheThread();
-
 protected:
-    void run() override;
+    LOG_CLASS(LLDiskCache);
+
+    LLDiskCache() = delete;
+    ~LLDiskCache() = delete;
+
+public:
+    // Note: when 'second_instance' is true, the cache is purged only after
+    // reaching a higher size, so that the first running instance of the viewer
+    // will purge it before this second instance would, and this as long as it
+    // is running; should the first instance vanish, this second instance will
+    // then automatically take over the cache purging task.
+    // Of course, with three or more viewer instances, and should the first one
+    // vanish, the remaining instances will still fight over the cache purging,
+    // but there is an additionnal randomization of the max cache size for
+    // these instances...
+    static void init(U64 nominal_size_bytes, bool second_instance = false);
+    static void init(const std::string& cache_dir, U64 nominal_size_bytes, bool second_instance = false);
+
+    // Clears the cache by removing all the files in the specified cache
+    // directory individually.
+    static void clear();
+
+    // Purges the oldest items in the cache so that the combined size of all
+    // files is no bigger than sNominalSizeBytes. May be internally threaded.
+    static void purge();
+
+    // Threaded cache purging. Must be called only from the main thread.
+    // Called from llappviewer.cpp or internally from addBytesWritten().
+    static void threadedPurge();
+
+    // Shuts down the cache when the viewer closes.
+    static void shutdown();
+
+    // Returns true when the cache is initialized and valid
+    inline static bool isValid()                 { return sCacheValid; }
+
+    // IMPORTANT: the three following methods are called both from the main
+    // thead and from other threads (e.g. the mesh repository, the texture
+    // cache worker, etc).
+
+    // Constructs a file name and path based on the asset UUID and optional
+    // extra info.
+    static std::string getFilePath(const LLUUID& id, const char* extra_info = NULL);
+
+    // Updates the "last write time" of a file to "now". This must be called
+    // whenever a file in the cache is (going to be) opened (for either reads
+    // or writes, since we must guard against a possibly ongoing purge before
+    // an actual read/write would happen) so that the last time the file was
+    // accessed is up to date; this time stamp is used in the mechanism for
+    // purging the cache.
+    static void updateFileAccessTime(const std::string& file_path);
+
+    // Used to update the disk cache about file writes ('bytes' may be negative
+    // when removing or truncating a file).
+    static void addBytesWritten(S32 bytes);
+
+    // Formatted cache info for UI / About Box
+    static const std::string getCacheInfo();
+
+    // Convenience accessors
+    inline static U64 getCurrentSizeBytes()      { return sCurrentSizeBytes.load(); }
+    inline static U64 getNominalSizeBytes()      { return sNominalSizeBytes; }
+    inline static U64 getMaxSizeBytes()          { return sMaxSizeBytes; }
+    inline static const std::string& getCacheDir() { return sCacheDir; }
+
+private:
+    // Utility method to gather the total size (in bytes) occupied by the cache
+    // files.
+    static U64 cacheDirSize();
+
+private:
+    // Contains the pointer to the cache purging thread.
+    static LLCachePurgeThread*      sPurgeThread;
+    // Cache directory path
+    static std::string              sCacheDir;
+    // The nominal size of the cache in bytes. After purging, the total size of
+    // the cache files in the cache directory will be less than this value.
+    static U64                      sNominalSizeBytes;
+    // Maximal amount of data in cache beyond which the cache gets purged.
+    static U64                      sMaxSizeBytes;
+    // Current size of the cache. This is an atomic variable, since it can get
+    // updated by various threads concurrently, via addBytesWritten() and
+    // threaded purge().
+    static std::atomic<U64>         sCurrentSizeBytes;
+    // true while purging, and atomic since used in various threads
+    static std::atomic<bool>        sPurging;
+    // true when the cache directory is valid
+    static bool                     sCacheValid;
 };
-#endif // _LLDISKCACHE

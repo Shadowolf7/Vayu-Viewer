@@ -2422,21 +2422,9 @@ class LLAdvancedDropPacket : public view_listener_t
 
 class LLAdvancedPurgeDiskCache : public view_listener_t
 {
-    bool handleEvent(const LLSD& userdata)
+    bool handleEvent(const LLSD& userdata) override
     {
-        LL::WorkQueue::ptr_t main_queue = LL::WorkQueue::getInstance("mainloop");
-        LL::WorkQueue::ptr_t general_queue = LL::WorkQueue::getInstance("General");
-        llassert_always(main_queue);
-        llassert_always(general_queue);
-        main_queue->postTo(
-            general_queue,
-            []() // Work done on general queue
-            {
-                LLDiskCache::getInstance()->purge();
-                // Nothing needed to return
-            },
-            [](){}); // Callback to main thread is empty as there is nothing left to do
-
+        LLDiskCache::threadedPurge();
         return true;
     }
 };

@@ -1,308 +1,394 @@
 /**
- * @file filesystem.h
- * @brief Simulate local file system operations.
- * @Note The initial implementation does actually use standard C++
- *       file operations but eventually, there will be another
- *       layer that caches and manages file meta data too.
+ * @file llfilesystem.cpp
+ * @brief Implementation of the local file system.
  *
  * $LicenseInfo:firstyear=2002&license=viewerlgpl$
+ *
+ * Copyright (c) 2020, Linden Research, Inc. (c) 2021 Henri Beauchamp.
+ *
+ * Modifications by Henri Beauchamp:
+ *  - Pointless per-asset-type file naming removed.
+ *  - Cached filename for faster operations.
+ *  - Use of faster LLFile operations where possible.
+ *  - Fixed various bugs in write operations. Removed the pointless READ_WRITE
+ *    mode, added the OVERWRITE one, and changed seek() to auto-padding files
+ *    with zeros in WRITE mode when seeking past the end of an existing file.
+ *  - Real time tracking of bytes added to/removed from cache.
+ *  - Proper cache validity verification.
+ *  - Immediate date-stamping on creation of LLFileSystem instances, to prevent
+ *    potential race conditions with the threaded cache purging mechanism.
+ *  - Multiple threads and multiple viewer instances deconfliction.
+ *  - Added LLFile::sFlushOnWrite to work around a bug in Wine (*) which
+ *    reports a wrong file position after non flushed writes. (*) This is for
+ *    people perverted enough to run a Windows build under Wine under Linux
+ *    instead of a Linux native build: yes, I'm perverted since I do it to test
+ *    Windows builds under Linux... :-P
+ *
  * Second Life Viewer Source Code
- * Copyright (C) 2010, Linden Research, Inc.
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms of the GNU Lesser General Public License as published by the
+ * Free Software Foundation; version 2.1 of the License only.
  *
- * This library is free software; you can redistribute it and/or
- * modify it under the terms of the GNU Lesser General Public
- * License as published by the Free Software Foundation;
- * version 2.1 of the License only.
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE. See the GNU Lesser General Public License
+ * for more details.
  *
- * This library is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * Lesser General Public License for more details.
- *
- * You should have received a copy of the GNU Lesser General Public
- * License along with this library; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
- *
- * Linden Research, Inc., 945 Battery Street, San Francisco, CA  94111  USA
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with this library; if not, write to the Free Software Foundation, Inc.
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA"
  * $/LicenseInfo$
  */
 
 #include "linden_common.h"
 
-#include "lldir.h"
 #include "llfilesystem.h"
-#include "llfasttimer.h"
+
 #include "lldiskcache.h"
+#include "llfile.h"
 
-constexpr S32 LLFileSystem::READ        = 0x00000001;
-constexpr S32 LLFileSystem::WRITE       = 0x00000002;
-constexpr S32 LLFileSystem::READ_WRITE  = 0x00000003;  // LLFileSystem::READ & LLFileSystem::WRITE
-constexpr S32 LLFileSystem::APPEND      = 0x00000006;  // 0x00000004 & LLFileSystem::WRITE
-
-LLFileSystem::LLFileSystem(const LLUUID& file_id, const LLAssetType::EType file_type, S32 mode)
+static S32 get_file_size_helper(const std::string& filename)
 {
-    mFileType = file_type;
-    mFileID = file_id;
-    mPosition = 0;
-    mBytesRead = 0;
-    mMode = mode;
-
-    // build the filepath
-    mPath = LLDiskCache::metaDataToFilepath(mFileID, mFileType);
-
-    // This block of code was originally called in the read() method but after comments here:
-    // https://bitbucket.org/lindenlab/viewer/commits/e28c1b46e9944f0215a13cab8ee7dded88d7fc90#comment-10537114
-    // we decided to follow Henri's suggestion and move the code to update the last access time here.
-    if (mode == LLFileSystem::READ)
+    llstat st;
+    if (LLFile::stat(filename, &st) == 0)
     {
-        // update the last access time for the file if it exists - this is required
-        // even though we are reading and not writing because this is the
-        // way the cache works - it relies on a valid "last accessed time" for
-        // each file so it knows how to remove the oldest, unused files
-        if (LLFile::exists(mPath))
-        {
-            updateFileAccessTime();
-        }
+        return (S32)st.st_size;
+    }
+    return 0;
+}
+
+LLFileSystem::LLFileSystem(const LLUUID& id, S32 mode, const char* extra_info)
+:   mFileID(id),
+    mMode(mode),
+    mPosition(0),
+    mBytesRead(0),
+    mTotalBytesWritten(0),
+    mFilename(LLDiskCache::getFilePath(id, extra_info)),
+    mValid(LLDiskCache::isValid())
+{
+    if (extra_info && *extra_info)
+    {
+        mExtraInfo.assign(extra_info);
+    }
+
+    mExists = mValid && LLFile::isfile(mFilename);
+    if (mExists)
+    {
+        // Update the last access time for the file since this is the way the
+        // cache works; it relies on a valid "last accessed time" for each file
+        // so that it knows how to remove the oldest, unused files.
+        // Since LLFileSystem instances are short-lived, we update the file
+        // access time on construction (which also allows to update that time
+        // at once during cache purging, preventing an old file that would be
+        // reused to get purged in between LLFileSystem instance construction
+        // and its actual usage). HB
+        LLDiskCache::updateFileAccessTime(mFilename);
+    }
+
+    // In append mode, we always write to the end of file, so make sure to
+    // initialize the current position there... HB
+    if (mExists && mMode == APPEND)
+    {
+        mPosition = get_file_size_helper(mFilename);
     }
 }
 
-// static
-bool LLFileSystem::getExists(const LLUUID& file_id, const LLAssetType::EType file_type)
+LLFileSystem::~LLFileSystem()
 {
-    LL_PROFILE_ZONE_SCOPED;
-    const std::filesystem::path filename = LLDiskCache::metaDataToFilepath(file_id, file_type);
-
-    // not only test for existence but for the file to be not empty
-    S64 size =  LLFile::size(filename);
-    return size > 0;
-}
-
-// static
-bool LLFileSystem::removeFile(const LLUUID& file_id, const LLAssetType::EType file_type, int suppress_warning /*= 0*/)
-{
-    const std::filesystem::path filename = LLDiskCache::metaDataToFilepath(file_id, file_type);
-
-    LLFile::remove(filename, suppress_warning);
-
-    return true;
-}
-
-// static
-bool LLFileSystem::renameFile(const LLUUID& old_file_id, const LLAssetType::EType old_file_type,
-                              const LLUUID& new_file_id, const LLAssetType::EType new_file_type)
-{
-    const std::filesystem::path old_filename = LLDiskCache::metaDataToFilepath(old_file_id, old_file_type);
-    const std::filesystem::path new_filename = LLDiskCache::metaDataToFilepath(new_file_id, new_file_type);
-
-    if (LLFile::rename(old_filename, new_filename) != 0)
+    if (mTotalBytesWritten)
     {
-        // We would like to return false here indicating the operation
-        // failed but the original code does not and doing so seems to
-        // break a lot of things so we go with the flow...
-        //return false;
-        LL_WARNS() << "Failed to rename " << old_file_id << " to " << new_file_id << " reason: " << strerror(errno) << LL_ENDL;
+        // Inform the disk cache about how much bytes we added or removed. HB
+        LLDiskCache::addBytesWritten(mTotalBytesWritten);
     }
-
-    return true;
 }
 
 bool LLFileSystem::read(U8* buffer, S32 bytes)
 {
-    bool success = false;
-
-    llifstream file(mPath, std::ios::binary);
-    if (file.is_open())
+    if (!mValid || bytes < 0 || !buffer)
     {
-        file.seekg(mPosition, std::ios::beg);
-
-        file.read((char*)buffer, bytes);
-
-        if (file)
-        {
-            mBytesRead = bytes;
-        }
-        else
-        {
-            mBytesRead = (S32)file.gcount();
-        }
-
-        file.close();
-
-        mPosition += mBytesRead;
-        if (mBytesRead)
-        {
-            success = true;
-        }
+        return false;
+    }
+    if (!bytes)
+    {
+        mExists = LLFile::isfile(mFilename);
+        return mExists;
     }
 
-    return success;
-}
+    LLFILE* file = LLFile::fopen(mFilename, "rb");
+    mExists = file != NULL;
+    if (!mExists)
+    {
+        return false;
+    }
 
-S32 LLFileSystem::getLastBytesRead() const
-{
-    return mBytesRead;
-}
+    if (mPosition > 0)
+    {
+        fseek(file, mPosition, SEEK_SET);
+    }
+    mBytesRead = (S32)fread(buffer, 1, bytes, file);
+    LLFile::close(file);
 
-bool LLFileSystem::eof() const
-{
-    return mPosition >= getSize();
+    if (mBytesRead > 0)
+    {
+        mPosition += mBytesRead;
+        // Short reads are also considered a success (needed due to how
+        // buffered reads are implemented in the viewer code such as in,
+        // for example, LLAssetStorage::legacyGetDataCallback())... HB
+        return true;
+    }
+
+    return false;
 }
 
 bool LLFileSystem::write(const U8* buffer, S32 bytes)
 {
-    bool success = false;
-
+    if (!mValid)
+    {
+        return false;
+    }
     if (mMode == APPEND)
     {
-        llofstream ofs(mPath, std::ios::app | std::ios::binary);
-        if (ofs)
+        // Write to file, appending to it if it already exists.
+        LLFILE* file = LLFile::fopen(mFilename, "a+b");
+        if (file)
         {
-            ofs.write((const char*)buffer, bytes);
-
-            mPosition = (S32)ofs.tellp();
-
-            success = true;
+            fwrite((void*)buffer, 1, bytes, file);
+            mPosition = (S32)ftell(file);
+            LLFile::close(file);
+            mTotalBytesWritten += bytes;
+            mExists = true;
+            return true;
         }
     }
-    else if (mMode == READ_WRITE)
+    else if (mMode == OVERWRITE)
     {
-        // Don't truncate if file already exists
-        llofstream ofs(mPath, std::ios::in | std::ios::binary);
-        if (ofs)
+        // Discard any existing contents and write.
+        mTotalBytesWritten -= get_file_size_helper(mFilename);
+        LLFILE* file = LLFile::fopen(mFilename, "wb");
+        if (file)
         {
-            ofs.seekp(mPosition, std::ios::beg);
-            ofs.write((const char*)buffer, bytes);
-            mPosition += bytes;
-            success = true;
+            fwrite((void*)buffer, 1, bytes, file);
+            mPosition = (S32)ftell(file);
+            LLFile::close(file);
+            mTotalBytesWritten += bytes;
+            mExists = true;
+            return true;
         }
-        else
+    }
+    else if (mMode == WRITE)
+    {
+        // Write at current position, without truncating
+        S32 size = get_file_size_helper(mFilename);  // Remember current size
+        mExists = size > 0;
+        const char* mode = mExists ? "r+b" : "wb";
+        LLFILE* file = LLFile::fopen(mFilename, mode);
+        if (file)
         {
-            // File doesn't exist - open in write mode
-            ofs.open(mPath, std::ios::binary);
-            if (ofs.is_open())
+            if (mExists && mPosition > 0)
             {
-                ofs.write((const char*)buffer, bytes);
-                mPosition += bytes;
-                success = true;
+                fseek(file, mPosition, SEEK_SET);
             }
+            fwrite((void*)buffer, 1, bytes, file);
+            mPosition = (S32)ftell(file);
+            LLFile::close(file);
+            if (mPosition > size)
+            {
+                mTotalBytesWritten += mPosition - size;
+            }
+            mExists = true;
+            return true;
         }
     }
     else
     {
-        llofstream ofs(mPath, std::ios::binary);
-        if (ofs)
-        {
-            ofs.write((const char*)buffer, bytes);
-
-            mPosition += bytes;
-
-            success = true;
-        }
+        LL_ERRS("FileSystem") << "Cannot write in READ mode." << LL_ENDL;
     }
 
-    return success;
+    mExists = false;
+    return false;
 }
 
 bool LLFileSystem::seek(S32 offset, S32 origin)
 {
-    if (-1 == origin)
+    if (!mValid)
+    {
+        return false;
+    }
+    if (mMode == OVERWRITE || mMode == APPEND)
+    {
+        LL_ERRS("FileSystem") << "Cannot seek in file before writing into it in mode "
+                              << (mMode == APPEND ? "APPEND" : "OVERWRITE") << LL_ENDL;
+    }
+    if (origin < 0)
     {
         origin = mPosition;
     }
-
     S32 new_pos = origin + offset;
-
-    S32 size = getSize();
-
+    S32 size = get_file_size_helper(mFilename);
     if (new_pos > size)
     {
-        LL_WARNS() << "Attempt to seek past end of file" << LL_ENDL;
+        if (mMode == READ)
+        {
+            LL_WARNS("FileSystem") << "Attempt to seek past end of file: " << mFilename
+                                   << LL_ENDL;
+            mPosition = size;
+            return false;
+        }
+        else    // Append zeros to the file up to the new position. HB
+        {
+            mPosition = size;
+            LLFILE* file = LLFile::fopen(mFilename, "a+b");
+            if (!file)
+            {
+                LL_WARNS("FileSystem") << "Attempt to seek past end of file \"" << mFilename
+                                       << "\", and could not open it to pad it with zeros."
+                                       << LL_ENDL;
+                return false;
+            }
 
-        mPosition = size;
-        return false;
+            mExists = true;
+            size_t bytes = new_pos - size;
+            char* buffer = new (std::nothrow) char[bytes];
+            if (buffer)
+            {
+                LL_DEBUGS("FileSystem") << "Appending " << bytes
+                                        << " padding bytes to: " << mFilename
+                                        << LL_ENDL;
+                memset((void*)buffer, 0, bytes);
+                fwrite((void*)buffer, 1, bytes, file);
+                mPosition = (S32)ftell(file);
+                mTotalBytesWritten += mPosition - size;
+                delete[] buffer;
+            }
+            LLFile::close(file);
+            if (mPosition == new_pos)
+            {
+                return true;
+            }
+            LL_WARNS("FileSystem") << "Could not append enough padding bytes to seek to position: "
+                                   << size << " in \"" << mFilename << "\" (position "
+                                   << mPosition << " reached)." << LL_ENDL;
+            return false;
+        }
     }
-    else if (new_pos < 0)
+    if (new_pos < 0)
     {
-        LL_WARNS() << "Attempt to seek past beginning of file" << LL_ENDL;
-
+        LL_WARNS("FileSystem") << "Attempt to seek past beginning of file: " << mFilename
+                               << LL_ENDL;
         mPosition = 0;
         return false;
     }
-
     mPosition = new_pos;
     return true;
 }
 
-S32 LLFileSystem::tell() const
-{
-    return mPosition;
-}
-
 S32 LLFileSystem::getSize() const
 {
-    return narrow(LLFile::size(mPath));
+    return mValid ? get_file_size_helper(mFilename) : 0;
 }
 
-S32 LLFileSystem::getMaxSize() const
+bool LLFileSystem::remove()
 {
-    // offer up a huge size since we don't care what the max is
-    return INT_MAX;
+    if (!mValid)
+    {
+        return false;
+    }
+    mExists = false;
+    llstat st;
+    if (LLFile::stat(mFilename, &st))
+    {
+        // No such file, we are done.
+        return true;
+    }
+    mTotalBytesWritten -= st.st_size;
+    return (LLFile::remove(mFilename) == 0);
 }
 
-bool LLFileSystem::rename(const LLUUID& new_id, const LLAssetType::EType new_type)
+bool LLFileSystem::rename(const LLUUID& new_id)
 {
-    LLFileSystem::renameFile(mFileID, mFileType, new_id, new_type);
-
     mFileID = new_id;
-    mFileType = new_type;
-    mPath = LLDiskCache::metaDataToFilepath(mFileID, mFileType);
-
-    return true;
+    if (!mValid)
+    {
+        return false;
+    }
+    std::string newfname = LLDiskCache::getFilePath(new_id,
+                                                    mExtraInfo.c_str());
+    // First remove the new file when it exists
+    llstat st;
+    if (LLFile::stat(newfname, &st) == 0)
+    {
+        mTotalBytesWritten -= st.st_size;
+        LLFile::remove(newfname);
+    }
+    // Note: this call may fail and will appropriately warn in the log...
+    mExists = (LLFile::rename(mFilename, newfname) == 0);
+    mFilename = newfname;
+    return mExists;
 }
 
-bool LLFileSystem::remove() const
+//static
+bool LLFileSystem::getExists(const LLUUID& id, const char* extra_info)
 {
-    LLFile::remove(mPath);
-    return true;
+    if (!LLDiskCache::isValid())
+    {
+        return false;
+    }
+    return LLFile::isfile(LLDiskCache::getFilePath(id, extra_info));
 }
 
-void LLFileSystem::updateFileAccessTime()
+//static
+S32 LLFileSystem::getFileSize(const LLUUID& id, const char* extra_info)
 {
-    /**
-     * Threshold in time_t units that is used to decide if the last access time
-     * time of the file is updated or not. Added as a precaution for the concern
-     * outlined in SL-14582  about frequent writes on older SSDs reducing their
-     * lifespan. I think this is the right place for the threshold value - rather
-     * than it being a pref - do comment on that Jira if you disagree...
-     *
-     * Let's start with 1 hour in time_t units and see how that unfolds
-     */
-    constexpr std::chrono::hours time_threshold(1);
-
-    // current time
-    const std::filesystem::file_time_type cur_time = std::chrono::file_clock::now();
-
-    std::error_code ec;
-    // file last write time
-    const std::filesystem::file_time_type last_write_time = std::filesystem::last_write_time(mPath, ec);
-    if (ec)
+    if (!LLDiskCache::isValid())
     {
-        LL_WARNS() << "Failed to read last write time for cache file " << mPath << ": " << ec.message() << LL_ENDL;
-        return;
+        return 0;
+    }
+    return get_file_size_helper(LLDiskCache::getFilePath(id, extra_info));
+}
+
+//static
+bool LLFileSystem::removeFile(const LLUUID& id, const char* extra_info)
+{
+    if (!LLDiskCache::isValid())
+    {
+        return false;
+    }
+    std::string filename = LLDiskCache::getFilePath(id, extra_info);
+    llstat st;
+    if (LLFile::stat(filename, &st))
+    {
+        // No such file, we are done.
+        return true;
+    }
+    if (st.st_size)
+    {
+        LLDiskCache::addBytesWritten(-st.st_size);
+    }
+    return (LLFile::remove(filename) == 0);
+}
+
+//static
+bool LLFileSystem::renameFile(const LLUUID& old_id, const LLUUID& new_id,
+                              const char* extra_info)
+{
+    if (!LLDiskCache::isValid())
+    {
+        return false;
     }
 
-    // delta between cur time and last time the file was written
-    const auto delta_time = cur_time - last_write_time;
-
-    // we only write the new value if the time in time_threshold has elapsed
-    // before the last one
-    if (delta_time > time_threshold)
+    std::string old_filename = LLDiskCache::getFilePath(old_id, extra_info);
+    std::string new_filename = LLDiskCache::getFilePath(new_id, extra_info);
+    // First remove the new file when it exists
+    llstat st;
+    if (LLFile::stat(old_filename, &st) == 0)
     {
-        std::filesystem::last_write_time(mPath, cur_time, ec);
+        if (st.st_size)
+        {
+            LLDiskCache::addBytesWritten(-st.st_size);
+        }
+        LLFile::remove(new_filename);
     }
 
-    if (ec)
-    {
-        LL_WARNS() << "Failed to update last write time for cache file " << mPath << ": " << ec.message() << LL_ENDL;
-    }
+    // Note: this call may fail and will appropriately warn in the log...
+    return (LLFile::rename(old_filename, new_filename) == 0);
 }

@@ -1134,8 +1134,10 @@ class LinuxManifest(ViewerManifest):
             with self.prefix(dst="res-sdl") :
                 self.path("vayu_256.BMP","ll_icon.BMP")
 
-        with self.prefix(src=os.path.join(self.args['build'], os.pardir, "llwebrtc", self.args['configuration']), dst="lib"):
-            self.path("libllwebrtc.so")
+        webrtc_so_dir = os.path.join(self.args['build'], os.pardir, "llwebrtc", self.args['configuration'])
+        if os.path.exists(os.path.join(webrtc_so_dir, "libllwebrtc.so")):
+            with self.prefix(src=webrtc_so_dir, dst="lib"):
+                self.path("libllwebrtc.so")
 
         # plugins
         with self.prefix(dst="bin/llplugin"):
@@ -1165,6 +1167,12 @@ class LinuxManifest(ViewerManifest):
                     self.path( "chrome-sandbox" )
                     self.path( "v8_context_snapshot.bin" )
                     self.path( "vk_swiftshader_icd.json")
+
+                with self.prefix(src=os.path.join(self.args['vcpkg_dir'], 'share', 'cef-bin', 'Resources')):
+                    self.path( "chrome_100_percent.pak" )
+                    self.path( "chrome_200_percent.pak" )
+                    self.path( "resources.pak" )
+                    self.path( "icudtl.dat" )
 
                 with self.prefix(src=os.path.join(self.args['vcpkg_dir'], 'share', 'cef-bin', 'Resources', 'locales'), dst="locales"):
                     self.path("*.pak")

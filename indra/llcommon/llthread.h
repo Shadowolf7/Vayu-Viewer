@@ -147,5 +147,6 @@ public:
 
 extern LL_COMMON_API bool assert_main_thread();
 extern LL_COMMON_API bool on_main_thread();
+inline bool is_main_thread() { return on_main_thread(); }
 
 #endif // LL_LLTHREAD_H

@@ -81,6 +81,14 @@ if (BUILD_TESTING)
     # UNIT TESTS
     SET(llfilesystem_TEST_SOURCE_FILES
       lldiriterator.cpp
+      lldiskcache.cpp
+    )
+
+    set_source_files_properties(
+      lldiskcache.cpp
+      PROPERTIES
+      LL_TEST_ADDITIONAL_SOURCE_FILES
+      lldiriterator.cpp
     )
 
     LL_ADD_PROJECT_UNIT_TESTS(llfilesystem "${llfilesystem_TEST_SOURCE_FILES}")

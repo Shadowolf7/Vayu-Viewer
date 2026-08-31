@@ -902,7 +902,7 @@ void LLWebRTCImpl::updateDevices()
 
     int16_t renderDeviceCount  = mDeviceModule->PlayoutDevices();
 
-    mPlayoutDeviceList.clear();
+    LLWebRTCVoiceDeviceList newPlayoutList;
 #if WEBRTC_WIN
     int16_t index = 0;
 #else
@@ -916,12 +916,12 @@ void LLWebRTCImpl::updateDevices()
         char guid[webrtc::kAdmMaxGuidSize];
         mDeviceModule->PlayoutDeviceName(index, name, guid);
         RTC_LOG(LS_VERBOSE) << "updateDevices: playout device [" << index << "] name='" << name << "' guid='" << guid << "'";
-        mPlayoutDeviceList.emplace_back(name, guid);
+        newPlayoutList.emplace_back(name, guid);
     }
 
     int16_t captureDeviceCount        = mDeviceModule->RecordingDevices();
 
-    mRecordingDeviceList.clear();
+    LLWebRTCVoiceDeviceList newRecordingList;
 #if WEBRTC_WIN
     index = 0;
 #else
@@ -935,8 +935,17 @@ void LLWebRTCImpl::updateDevices()
         char guid[webrtc::kAdmMaxGuidSize];
         mDeviceModule->RecordingDeviceName(index, name, guid);
         RTC_LOG(LS_VERBOSE) << "updateDevices: recording device [" << index << "] name='" << name << "' guid='" << guid << "'";
-        mRecordingDeviceList.emplace_back(name, guid);
+        newRecordingList.emplace_back(name, guid);
     }
+
+    bool changed = (mPlayoutDeviceList != newPlayoutList || mRecordingDeviceList != newRecordingList);
+    if (!changed && !mPlayoutDeviceList.empty() && !mRecordingDeviceList.empty())
+    {
+        return;
+    }
+
+    mPlayoutDeviceList = std::move(newPlayoutList);
+    mRecordingDeviceList = std::move(newRecordingList);
 
     RTC_LOG(LS_INFO) << "updateDevices, playout count: " << renderDeviceCount << "; capture count: " << captureDeviceCount;
 
@@ -944,8 +953,6 @@ void LLWebRTCImpl::updateDevices()
     {
         observer->OnDevicesChanged(mPlayoutDeviceList, mRecordingDeviceList);
     }
-
-    deployDevices();
 }
 
 void LLWebRTCImpl::OnDevicesUpdated()

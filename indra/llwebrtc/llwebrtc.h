@@ -98,6 +98,11 @@ class LLWebRTCVoiceDevice
             mID = display_name;
         }
     };
+
+    bool operator==(const LLWebRTCVoiceDevice& other) const
+    {
+        return mDisplayName == other.mDisplayName && mID == other.mID;
+    }
 };
 
 typedef std::vector<LLWebRTCVoiceDevice> LLWebRTCVoiceDeviceList;

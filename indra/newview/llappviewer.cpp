@@ -651,7 +651,6 @@ LLAppViewer* LLAppViewer::sInstance = NULL;
 LLTextureCache* LLAppViewer::sTextureCache = NULL;
 LLImageDecodeThread* LLAppViewer::sImageDecodeThread = NULL;
 LLTextureFetch* LLAppViewer::sTextureFetch = NULL;
-LLPurgeDiskCacheThread* LLAppViewer::sPurgeDiskCacheThread = NULL;
 
 std::string getRuntime()
 {
@@ -2126,7 +2125,7 @@ bool LLAppViewer::cleanup()
     sTextureFetch->shutdown();
     sTextureCache->shutdown();
     sImageDecodeThread->shutdown();
-    sPurgeDiskCacheThread->shutdown();
+    LLDiskCache::shutdown();
     if (mGeneralThreadPool)
     {
         mGeneralThreadPool->close();
@@ -2196,8 +2195,6 @@ bool LLAppViewer::cleanup()
     // confirmed via gdb). ImageDecode is the only feeder of writeEntry(),
     // and it's fully torn down above, so nothing can race this.
     VayuBCTextureCache::instance().shutdown();
-    delete sPurgeDiskCacheThread;
-    sPurgeDiskCacheThread = NULL;
     delete mGeneralThreadPool;
     mGeneralThreadPool = NULL;
 
@@ -2339,8 +2336,6 @@ bool LLAppViewer::initThreads()
 
     // general task background thread (LLPerfStats, etc)
     LLAppViewer::instance()->initGeneralThread();
-
-    LLAppViewer::sPurgeDiskCacheThread = new LLPurgeDiskCacheThread();
 
     // Mesh streaming and caching
     gMeshRepo.init();
@@ -3909,7 +3904,7 @@ LLSD LLAppViewer::getViewerInfo() const
     }
 
     // populate field for new local disk cache with some details
-    info["DISK_CACHE_INFO"] = LLDiskCache::getInstance()->getCacheInfo();
+    info["DISK_CACHE_INFO"] = LLDiskCache::getCacheInfo();
 
     return info;
 }
@@ -4973,21 +4968,14 @@ bool LLAppViewer::initCache()
         gSavedSettings.setString("NewCacheLocationTopFolder", "");
     }
 
-    const std::string cache_dir = gDirUtilp->getExpandedFilename(LL_PATH_CACHE, cache_dir_name);
-    LLDiskCache::initParamSingleton(cache_dir, disk_cache_size, enable_cache_debug_info);
+    LLDiskCache::init(disk_cache_size, read_only);
 
     if (!read_only)
     {
         if (gSavedSettings.getS32("DiskCacheVersion") != LLAppViewer::getDiskCacheVersion())
         {
-            LLDiskCache::getInstance()->clearCache();
-            remove_vfs_files = true;
+            LLDiskCache::clear();
             gSavedSettings.setS32("DiskCacheVersion", LLAppViewer::getDiskCacheVersion());
-        }
-
-        if (remove_vfs_files)
-        {
-            LLDiskCache::getInstance()->removeOldVFSFiles();
         }
 
         if (mPurgeCache)
@@ -4995,18 +4983,14 @@ bool LLAppViewer::initCache()
             LLSplashScreen::update(LLTrans::getString("StartupClearingCache"));
             purgeCache();
 
-            // clear the new C++ file system based cache
-            LLDiskCache::getInstance()->clearCache();
+            // clear the local disk cache
+            LLDiskCache::clear();
         }
         else if (gSavedSettings.getBOOL("PurgeDiskCacheOnStartup"))
         {
-            // purge excessive files from the new file system based cache
-            LLDiskCache::getInstance()->purge();
+            // request background purge without stalling startup
+            LLDiskCache::threadedPurge();
         }
-
-        // Start disk cache purge thread to
-        // purge excessive files from the file system based cache
-        LLAppViewer::getPurgeDiskCacheThread()->start();
     }
 
     LLSplashScreen::update(LLTrans::getString("StartupInitializingTextureCache"));

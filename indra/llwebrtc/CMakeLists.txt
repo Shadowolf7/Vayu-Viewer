@@ -15,7 +15,7 @@ set(llwebrtc_HEADER_FILES
 
 list(APPEND llwebrtc_SOURCE_FILES ${llwebrtc_HEADER_FILES})
 
-add_library(llwebrtc SHARED ${llwebrtc_SOURCE_FILES})
+add_library(llwebrtc STATIC ${llwebrtc_SOURCE_FILES})
 set_target_properties(llwebrtc PROPERTIES PUBLIC_HEADER llwebrtc.h)
 
 # WebRTC is built with RTTI disabled (-fno-rtti / /GR-). Subclasses such as

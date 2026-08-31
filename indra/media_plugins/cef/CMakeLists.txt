@@ -193,5 +193,5 @@ elseif (DARWIN)
     )
 
 elseif (LINUX)
-  target_link_options(media_plugin_cef PRIVATE  "LINKER:--build-id" "LINKER:-rpath,'$ORIGIN:$ORIGIN/../../lib'")
+  target_link_options(media_plugin_cef PRIVATE  "LINKER:--build-id" "LINKER:-rpath,\$ORIGIN:\$ORIGIN/../../lib")
 endif ()
