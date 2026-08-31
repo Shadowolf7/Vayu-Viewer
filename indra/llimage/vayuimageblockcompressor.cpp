@@ -5,8 +5,8 @@
 
 #include "linden_common.h"
 #include "vayuimageblockcompressor.h"
-#include "bc7e/bc7enc.h"
 #include "bc7e/rgbcx.h"
+#include "bc7e/bc7e_ispc.h"
 #include "llerror.h"
 
 #include <algorithm>
@@ -53,8 +53,7 @@ static std::once_flag g_init_once;
 static std::atomic<U8> g_preset{ (U8)EVayuBlockCompressionPreset::Basic };
 static std::atomic<size_t> g_queue_backlog{ 0 };
 
-// Initial guesses relative to the 8-thread "ImageDecode" pool (llimageworker.cpp);
-// not yet tuned against real telemetry (see Phase 3 roadmap item).
+// Backlog thresholds relative to the 8-thread "ImageDecode" pool (llimageworker.cpp)
 constexpr size_t kModerateBacklogThreshold = 12; // ~1.5x pool width: cap effort at Fast
 constexpr size_t kHeavyBacklogThreshold = 32;     // ~4x pool width: force Ultrafast
 
@@ -71,29 +70,23 @@ static uint32_t bc1_level_for_preset(EVayuBlockCompressionPreset preset)
     }
 }
 
-// Applies the preset's mode/partition/uber-level tradeoff to a BC7 params block
-// already initialized via bc7enc_compress_block_params_init().
-static void apply_bc7_preset(bc7enc_compress_block_params& params, EVayuBlockCompressionPreset preset)
+// Applies the preset's mode/partition/uber-level tradeoff to an ISPC BC7 params block
+static void apply_bc7_preset(ispc::bc7e_compress_block_params& params, EVayuBlockCompressionPreset preset, bool perceptual = false)
 {
     switch (preset)
     {
     case EVayuBlockCompressionPreset::Ultrafast:
-        params.m_mode_mask = (1u << 6); // mode 6 only: single partition, handles RGB + alpha
-        params.m_max_partitions = 0;
-        params.m_uber_level = 0;
+        ispc::bc7e_compress_block_params_init_ultrafast(&params, perceptual);
         break;
     case EVayuBlockCompressionPreset::Fast:
-        params.m_max_partitions = 16;
-        params.m_uber_level = 0;
+        ispc::bc7e_compress_block_params_init_fast(&params, perceptual);
         break;
     case EVayuBlockCompressionPreset::Slow:
-        params.m_max_partitions = BC7ENC_MAX_PARTITIONS;
-        params.m_uber_level = BC7ENC_MAX_UBER_LEVEL;
+        ispc::bc7e_compress_block_params_init_slow(&params, perceptual);
         break;
     case EVayuBlockCompressionPreset::Basic:
     default:
-        params.m_max_partitions = BC7ENC_MAX_PARTITIONS;
-        params.m_uber_level = 0;
+        ispc::bc7e_compress_block_params_init_basic(&params, perceptual);
         break;
     }
 }
@@ -128,12 +121,14 @@ static void init_compression_tables()
 {
     std::call_once(g_init_once, []() {
         rgbcx::init(rgbcx::bc1_approx_mode::cBC1Ideal);
-        bc7enc_compress_block_init();
+        ispc::bc7e_compress_block_init();
         init_tables();
     });
 }
 
-// Specialized box-filter downsampling for 4-channel sRGB (RGBA)
+#include <libyuv.h>
+
+// Zero-allocation box-filter downsampling for 4-channel sRGB (RGBA)
 static void downsample_half_srgb_4ch(const uint8_t* src, uint32_t sw, uint32_t sh, uint8_t* dst)
 {
     const uint32_t dw = llmax(1u, sw / 2);
@@ -147,30 +142,7 @@ static void downsample_half_srgb_4ch(const uint8_t* src, uint32_t sw, uint32_t s
         const uint8_t* r1 = src + (size_t)sy1 * sw * 4;
         uint8_t* out = dst + (size_t)y * dw * 4;
 
-        const uint32_t interior_dw = sw / 2;
-        for (uint32_t x = 0; x < interior_dw; x++)
-        {
-            const uint32_t sx = x * 2;
-            const uint8_t* a = r0 + (size_t)sx * 4;
-            const uint8_t* b = a + 4;
-            const uint8_t* c = r1 + (size_t)sx * 4;
-            const uint8_t* d = c + 4;
-
-            const float lin_r = (g_srgb_to_linear[a[0]] + g_srgb_to_linear[b[0]] +
-                                 g_srgb_to_linear[c[0]] + g_srgb_to_linear[d[0]]) * 0.25f;
-            const float lin_g = (g_srgb_to_linear[a[1]] + g_srgb_to_linear[b[1]] +
-                                 g_srgb_to_linear[c[1]] + g_srgb_to_linear[d[1]]) * 0.25f;
-            const float lin_b = (g_srgb_to_linear[a[2]] + g_srgb_to_linear[b[2]] +
-                                 g_srgb_to_linear[c[2]] + g_srgb_to_linear[d[2]]) * 0.25f;
-
-            out[0] = linear_to_srgb_u8(lin_r);
-            out[1] = linear_to_srgb_u8(lin_g);
-            out[2] = linear_to_srgb_u8(lin_b);
-            out[3] = (uint8_t)((a[3] + b[3] + c[3] + d[3] + 2) >> 2);
-            out += 4;
-        }
-
-        for (uint32_t x = interior_dw; x < dw; x++)
+        for (uint32_t x = 0; x < dw; x++)
         {
             uint32_t sx0 = x * 2;
             uint32_t sx1 = (sx0 + 1 < sw) ? (sx0 + 1) : sx0;
@@ -195,7 +167,7 @@ static void downsample_half_srgb_4ch(const uint8_t* src, uint32_t sw, uint32_t s
     }
 }
 
-// Specialized box-filter downsampling for 3-channel sRGB (RGB)
+// Zero-allocation box-filter downsampling for 3-channel sRGB (RGB)
 static void downsample_half_srgb_3ch(const uint8_t* src, uint32_t sw, uint32_t sh, uint8_t* dst)
 {
     const uint32_t dw = llmax(1u, sw / 2);
@@ -209,29 +181,7 @@ static void downsample_half_srgb_3ch(const uint8_t* src, uint32_t sw, uint32_t s
         const uint8_t* r1 = src + (size_t)sy1 * sw * 3;
         uint8_t* out = dst + (size_t)y * dw * 3;
 
-        const uint32_t interior_dw = sw / 2;
-        for (uint32_t x = 0; x < interior_dw; x++)
-        {
-            const uint32_t sx = x * 2;
-            const uint8_t* a = r0 + (size_t)sx * 3;
-            const uint8_t* b = a + 3;
-            const uint8_t* c = r1 + (size_t)sx * 3;
-            const uint8_t* d = c + 3;
-
-            const float lin_r = (g_srgb_to_linear[a[0]] + g_srgb_to_linear[b[0]] +
-                                 g_srgb_to_linear[c[0]] + g_srgb_to_linear[d[0]]) * 0.25f;
-            const float lin_g = (g_srgb_to_linear[a[1]] + g_srgb_to_linear[b[1]] +
-                                 g_srgb_to_linear[c[1]] + g_srgb_to_linear[d[1]]) * 0.25f;
-            const float lin_b = (g_srgb_to_linear[a[2]] + g_srgb_to_linear[b[2]] +
-                                 g_srgb_to_linear[c[2]] + g_srgb_to_linear[d[2]]) * 0.25f;
-
-            out[0] = linear_to_srgb_u8(lin_r);
-            out[1] = linear_to_srgb_u8(lin_g);
-            out[2] = linear_to_srgb_u8(lin_b);
-            out += 3;
-        }
-
-        for (uint32_t x = interior_dw; x < dw; x++)
+        for (uint32_t x = 0; x < dw; x++)
         {
             uint32_t sx0 = x * 2;
             uint32_t sx1 = (sx0 + 1 < sw) ? (sx0 + 1) : sx0;
@@ -255,148 +205,43 @@ static void downsample_half_srgb_3ch(const uint8_t* src, uint32_t sw, uint32_t s
     }
 }
 
-// Specialized box-filter downsampling for 2-channel linear (Normal maps)
-static void downsample_half_linear_2ch(const uint8_t* src, uint32_t sw, uint32_t sh, uint8_t* dst)
-{
-    const uint32_t dw = llmax(1u, sw / 2);
-    const uint32_t dh = llmax(1u, sh / 2);
-
-    for (uint32_t y = 0; y < dh; y++)
-    {
-        uint32_t sy0 = y * 2;
-        uint32_t sy1 = (sy0 + 1 < sh) ? (sy0 + 1) : sy0;
-        const uint8_t* r0 = src + (size_t)sy0 * sw * 2;
-        const uint8_t* r1 = src + (size_t)sy1 * sw * 2;
-        uint8_t* out = dst + (size_t)y * dw * 2;
-
-        const uint32_t interior_dw = sw / 2;
-        for (uint32_t x = 0; x < interior_dw; x++)
-        {
-            const uint32_t sx = x * 2;
-            const uint8_t* a = r0 + (size_t)sx * 2;
-            const uint8_t* b = a + 2;
-            const uint8_t* c = r1 + (size_t)sx * 2;
-            const uint8_t* d = c + 2;
-
-            out[0] = (uint8_t)((a[0] + b[0] + c[0] + d[0] + 2) >> 2);
-            out[1] = (uint8_t)((a[1] + b[1] + c[1] + d[1] + 2) >> 2);
-            out += 2;
-        }
-
-        for (uint32_t x = interior_dw; x < dw; x++)
-        {
-            uint32_t sx0 = x * 2;
-            uint32_t sx1 = (sx0 + 1 < sw) ? (sx0 + 1) : sx0;
-            const uint8_t* a = r0 + (size_t)sx0 * 2;
-            const uint8_t* b = r0 + (size_t)sx1 * 2;
-            const uint8_t* c = r1 + (size_t)sx0 * 2;
-            const uint8_t* d = r1 + (size_t)sx1 * 2;
-
-            out[0] = (uint8_t)((a[0] + b[0] + c[0] + d[0] + 2) >> 2);
-            out[1] = (uint8_t)((a[1] + b[1] + c[1] + d[1] + 2) >> 2);
-            out += 2;
-        }
-    }
-}
-
-// Specialized box-filter downsampling for 1-channel linear (Masks / Roughness)
-static void downsample_half_linear_1ch(const uint8_t* src, uint32_t sw, uint32_t sh, uint8_t* dst)
-{
-    const uint32_t dw = llmax(1u, sw / 2);
-    const uint32_t dh = llmax(1u, sh / 2);
-
-    for (uint32_t y = 0; y < dh; y++)
-    {
-        uint32_t sy0 = y * 2;
-        uint32_t sy1 = (sy0 + 1 < sh) ? (sy0 + 1) : sy0;
-        const uint8_t* r0 = src + (size_t)sy0 * sw;
-        const uint8_t* r1 = src + (size_t)sy1 * sw;
-        uint8_t* out = dst + (size_t)y * dw;
-
-        const uint32_t interior_dw = sw / 2;
-        for (uint32_t x = 0; x < interior_dw; x++)
-        {
-            const uint32_t sx = x * 2;
-            const uint8_t a = r0[sx];
-            const uint8_t b = r0[sx + 1];
-            const uint8_t c = r1[sx];
-            const uint8_t d = r1[sx + 1];
-
-            out[x] = (uint8_t)((a + b + c + d + 2) >> 2);
-        }
-
-        for (uint32_t x = interior_dw; x < dw; x++)
-        {
-            uint32_t sx0 = x * 2;
-            uint32_t sx1 = (sx0 + 1 < sw) ? (sx0 + 1) : sx0;
-            const uint8_t a = r0[sx0];
-            const uint8_t b = r0[sx1];
-            const uint8_t c = r1[sx0];
-            const uint8_t d = r1[sx1];
-
-            out[x] = (uint8_t)((a + b + c + d + 2) >> 2);
-        }
-    }
-}
-
-// Box-filter downsampling for linear channels (normal maps, roughness, masks)
 static void downsample_half_linear(const uint8_t* src, uint32_t sw, uint32_t sh, S32 channels, uint8_t* dst)
 {
-    if (channels == 1)
+    const uint32_t dw = llmax(1u, sw / 2);
+    const uint32_t dh = llmax(1u, sh / 2);
+
+    if (channels == 4)
     {
-        downsample_half_linear_1ch(src, sw, sh, dst);
+        libyuv::ARGBScale(src, (int)sw * 4, (int)sw, (int)sh,
+                          dst, (int)dw * 4, (int)dw, (int)dh,
+                          libyuv::kFilterBox);
     }
     else if (channels == 2)
     {
-        downsample_half_linear_2ch(src, sw, sh, dst);
+        libyuv::ScalePlane_16(reinterpret_cast<const uint16_t*>(src), (int)sw, (int)sw, (int)sh,
+                              reinterpret_cast<uint16_t*>(dst), (int)dw, (int)dw, (int)dh,
+                              libyuv::kFilterBox);
+    }
+    else if (channels == 1)
+    {
+        libyuv::ScalePlane(src, (int)sw, (int)sw, (int)sh,
+                           dst, (int)dw, (int)dw, (int)dh,
+                           libyuv::kFilterBox);
     }
     else
-    {
-        const uint32_t dw = llmax(1u, sw / 2);
-        const uint32_t dh = llmax(1u, sh / 2);
-
-        for (uint32_t y = 0; y < dh; y++)
-        {
-            uint32_t sy0 = y * 2;
-            uint32_t sy1 = (sy0 + 1 < sh) ? (sy0 + 1) : sy0;
-            const uint8_t* r0 = src + (size_t)sy0 * sw * channels;
-            const uint8_t* r1 = src + (size_t)sy1 * sw * channels;
-            uint8_t* out = dst + (size_t)y * dw * channels;
-
-            for (uint32_t x = 0; x < dw; x++)
-            {
-                uint32_t sx0 = x * 2;
-                uint32_t sx1 = (sx0 + 1 < sw) ? (sx0 + 1) : sx0;
-                const uint8_t* a = r0 + (size_t)sx0 * channels;
-                const uint8_t* b = r0 + (size_t)sx1 * channels;
-                const uint8_t* c = r1 + (size_t)sx0 * channels;
-                const uint8_t* d = r1 + (size_t)sx1 * channels;
-
-                for (int ch = 0; ch < channels; ch++)
-                {
-                    out[ch] = (uint8_t)((a[ch] + b[ch] + c[ch] + d[ch] + 2) >> 2);
-                }
-                out += channels;
-            }
-        }
-    }
-}
-
-// Box-filter downsampling with linear-space colour averaging (sRGB correct)
-static void downsample_half_srgb(const uint8_t* src, uint32_t sw, uint32_t sh, S32 channels, uint8_t* dst)
-{
-    if (channels == 4)
-    {
-        downsample_half_srgb_4ch(src, sw, sh, dst);
-    }
-    else if (channels == 3)
     {
         downsample_half_srgb_3ch(src, sw, sh, dst);
     }
+}
+
+static void downsample_half_srgb(const uint8_t* src, uint32_t sw, uint32_t sh, S32 channels, uint8_t* dst)
+{
+    if (channels == 4)
+        downsample_half_srgb_4ch(src, sw, sh, dst);
+    else if (channels == 3)
+        downsample_half_srgb_3ch(src, sw, sh, dst);
     else
-    {
         downsample_half_linear(src, sw, sh, channels, dst);
-    }
 }
 
 static inline uint32_t calc_level_bytes(uint32_t width, uint32_t height, uint32_t block_bytes)
@@ -517,11 +362,19 @@ bool VayuImageBlockCompressor::encode(const U8* src_data, U32 width, U32 height,
 
 #if defined(__AVX2__)
             const __m256i alpha_mask = _mm256_set1_epi32((int)0xFF000000);
-            vec_px = (total_px / 8) * 8;
-            for (size_t i = 0; i < vec_px; i += 8)
+            vec_px = (total_px / 32) * 32;
+            for (size_t i = 0; i < vec_px; i += 32)
             {
-                __m256i px = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(src_data + i * 4));
-                __m256i alphas = _mm256_and_si256(px, alpha_mask);
+                __m256i p0 = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(src_data + (i + 0) * 4));
+                __m256i p1 = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(src_data + (i + 8) * 4));
+                __m256i p2 = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(src_data + (i + 16) * 4));
+                __m256i p3 = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(src_data + (i + 24) * 4));
+
+                __m256i a01 = _mm256_and_si256(p0, p1);
+                __m256i a23 = _mm256_and_si256(p2, p3);
+                __m256i a = _mm256_and_si256(a01, a23);
+
+                __m256i alphas = _mm256_and_si256(a, alpha_mask);
                 __m256i cmp = _mm256_cmpeq_epi32(alphas, alpha_mask);
                 if ((uint32_t)_mm256_movemask_epi8(cmp) != 0xFFFFFFFF)
                 {
@@ -531,11 +384,19 @@ bool VayuImageBlockCompressor::encode(const U8* src_data, U32 width, U32 height,
             }
 #elif defined(__SSE2__) || defined(_M_X64) || (defined(_M_IX86_FP) && _M_IX86_FP >= 2)
             const __m128i alpha_mask = _mm_set1_epi32((int)0xFF000000);
-            vec_px = (total_px / 4) * 4;
-            for (size_t i = 0; i < vec_px; i += 4)
+            vec_px = (total_px / 16) * 16;
+            for (size_t i = 0; i < vec_px; i += 16)
             {
-                __m128i px = _mm_loadu_si128(reinterpret_cast<const __m128i*>(src_data + i * 4));
-                __m128i alphas = _mm_and_si128(px, alpha_mask);
+                __m128i p0 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(src_data + (i + 0) * 4));
+                __m128i p1 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(src_data + (i + 4) * 4));
+                __m128i p2 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(src_data + (i + 8) * 4));
+                __m128i p3 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(src_data + (i + 12) * 4));
+
+                __m128i a01 = _mm_and_si128(p0, p1);
+                __m128i a23 = _mm_and_si128(p2, p3);
+                __m128i a = _mm_and_si128(a01, a23);
+
+                __m128i alphas = _mm_and_si128(a, alpha_mask);
                 __m128i cmp = _mm_cmpeq_epi32(alphas, alpha_mask);
                 if (_mm_movemask_epi8(cmp) != 0xFFFF)
                 {
@@ -645,11 +506,10 @@ bool VayuImageBlockCompressor::encode(const U8* src_data, U32 width, U32 height,
     const EVayuBlockCompressionPreset preset = getEffectivePreset();
     result.mPreset = preset;
 
-    bc7enc_compress_block_params bc7_params;
+    ispc::bc7e_compress_block_params bc7e_params;
     if (resolved == EVayuBlockCompressionFormat::BC7)
     {
-        bc7enc_compress_block_params_init(&bc7_params);
-        apply_bc7_preset(bc7_params, preset);
+        apply_bc7_preset(bc7e_params, preset, true);
     }
 
     // 4. Encode mips into reverse order (smallest mip at offset 0, largest mip at end)
@@ -677,6 +537,11 @@ bool VayuImageBlockCompressor::encode(const U8* src_data, U32 width, U32 height,
 
         uint8_t* out = result.mBuffer.data() + buffer_offsets[i];
 
+        constexpr size_t kBC7BatchSize = 64;
+        alignas(32) uint32_t bc7_batch_rgba[kBC7BatchSize * 16];
+        size_t bc7_batch_count = 0;
+        uint8_t* bc7_batch_out = out;
+
         for (uint32_t by = 0; by < bh; by++)
         {
             for (uint32_t bx = 0; bx < bw; bx++)
@@ -700,6 +565,17 @@ bool VayuImageBlockCompressor::encode(const U8* src_data, U32 width, U32 height,
                     }
                     else if (components == 3)
                     {
+#if defined(__SSSE3__) || defined(__AVX2__)
+                        const __m128i rgb_shuf = _mm_setr_epi8(0, 1, 2, -1, 3, 4, 5, -1, 6, 7, 8, -1, 9, 10, 11, -1);
+                        const __m128i alpha_or = _mm_set1_epi32((int)0xFF000000);
+                        for (uint32_t py = 0; py < 4; py++)
+                        {
+                            const uint8_t* row = block_src + py * row_stride;
+                            __m128i raw = _mm_loadu_si128(reinterpret_cast<const __m128i*>(row));
+                            __m128i rgba = _mm_or_si128(_mm_shuffle_epi8(raw, rgb_shuf), alpha_or);
+                            _mm_storeu_si128(reinterpret_cast<__m128i*>(block_rgba + py * 16), rgba);
+                        }
+#else
                         for (uint32_t py = 0; py < 4; py++)
                         {
                             const uint8_t* row = block_src + py * row_stride;
@@ -712,9 +588,21 @@ bool VayuImageBlockCompressor::encode(const U8* src_data, U32 width, U32 height,
                                 dst[px * 4 + 3] = 255;
                             }
                         }
+#endif
                     }
                     else if (components == 2)
                     {
+#if defined(__SSSE3__) || defined(__AVX2__)
+                        const __m128i rg_shuf = _mm_setr_epi8(0, 1, -1, -1, 2, 3, -1, -1, 4, 5, -1, -1, 6, 7, -1, -1);
+                        const __m128i rg_alpha_or = _mm_set1_epi32((int)0xFF000000);
+                        for (uint32_t py = 0; py < 4; py++)
+                        {
+                            const uint8_t* row = block_src + py * row_stride;
+                            __m128i raw = _mm_loadl_epi64(reinterpret_cast<const __m128i*>(row));
+                            __m128i rgba = _mm_or_si128(_mm_shuffle_epi8(raw, rg_shuf), rg_alpha_or);
+                            _mm_storeu_si128(reinterpret_cast<__m128i*>(block_rgba + py * 16), rgba);
+                        }
+#else
                         for (uint32_t py = 0; py < 4; py++)
                         {
                             const uint8_t* row = block_src + py * row_stride;
@@ -727,9 +615,23 @@ bool VayuImageBlockCompressor::encode(const U8* src_data, U32 width, U32 height,
                                 dst[px * 4 + 3] = 255;
                             }
                         }
+#endif
                     }
                     else if (components == 1)
                     {
+#if defined(__SSSE3__) || defined(__AVX2__)
+                        const __m128i g_shuf = _mm_setr_epi8(0, 0, 0, -1, 1, 1, 1, -1, 2, 2, 2, -1, 3, 3, 3, -1);
+                        const __m128i g_alpha_or = _mm_set1_epi32((int)0xFF000000);
+                        for (uint32_t py = 0; py < 4; py++)
+                        {
+                            const uint8_t* row = block_src + py * row_stride;
+                            uint32_t raw_val;
+                            memcpy(&raw_val, row, 4);
+                            __m128i raw = _mm_cvtsi32_si128(raw_val);
+                            __m128i rgba = _mm_or_si128(_mm_shuffle_epi8(raw, g_shuf), g_alpha_or);
+                            _mm_storeu_si128(reinterpret_cast<__m128i*>(block_rgba + py * 16), rgba);
+                        }
+#else
                         for (uint32_t py = 0; py < 4; py++)
                         {
                             const uint8_t* row = block_src + py * row_stride;
@@ -743,6 +645,7 @@ bool VayuImageBlockCompressor::encode(const U8* src_data, U32 width, U32 height,
                                 dst[px * 4 + 3] = 255;
                             }
                         }
+#endif
                     }
                 }
                 else
@@ -804,11 +707,30 @@ bool VayuImageBlockCompressor::encode(const U8* src_data, U32 width, U32 height,
                     break;
                 case EVayuBlockCompressionFormat::BC7:
                 default:
-                    bc7enc_compress_block(out, block_rgba, &bc7_params);
-                    out += 16;
+                    memcpy(bc7_batch_rgba + bc7_batch_count * 16, block_rgba, 64);
+                    bc7_batch_count++;
+                    if (bc7_batch_count == kBC7BatchSize)
+                    {
+                        ispc::bc7e_compress_blocks((uint32_t)bc7_batch_count,
+                                                   reinterpret_cast<uint64_t*>(bc7_batch_out),
+                                                   bc7_batch_rgba,
+                                                   &bc7e_params);
+                        bc7_batch_out += bc7_batch_count * 16;
+                        bc7_batch_count = 0;
+                    }
                     break;
                 }
             }
+        }
+
+        if (resolved == EVayuBlockCompressionFormat::BC7 && bc7_batch_count > 0)
+        {
+            ispc::bc7e_compress_blocks((uint32_t)bc7_batch_count,
+                                       reinterpret_cast<uint64_t*>(bc7_batch_out),
+                                       bc7_batch_rgba,
+                                       &bc7e_params);
+            bc7_batch_out += bc7_batch_count * 16;
+            bc7_batch_count = 0;
         }
     }
 

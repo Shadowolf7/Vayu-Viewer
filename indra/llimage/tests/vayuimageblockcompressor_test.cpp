@@ -6,6 +6,13 @@
 #include "linden_common.h"
 #include "../vayuimageblockcompressor.h"
 #include "../test/lltut.h"
+#include <chrono>
+#include <cstdio>
+
+// Stubs for unit test harness
+const U8* LLImageBase::getData() const { return NULL; }
+U8* LLImageBase::getData() { return NULL; }
+bool LLImageBase::isBufferInvalid() const { return false; }
 
 namespace tut
 {
@@ -348,4 +355,123 @@ namespace tut
             ensure("4x4 produces 3 mip levels (4, 2, 1)", result.mMipLevels == 3);
         }
     }
+
+    // Test 13: 512x512 full mip-chain compression across BC1, BC4, BC5, and BC7
+    template<> template<>
+    void block_compressor_object::test<13>()
+    {
+        const U32 width = 512, height = 512;
+        std::vector<U8> rgba(width * height * 4);
+        for (size_t i = 0; i < width * height; ++i)
+        {
+            rgba[i * 4 + 0] = (U8)(i & 0xFF);
+            rgba[i * 4 + 1] = (U8)((i >> 2) & 0xFF);
+            rgba[i * 4 + 2] = (U8)((i >> 4) & 0xFF);
+            rgba[i * 4 + 3] = (i % 7 == 0) ? 128 : 255;
+        }
+
+        // Test BC7 on 512x512
+        {
+            VayuBlockCompressionResult result;
+            bool ok = VayuImageBlockCompressor::encode(rgba.data(), width, height, 4, result, EVayuBlockCompressionFormat::BC7);
+            ensure("512x512 BC7 encodes successfully", ok);
+            ensure("512x512 has 10 mip levels", result.mMipLevels == 10);
+            ensure("Buffer size matches level count", result.mBuffer.size() > 0);
+            ensure("Largest mip offset valid", result.getLargestMipOffset() < result.mBuffer.size());
+        }
+
+        // Test BC1 on 512x512
+        {
+            VayuBlockCompressionResult result;
+            bool ok = VayuImageBlockCompressor::encode(rgba.data(), width, height, 4, result, EVayuBlockCompressionFormat::BC1);
+            ensure("512x512 BC1 encodes successfully", ok);
+            ensure("512x512 has 10 mip levels", result.mMipLevels == 10);
+            ensure("Buffer size is non-empty", result.mBuffer.size() > 0);
+        }
+
+        // Test BC5 on 512x512 (2-channel)
+        {
+            std::vector<U8> rg(width * height * 2);
+            for (size_t i = 0; i < width * height; ++i)
+            {
+                rg[i * 2 + 0] = (U8)(i & 0xFF);
+                rg[i * 2 + 1] = (U8)((i * 3) & 0xFF);
+            }
+            VayuBlockCompressionResult result;
+            bool ok = VayuImageBlockCompressor::encode(rg.data(), width, height, 2, result, EVayuBlockCompressionFormat::BC5);
+            ensure("512x512 BC5 encodes successfully", ok);
+            ensure("512x512 has 10 mip levels", result.mMipLevels == 10);
+        }
+    }
+
+    // Test 14: Microbenchmark timing across 1024x1024 textures
+    template<> template<>
+    void block_compressor_object::test<14>()
+    {
+        const U32 width = 1024, height = 1024;
+        std::vector<U8> rgba_trans(width * height * 4);
+        std::vector<U8> rgba_opaque(width * height * 4);
+        std::vector<U8> rg_normal(width * height * 2);
+
+        for (size_t i = 0; i < width * height; ++i)
+        {
+            U8 r = (U8)(i & 0xFF);
+            U8 g = (U8)((i * 3) & 0xFF);
+            U8 b = (U8)((i * 7) & 0xFF);
+
+            rgba_opaque[i * 4 + 0] = r;
+            rgba_opaque[i * 4 + 1] = g;
+            rgba_opaque[i * 4 + 2] = b;
+            rgba_opaque[i * 4 + 3] = 255;
+
+            rgba_trans[i * 4 + 0] = r;
+            rgba_trans[i * 4 + 1] = g;
+            rgba_trans[i * 4 + 2] = b;
+            rgba_trans[i * 4 + 3] = (i % 5 == 0) ? 128 : 255;
+
+            rg_normal[i * 2 + 0] = r;
+            rg_normal[i * 2 + 1] = g;
+        }
+
+        const auto benchmark = [](const char* name, auto&& fn) {
+            auto t0 = std::chrono::high_resolution_clock::now();
+            fn();
+            auto t1 = std::chrono::high_resolution_clock::now();
+            double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
+            double mpix = (1024.0 * 1024.0 / 1e6) / (ms / 1000.0);
+            printf("[Benchmark] %-30s : %6.2f ms (%6.2f MPix/s)\n", name, ms, mpix);
+        };
+
+        // 1. BC1 (Opaque 1024x1024 full mipchain)
+        benchmark("1024x1024 Opaque -> BC1", [&]() {
+            VayuBlockCompressionResult res;
+            VayuImageBlockCompressor::encode(rgba_opaque.data(), width, height, 4, res, EVayuBlockCompressionFormat::Auto);
+        });
+
+        // 2. BC5 (Normal map 1024x1024 full mipchain)
+        benchmark("1024x1024 Normal 2ch -> BC5", [&]() {
+            VayuBlockCompressionResult res;
+            VayuImageBlockCompressor::encode(rg_normal.data(), width, height, 2, res, EVayuBlockCompressionFormat::Auto);
+        });
+
+        // 3. BC7 Ultrafast (1024x1024 full mipchain)
+        {
+            const auto saved = VayuImageBlockCompressor::getPreset();
+            VayuImageBlockCompressor::setPreset(EVayuBlockCompressionPreset::Ultrafast);
+            benchmark("1024x1024 BC7 [Ultrafast]", [&]() {
+                VayuBlockCompressionResult res;
+                VayuImageBlockCompressor::encode(rgba_trans.data(), width, height, 4, res, EVayuBlockCompressionFormat::BC7);
+            });
+
+            VayuImageBlockCompressor::setPreset(EVayuBlockCompressionPreset::Fast);
+            benchmark("1024x1024 BC7 [Fast]", [&]() {
+                VayuBlockCompressionResult res;
+                VayuImageBlockCompressor::encode(rgba_trans.data(), width, height, 4, res, EVayuBlockCompressionFormat::BC7);
+            });
+
+            VayuImageBlockCompressor::setPreset(saved);
+        }
+    }
 }
+
+

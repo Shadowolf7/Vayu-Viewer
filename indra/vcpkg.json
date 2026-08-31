@@ -69,6 +69,7 @@
     "libpng",
     "libvorbis",
     "libwebp",
+    "libyuv",
     "lsl-definitions",
     "meshoptimizer",
     "minizip",

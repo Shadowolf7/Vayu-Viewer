@@ -408,6 +408,9 @@ public:
             return false;
         }
         opj_setup_decoder(decoder, &parameters);
+        // NOTE: DO NOT call opj_codec_set_threads() here! Intra-codec thread pooling causes
+        // massive thread over-subscription and severe context-switching overhead when running
+        // concurrently across the multi-threaded ImageDecode worker pool (llimageworker.cpp).
 
         opj_set_info_handler(decoder, info_callback, this);
         opj_set_warning_handler(decoder, warning_callback, this);
