@@ -547,6 +547,30 @@ Workarounds, in order of preference:
 2. **Use LLD instead of mold** for LTO builds: `-DCMAKE_LINKER_TYPE=LLD`. LLD's LTO support is unaffected by this bug.
 3. **Turn off `USE_LTO`** if neither is acceptable — not usually worth it, since LTO is the whole point of enabling it.
 
+### Linux: Dullahan / CEF media plugin startup failures and gotchas
+
+The in-world web browser is powered by the Chromium Embedded Framework (CEF) via Dullahan (`indra/dullahan`), built as a dedicated host executable `media_plugin_cef` alongside subprocess helper `dullahan_host`.
+
+Several Linux-specific gotchas can cause CEF initialization to fail or crash at startup (`ContentMainRun failed with exit code 28`):
+
+1. **Linker RPATH single-quote escaping with mold / clang**:
+   Because `CMAKE_SKIP_RPATH TRUE` is set for Linux in `indra/cmake/00-Common.cmake`, executables rely on explicit linker options (`target_link_options`).
+   - When specifying RPATH in CMake (e.g. `target_link_options(media_plugin_cef PRIVATE "LINKER:--build-id" "LINKER:-rpath,\$ORIGIN:\$ORIGIN/../../lib")`), **do not wrap `$ORIGIN` in single quotes** (`'$ORIGIN'`).
+   - GNU `ld` strips nested quotes, but `mold` preserves them literally into the ELF `RUNPATH` header (`RUNPATH '$ORIGIN:$ORIGIN/../../lib'`). glibc's dynamic loader (`ld.so`) only expands unquoted `$ORIGIN` tokens; with literal quotes, `$ORIGIN` fails to expand and the binary falls back to system library paths (e.g. `/lib64/libcef.so`), causing ABI symbol mismatches or loader errors.
+   - `dullahan_host` must also carry `RUNPATH` (`$ORIGIN:$ORIGIN/../lib:$ORIGIN/../../lib`) so that CEF child subprocesses (renderer/GPU/utility) resolve `libcef.so` from `lib/`.
+
+2. **CEF resource staging layout contract**:
+   In CEF 151+, resource files (`resources.pak`, `chrome_100_percent.pak`, `chrome_200_percent.pak`), `icudtl.dat`, and the `locales/` directory must be staged directly into `bin/llplugin/` alongside `media_plugin_cef` and `dullahan_host` (in addition to `lib/`). If they are missing from `bin/llplugin/`, CEF cannot locate its resource bundle and terminates with `RESULT_CODE_MISSING_DATA` (exit code 28).
+
+3. **Desktop Wayland compositors & Ozone backend**:
+   Dullahan uses off-screen rendering (OSR) to draw web surfaces into OpenGL textures. On desktop Linux compositors (such as GNOME Mutter), native Wayland lacks ChromeOS-specific alpha compositing protocols (`zcr_alpha_compositing_v1`), causing Wayland surface initialization to fail. When `DISPLAY` is available, Dullahan forces `--ozone-platform=x11` (XWayland) so OSR initializes cleanly via GLX/EGL.
+
+4. **Embedded first-run and Terms of Service suppression**:
+   Some Linux distributions (notably openSUSE) include distribution policies in their Chromium packaging that trigger a modal dialog titled *"Chromium Additional Terms of Service"* if a new profile is launched without embedded suppression flags. Dullahan passes `--no-first-run`, `--no-default-browser-check`, `--disable-fre`, and `--disable-search-engine-choice-screen` to keep CEF fully headless.
+
+5. **`libcef_dll_wrapper` TRIVIAL_ABI Calling Convention**:
+   CEF's `scoped_refptr` uses Clang's `[[clang::trivial_abi]]`. If the viewer is compiled with Clang, `libcef_dll_wrapper` (built from source by vcpkg) must also be built with Clang via the chainloaded toolchain file (`x64-linux-clang-toolchain.cmake`). If built with GCC, `CefApp` calling conventions mismatch across the binary boundary, causing a SIGSEGV in `CefInitialize`.
+
 ### Still stuck?
 
 - File a build bug at <https://github.com/Shadowolf7/Vayu-Viewer/issues>.
