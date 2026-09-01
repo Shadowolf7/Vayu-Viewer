@@ -36,6 +36,7 @@
 #include "lllivefile.h"
 #include "llsyntaxid.h"
 #include "llscripteditor.h"
+#include "hbexternaleditor.h"
 
 class LLLiveLSLFile;
 class LLMessageSystem;
@@ -239,12 +240,14 @@ protected:
 // [/SL:KB]
     std::string     getUniqueHash() const;
     std::string     getErrorLogFileName(const std::string& script_path);
+    static void     onEditedFileChanged(const std::string& filename, void* userdata);
     bool            onExternalChange(const std::string& filename);
     virtual void    saveIfNeeded(bool sync = true) = 0;
     bool            logErrorsToFile(const LLSD& compile_errors);
-    bool            isOpenInExternalEditor() const { return mLiveFile != nullptr; }
+    bool            isOpenInExternalEditor() const { return (mExternalEditor && mExternalEditor->running()) || mLiveFile != nullptr; }
 
     LLScriptEdCore*     mScriptEd;
+    std::unique_ptr<HBExternalEditor> mExternalEditor;
     LLLiveLSLFile*      mLiveFile = nullptr;
     LLLiveLSLFile*      mLiveLogFile = nullptr;
 

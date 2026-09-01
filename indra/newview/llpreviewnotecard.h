@@ -40,8 +40,9 @@
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 class LLViewerTextEditor;
-class LLButton;
 class LLLineEditor;
+class HBExternalEditor;
+class LLInventoryItem;
 // [SL:KB] - Patch: UI-FloaterSearchReplace | Checked: 2010-11-05 (Catznip-2.3)
 class LLTextEditor;
 // [/SL:KB]
@@ -120,6 +121,7 @@ protected:
     static void finishInventoryUpload(LLUUID itemId, LLUUID newAssetId, LLUUID newItemId);
     static void finishTaskUpload(LLUUID itemId, LLUUID newAssetId, LLUUID taskId);
 
+    static void onEditedFileChanged(const std::string& filename, void* userdata);
     void openInExternalEditor();
     void loadFromFile();
     bool onExternalChange(const std::string& filename);
@@ -144,7 +146,7 @@ protected:
 
     LLUUID mObjectID;
 
-    LLLiveLSLFile* mLiveFile = nullptr;
+    std::unique_ptr<HBExternalEditor> mExternalEditor;
 };
 
 

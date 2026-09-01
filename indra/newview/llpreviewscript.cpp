@@ -33,7 +33,7 @@
 #include "llcheckboxctrl.h"
 #include "llcombobox.h"
 #include "lldir.h"
-#include "llexternaleditor.h"
+#include "hbexternaleditor.h"
 #include "llfilepicker.h"
 #include "llfloaterreg.h"
 // [SL:KB] - Patch: UI-FloaterSearchReplace | Checked: 2010-10-26 (Catznip-2.3)
@@ -760,7 +760,20 @@ bool LLScriptEdCore::writeToFile(const std::string& filename)
 void LLScriptEdCore::sync()
 {
     // Sync with external editor.
-    if (mContainer->mLiveFile)
+    if (mContainer->mExternalEditor)
+    {
+        std::string tmp_file = mContainer->mExternalEditor->getFilename();
+        if (!tmp_file.empty())
+        {
+            llstat s;
+            if (LLFile::stat(tmp_file, &s) == 0) // file exists
+            {
+                mContainer->mExternalEditor->ignoreNextUpdate();
+                writeToFile(tmp_file);
+            }
+        }
+    }
+    else if (mContainer->mLiveFile)
     {
         std::string tmp_file = mContainer->mLiveFile->filename();
         llstat s;
@@ -1198,7 +1211,7 @@ void LLScriptEdCore::openInExternalEditor()
     }
     else
     {
-        // Legacy external editor path: write temp file, watch it, open in external editor.
+        // External editor path: write temp file, watch it, open in external editor.
         if (!writeToFile(filename))
         {
             // In case some characters from script name are forbidden
@@ -1209,45 +1222,20 @@ void LLScriptEdCore::openInExternalEditor()
             writeToFile(filename);
         }
 
-        if (mContainer->mLiveFile && mContainer->mLiveFile->filename() != filename)
-        { // The name may have changed if we changed the type of script being edited.
-            delete mContainer->mLiveFile;
-            mContainer->mLiveFile = NULL;
-        }
-        // Start watching file changes.
-        if (!mContainer->mLiveFile)
-        {
-            mContainer->mLiveFile = new LLLiveLSLFile(filename, boost::bind(&LLScriptEdContainer::onExternalChange, mContainer, _1));
-            mContainer->mLiveFile->addToEventTimer();
-        }
-
         mContainer->startWebsocketServer();
 
-        LLExternalEditor ed;
-        LLExternalEditor::EErrorCode status;
-        std::string msg;
-
-        status = ed.setCommand("LL_SCRIPT_EDITOR");
-        if (status != LLExternalEditor::EC_SUCCESS)
+        if (mContainer->mExternalEditor)
         {
-            if (status == LLExternalEditor::EC_NOT_SPECIFIED) // Use custom message for this error.
-            {
-                msg = LLTrans::getString("ExternalEditorNotSet");
-            }
-            else
-            {
-                msg = LLExternalEditor::getErrorMessage(status);
-            }
-
-            LLNotificationsUtil::add("GenericAlert", LLSD().with("MESSAGE", msg));
-            return;
+            mContainer->mExternalEditor->kill();
+        }
+        else
+        {
+            mContainer->mExternalEditor = std::make_unique<HBExternalEditor>(&LLScriptEdContainer::onEditedFileChanged, mContainer);
         }
 
-        status = ed.run(filename);
-        if (status != LLExternalEditor::EC_SUCCESS)
+        if (!mContainer->mExternalEditor->open(filename))
         {
-            msg = LLExternalEditor::getErrorMessage(status);
-            LLNotificationsUtil::add("GenericAlert", LLSD().with("MESSAGE", msg));
+            LLNotificationsUtil::add("GenericAlert", LLSD().with("MESSAGE", mContainer->mExternalEditor->getErrorMessage()));
         }
     }
 }
@@ -1639,8 +1627,20 @@ LLScriptEdContainer::LLScriptEdContainer(const LLSD& key) :
 {
 }
 
+// static
+void LLScriptEdContainer::onEditedFileChanged(const std::string& filename, void* userdata)
+{
+    LLScriptEdContainer* self = (LLScriptEdContainer*)userdata;
+    if (self)
+    {
+        self->onExternalChange(filename);
+    }
+}
+
 LLScriptEdContainer::~LLScriptEdContainer()
 {
+    mExternalEditor.reset();
+
     delete mLiveFile;
     mLiveFile = nullptr;
 

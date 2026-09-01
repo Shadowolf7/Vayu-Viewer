@@ -328,7 +328,6 @@ set(viewer_SOURCE_FILES
     lleventpoll.cpp
     llexpandabletextbox.cpp
     llexperiencelog.cpp
-    llexternaleditor.cpp
     llface.cpp
     llfavoritesbar.cpp
     llfeaturemanager.cpp
@@ -1114,7 +1113,6 @@ set(viewer_HEADER_FILES
     lleventpoll.h
     llexpandabletextbox.h
     llexperiencelog.h
-    llexternaleditor.h
     llface.h
     llfavoritesbar.h
     llfeaturemanager.h

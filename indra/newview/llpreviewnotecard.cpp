@@ -32,7 +32,7 @@
 
 #include "llagent.h"
 #include "lldraghandle.h"
-#include "llexternaleditor.h"
+#include "hbexternaleditor.h"
 #include "llviewerwindow.h"
 #include "llbutton.h"
 #include "llfloaterreg.h"
@@ -91,7 +91,7 @@ LLPreviewNotecard::LLPreviewNotecard(const LLSD& key) //const LLUUID& item_id,
 
 LLPreviewNotecard::~LLPreviewNotecard()
 {
-    delete mLiveFile;
+    mExternalEditor.reset();
     mEditor = nullptr;
 }
 
@@ -650,7 +650,7 @@ void LLPreviewNotecard::syncExternal()
         }
     }
 
-    if (mLiveFile) mLiveFile->ignoreNextUpdate();
+    if (mExternalEditor) mExternalEditor->ignoreNextUpdate();
     writeToFile(tmp_file);
 }
 
@@ -847,14 +847,23 @@ bool LLPreviewNotecard::handleConfirmDeleteDialog(const LLSD& notification, cons
     return false;
 }
 
+// static
+void LLPreviewNotecard::onEditedFileChanged(const std::string& filename, void* userdata)
+{
+    LLPreviewNotecard* self = (LLPreviewNotecard*)userdata;
+    if (self)
+    {
+        self->onExternalChange(filename);
+    }
+}
+
 void LLPreviewNotecard::openInExternalEditor()
 {
-    delete mLiveFile; // deletes file
-
     // Save the notecard to a temporary file.
     std::string note_name = getCleanNameForTmpFile();
     std::string filename = getTmpFileName(note_name);
-    if(!writeToFile(filename)) {
+    if (!writeToFile(filename))
+    {
         // In case some characters from notecard name are forbidden
         // and not accounted for, name is too long or some other issue,
         // try file that doesn't include notecard name
@@ -863,39 +872,18 @@ void LLPreviewNotecard::openInExternalEditor()
         writeToFile(filename);
     }
 
-    // Start watching file changes.
-    mLiveFile = new LLLiveLSLFile(filename, boost::bind(&LLPreviewNotecard::onExternalChange, this, _1));
-    mLiveFile->ignoreNextUpdate();
-    mLiveFile->addToEventTimer();
-
-    // Open it in external editor.
+    if (mExternalEditor)
     {
-        LLExternalEditor ed;
-        LLExternalEditor::EErrorCode status;
-        std::string msg;
+        mExternalEditor->kill();
+    }
+    else
+    {
+        mExternalEditor = std::make_unique<HBExternalEditor>(&LLPreviewNotecard::onEditedFileChanged, this);
+    }
 
-        status = ed.setCommand("LL_SCRIPT_EDITOR");
-        if (status != LLExternalEditor::EC_SUCCESS)
-        {
-            if (status == LLExternalEditor::EC_NOT_SPECIFIED) // Use custom message for this error.
-            {
-                msg = LLTrans::getString("ExternalEditorNotSet");
-            }
-            else
-            {
-                msg = LLExternalEditor::getErrorMessage(status);
-            }
-
-            LLNotificationsUtil::add("GenericAlert", LLSD().with("MESSAGE", msg));
-            return;
-        }
-
-        status = ed.run(filename);
-        if (status != LLExternalEditor::EC_SUCCESS)
-        {
-            msg = LLExternalEditor::getErrorMessage(status);
-            LLNotificationsUtil::add("GenericAlert", LLSD().with("MESSAGE", msg));
-        }
+    if (!mExternalEditor->open(filename))
+    {
+        LLNotificationsUtil::add("GenericAlert", LLSD().with("MESSAGE", mExternalEditor->getErrorMessage()));
     }
 }
 
@@ -932,65 +920,144 @@ bool LLPreviewNotecard::onExternalChange(const std::string& filename)
 // solely to indicate the character width the content was formatted for
 // (word-wrap/ASCII-art alignment assumes that width). Detect the longest
 // such line and, if found, switch to a monospace font and size the
-// floater to match -- the convention is meaningless in a proportional
-// font, since character widths vary.
+// Detect notecard width-ruler formatting guides and automatically adjust the
+// floater width and font to match author intent without wrapping.
 void LLPreviewNotecard::detectAndApplyRulerWidth()
 {
-    // Ordinary short dividers (e.g. "-----") are common and are not width
-    // guides; a genuine ruler line spans close to the intended full width.
-    static const size_t RULER_MIN_LENGTH = 20;
+    // Rulers must be substantial enough to represent an intended window width (e.g. 35+ columns).
+    static const size_t RULER_MIN_LENGTH = 35;
+    static const size_t MAX_HEADER_LINES = 15;
 
-    std::string text = mEditor->getText();
-
-    size_t best_len = 0;
-    char best_char = 0;
-    size_t line_start = 0;
-    while (line_start <= text.size())
+    const LLWString& wtext = mEditor->getWText();
+    if (wtext.empty())
     {
-        size_t line_end = text.find('\n', line_start);
-        if (line_end == std::string::npos)
+        return;
+    }
+
+    LLWString best_ruler;
+    size_t line_start = 0;
+    size_t line_count = 0;
+
+    auto is_ruler_glyph = [](llwchar wc) -> bool {
+        // Unicode block characters (U+2580..U+259F)
+        if (wc >= 0x2580 && wc <= 0x259F) return true;
+        // Unicode box drawing (U+2500..U+257F)
+        if (wc >= 0x2500 && wc <= 0x257F) return true;
+        // Unicode geometric shapes / symbols (U+25A0..U+25FF)
+        if (wc >= 0x25A0 && wc <= 0x25FF) return true;
+        // ASCII border / divider characters
+        switch (wc)
         {
-            line_end = text.size();
+            case '-': case '=': case '_': case '~': case '*':
+            case '+': case '#': case '/': case '\\': case '^':
+            case '>': case '<': case '.': case '|': case '[':
+            case ']': case '{': case '}': case '(': case ')':
+            case ':': case ';': case '!':
+                return true;
+            default:
+                return false;
+        }
+    };
+
+    while (line_start < wtext.size() && line_count < MAX_HEADER_LINES)
+    {
+        size_t line_end = wtext.find((llwchar)'\n', line_start);
+        if (line_end == LLWString::npos)
+        {
+            line_end = wtext.size();
         }
 
-        size_t len = line_end - line_start;
-        if (len > 0 && !LLStringOps::isSpace(text[line_start]))
+        // Trim trailing \r, spaces, tabs
+        size_t eff_end = line_end;
+        while (eff_end > line_start && (wtext[eff_end - 1] == (llwchar)'\r' || LLStringOps::isSpace((char)wtext[eff_end - 1])))
         {
-            char c = text[line_start];
-            bool uniform = true;
-            for (size_t i = 1; i < len; ++i)
+            --eff_end;
+        }
+
+        // Trim leading spaces/tabs for length analysis
+        size_t eff_start = line_start;
+        while (eff_start < eff_end && LLStringOps::isSpace((char)wtext[eff_start]))
+        {
+            ++eff_start;
+        }
+
+        size_t len = eff_end - eff_start;
+        if (len >= RULER_MIN_LENGTH)
+        {
+            LLWString line_sub = wtext.substr(eff_start, len);
+            std::string utf8_line = wstring_to_utf8str(line_sub);
+            std::string upper_line = utf8_line;
+            LLStringUtil::toUpper(upper_line);
+
+            // Check 1: Explicit ruler keywords embedded in the line
+            bool has_ruler_keyword = (upper_line.find("EXTEND TO FIT") != std::string::npos ||
+                                      upper_line.find("STRETCH TO FIT") != std::string::npos ||
+                                      upper_line.find("RESIZE TO FIT") != std::string::npos ||
+                                      upper_line.find("EXPAND TO FIT") != std::string::npos ||
+                                      upper_line.find("WIDTH GUIDE") != std::string::npos ||
+                                      upper_line.find("SET WIDTH") != std::string::npos ||
+                                      upper_line.find("FIT WINDOW") != std::string::npos);
+
+            // Count ruler glyphs vs total characters
+            size_t glyph_count = 0;
+            for (llwchar wc : line_sub)
             {
-                if (text[line_start + i] != c)
+                if (is_ruler_glyph(wc))
                 {
-                    uniform = false;
-                    break;
+                    ++glyph_count;
                 }
             }
-            if (uniform && len >= RULER_MIN_LENGTH && len > best_len)
+
+            // A line qualifies if it has an explicit ruler keyword bordered by glyphs,
+            // or if it consists of >= 80% border/divider characters (e.g. ▀▀▀▀, ════, ----)
+            bool is_ruler = false;
+            if (has_ruler_keyword && glyph_count >= 10)
             {
-                best_len = len;
-                best_char = c;
+                is_ruler = true;
+            }
+            else if (glyph_count * 10 >= len * 8) // >= 80% ruler glyphs
+            {
+                is_ruler = true;
+            }
+
+            if (is_ruler && len > best_ruler.size())
+            {
+                best_ruler = line_sub;
             }
         }
 
         line_start = line_end + 1;
+        ++line_count;
     }
 
-    if (best_len == 0)
+    if (best_ruler.empty())
     {
         return;
     }
 
     LLFontGL* mono_font = LLFontGL::getFontMonospace();
+    if (!mono_font)
+    {
+        return;
+    }
+
     mEditor->setFont(mono_font);
 
-    std::string ruler(best_len, best_char);
-    S32 target_text_width = mono_font->getWidth(ruler);
-    S32 width_delta = target_text_width - mEditor->getRect().getWidth();
+    S32 target_text_width = mono_font->getWidth(best_ruler);
+    S32 editor_width = mEditor->getRect().getWidth();
+    // Add extra padding (30px) for margins, scrollbar, and floater borders
+    S32 width_delta = target_text_width - editor_width + 30;
+
     if (width_delta > 0)
     {
         LLRect floater_rect = getRect();
-        reshape(floater_rect.getWidth() + width_delta, floater_rect.getHeight());
+        S32 max_allowed_width = 1200;
+        if (gViewerWindow)
+        {
+            max_allowed_width = llmax(400, gViewerWindow->getWindowWidthScaled() - 80);
+        }
+        S32 new_width = llclamp(floater_rect.getWidth() + width_delta, floater_rect.getWidth(), max_allowed_width);
+        reshape(new_width, floater_rect.getHeight());
     }
 }
 

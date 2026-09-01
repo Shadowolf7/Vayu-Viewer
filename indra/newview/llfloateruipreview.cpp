@@ -37,7 +37,7 @@
 // Internal utility
 #include "lldiriterator.h"
 #include "lleventtimer.h"
-#include "llexternaleditor.h"
+#include "hbexternaleditor.h"
 #include "llrender.h"
 #include "llsdutil.h"
 #include "llxmltree.h"
@@ -161,7 +161,7 @@ public:
     DiffMap mDiffsMap;                          // map, of filename to pair of list of changed element paths and list of errors
 
 private:
-    LLExternalEditor mExternalEditor;
+    std::unique_ptr<HBExternalEditor> mExternalEditor;
 
     // XUI elements for this floater
     LLScrollListCtrl*           mFileList;                          // scroll list control for file list
@@ -965,29 +965,14 @@ void LLFloaterUIPreview::onClickEditFloater()
         }
     }
 
-    LLExternalEditor::EErrorCode status = mExternalEditor.setCommand("LL_XUI_EDITOR", cmd_override);
-    if (status != LLExternalEditor::EC_SUCCESS)
+    if (!mExternalEditor)
     {
-        std::string warning;
-
-        if (status == LLExternalEditor::EC_NOT_SPECIFIED) // Use custom message for this error.
-        {
-            warning = getString("ExternalEditorNotSet");
-        }
-        else
-        {
-            warning = LLExternalEditor::getErrorMessage(status);
-        }
-
-        popupAndPrintWarning(warning);
-        return;
+        mExternalEditor = std::make_unique<HBExternalEditor>(nullptr, nullptr, true);
     }
 
-    // Run the editor.
-    if (mExternalEditor.run(file_path) != LLExternalEditor::EC_SUCCESS)
+    if (!mExternalEditor->open(file_path, cmd_override))
     {
-        popupAndPrintWarning(LLExternalEditor::getErrorMessage(status));
-        return;
+        popupAndPrintWarning(mExternalEditor->getErrorMessage());
     }
 }
 
