@@ -1247,7 +1247,7 @@ LLVertexBuffer* LLRender::bufferfromCache(U32 attribute_mask, U32 count)
     // To leverage this, we maintain a running hash of the vertex stream being
     // built up before a flush, and then check that hash against a VB
     // cache just before creating a vertex buffer in VRAM
-    boost::unordered_map<U64, LLVBCache>::iterator cache = mVBCache.find(vhash);
+    auto cache = mVBCache.find(vhash);
     if (cache != mVBCache.end())
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_VERTEX("vb cache hit");
@@ -1272,7 +1272,7 @@ LLVertexBuffer* LLRender::bufferfromCache(U32 attribute_mask, U32 count)
 
             using namespace std::chrono_literals;
             // every 1024 misses, clean the cache of any VBs that haven't been touched in the last second
-            for (boost::unordered_map<U64, LLVBCache>::iterator iter = mVBCache.begin(); iter != mVBCache.end();)
+            for (auto iter = mVBCache.begin(); iter != mVBCache.end();)
             {
                 if (now - iter->second.touched > 1s)
                 {

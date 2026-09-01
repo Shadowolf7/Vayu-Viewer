@@ -251,6 +251,9 @@ target_sources(llcommon
     llwatchdog.h
     llwin32headers.h
     llworkerthread.h
+    hbfastmap.h
+    hbfastset.h
+    hbintrinsics.h
     hbxxh.h
     lockstatic.h
     stdtypes.h
@@ -299,6 +302,7 @@ target_link_libraries(
         ll::tracy
         ll::sse2neon
         ll::xxhash
+        ll::parallel-hashmap
         ll::simdjson
         ll::simdutf
         ll::fmt

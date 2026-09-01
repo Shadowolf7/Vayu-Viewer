@@ -43,6 +43,7 @@
 #include "llglheaders.h"
 #include "llmatrix4a.h"
 #include "alsamplerstate.h"  // mSamplerCache -- this context's sampler objects
+#include "hbfastmap.h"
 #include "altextureslot.h"
 #include "aluniformbuffer.h"
 #include "glm/mat4x4.hpp"
@@ -529,7 +530,7 @@ private:
         std::chrono::steady_clock::time_point touched;
     };
 
-    boost::unordered_map<U64, LLVBCache> mVBCache;
+    fast_hmap<U64, LLVBCache> mVBCache;
     std::list<LLVertexBufferData>* mBufferDataList = nullptr;
 };
 

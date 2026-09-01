@@ -44,6 +44,7 @@ set(cmake_SOURCE_FILES
         OpenJPEG.cmake
         OpenSSL.cmake
         OpenXR.cmake
+        ParallelHashmap.cmake
         PluginAPI.cmake
         PNG.cmake
         PugiXML.cmake

@@ -939,54 +939,6 @@ LLAssetID LLTransactionID::makeAssetID(const LLUUID& session) const
     return result;
 }
 
-void LLUUID::setNull()
-{
-    memset(mData, 0, UUID_BYTES);
-}
-
-
-// memcmp lets the compiler emit a single SIMD compare on a fixed 16-byte
-// payload while avoiding the strict-aliasing/alignment UB of reading U8[16]
-// as U32*.
-bool LLUUID::operator==(const LLUUID& rhs) const
-{
-    return memcmp(mData, rhs.mData, UUID_BYTES) == 0;
-}
-
-
-bool LLUUID::operator!=(const LLUUID& rhs) const
-{
-    return memcmp(mData, rhs.mData, UUID_BYTES) != 0;
-}
-
-/*
-// JC: This is dangerous.  It allows UUIDs to be cast automatically
-// to integers, among other things.  Use isNull() or notNull().
- LLUUID::operator bool() const
-{
-    U32 *word = (U32 *)mData;
-    return (word[0] | word[1] | word[2] | word[3]) > 0;
-}
-*/
-
-bool LLUUID::notNull() const
-{
-    U64 a, b;
-    memcpy(&a, mData,     sizeof(a));
-    memcpy(&b, mData + 8, sizeof(b));
-    return (a | b) != 0;
-}
-
-// Faster than == LLUUID::null because doesn't require
-// as much memory access.
-bool LLUUID::isNull() const
-{
-    U64 a, b;
-    memcpy(&a, mData,     sizeof(a));
-    memcpy(&b, mData + 8, sizeof(b));
-    return (a | b) == 0;
-}
-
 LLUUID::LLUUID(const char* in_string)
 {
     if (!in_string || in_string[0] == 0)

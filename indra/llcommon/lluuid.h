@@ -33,6 +33,7 @@
 #include <vector>
 #include "stdtypes.h"
 #include "llpreprocessor.h"
+#include "hbfastset.h"
 #include <boost/functional/hash.hpp>
 
 class LLMutex;
@@ -75,7 +76,7 @@ public:
 
     bool    set(const char *in_string, bool emit = true);   // Convert from string, if emit is false, do not emit warnings
     bool    set(const std::string& in_string, bool emit = true);    // Convert from string, if emit is false, do not emit warnings
-    void    setNull();                  // Faster than setting to LLUUID::null.
+    inline void setNull() { memset(mData, 0, UUID_BYTES); }
 
     S32     cmpTime(uuid_time_t *t1, uuid_time_t *t2);
     static void    getSystemTime(uuid_time_t *timestamp);
@@ -84,14 +85,32 @@ public:
     //
     // ACCESSORS
     //
-    bool    isNull() const;         // Faster than comparing to LLUUID::null.
-    bool    notNull() const;        // Faster than comparing to LLUUID::null.
+    inline bool isNull() const
+    {
+        U64 a, b;
+        memcpy(&a, mData,     8);
+        memcpy(&b, mData + 8, 8);
+        return (a | b) == 0;
+    }
+    inline bool notNull() const
+    {
+        U64 a, b;
+        memcpy(&a, mData,     8);
+        memcpy(&b, mData + 8, 8);
+        return (a | b) != 0;
+    }
     // JC: This is dangerous.  It allows UUIDs to be cast automatically
     // to integers, among other things.  Use isNull() or notNull().
     //      operator bool() const;
 
-    bool    operator==(const LLUUID &rhs) const;
-    bool    operator!=(const LLUUID &rhs) const;
+    inline bool operator==(const LLUUID &rhs) const
+    {
+        return memcmp(mData, rhs.mData, UUID_BYTES) == 0;
+    }
+    inline bool operator!=(const LLUUID &rhs) const
+    {
+        return memcmp(mData, rhs.mData, UUID_BYTES) != 0;
+    }
     bool    operator<(const LLUUID &rhs) const;
     bool    operator>(const LLUUID &rhs) const;
 
@@ -172,7 +191,7 @@ struct lluuid_less
     }
 };
 
-typedef std::set<LLUUID, lluuid_less> uuid_list_t;
+typedef safe_hset<LLUUID> uuid_list_t;
 /*
  * Sub-classes for keeping transaction IDs and asset IDs
  * straight.
@@ -192,28 +211,11 @@ public:
 // exported (dllimport-in-consumers) static member can't have an inline
 // definition.
 
-// Canonical hash for LLUUID (also used by boost::container_hash via ADL).
-// Golden-ratio multiply with avalanche mixing: shift by 31 mixes the upper
-// half into the lower half; shift by 47 lifts the highest bits into output.
-// U64 arithmetic throughout keeps the byte-pack and mixing shifts well-defined
-// regardless of size_t width.
+// Fast canonical hash for LLUUID (also used by boost::container_hash via ADL)
+// using the 64-bit digest XOR.
 inline size_t hash_value(const LLUUID& id) noexcept
 {
-    U64 h = 0;
-    for (int i = 0; i < UUID_BYTES; i += 8)
-    {
-        const U64 chunk =
-              (U64)id.mData[i]
-            | ((U64)id.mData[i + 1] << 8)
-            | ((U64)id.mData[i + 2] << 16)
-            | ((U64)id.mData[i + 3] << 24)
-            | ((U64)id.mData[i + 4] << 32)
-            | ((U64)id.mData[i + 5] << 40)
-            | ((U64)id.mData[i + 6] << 48)
-            | ((U64)id.mData[i + 7] << 56);
-        h ^= (chunk * 0x9e3779b97f4a7c15ULL) ^ (h >> 31) ^ (h >> 47);
-    }
-    return (size_t)h;
+    return (size_t)id.getDigest64();
 }
 
 namespace std

@@ -89,6 +89,7 @@
         "weak-ssl-ciphers"
       ]
     },
+    "parallel-hashmap",
     {
       "name": "pkgconf",
       "platform": "windows | osx"

@@ -29,6 +29,8 @@
 
 #include <vector>
 #include <map>
+#include "hbfastmap.h"
+#include "hbfastset.h"
 
 #include "lldir.h"
 #include "llimage.h"
@@ -325,13 +327,13 @@ private:
     LLTextureCache* mTextureCache;
 
     // Map of all requests by UUID
-    typedef std::map<LLUUID,LLTextureFetchWorker*> map_t;
+    typedef fast_hmap<LLUUID,LLTextureFetchWorker*> map_t;
     map_t mRequestMap;                                                  // Mfq
 
     // Set of requests that require network data
-    typedef std::set<LLUUID> queue_t;
+    typedef fast_hset<LLUUID> queue_t;
     queue_t mHTTPTextureQueue;                                          // Mfnq
-    typedef std::map<LLHost,std::set<LLUUID> > cancel_queue_t;
+    typedef fast_hmap<LLHost,fast_hset<LLUUID> > cancel_queue_t;
     F32 mTextureBandwidth;                                              // <none>
     F32 mMaxBandwidth;                                                  // Mfnq
     LLTextureInfo mTextureInfo;

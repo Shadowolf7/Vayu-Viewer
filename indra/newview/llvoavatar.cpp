@@ -2783,16 +2783,17 @@ void LLVOAvatar::idleUpdate(LLAgent &agent, const F64 &time)
         lastRecalibrationFrame = thisFrame;
     }
 
-    if ((mLastAnimExtents[0]==LLVector3())||
-        (mLastAnimExtents[1])==LLVector3())
+    if (!mNeedsExtentUpdate)
     {
-        mNeedsExtentUpdate = true;
+        mNeedsExtentUpdate = thisFrame >= mNextFrameForExtentUpdate ||
+                             mLastAnimExtents[0].isExactlyZero() ||
+                             mLastAnimExtents[1].isExactlyZero();
     }
-    else
+    // Extent update should be happening max once every 4 frames (and even
+    // less often for far impostors - HB).
+    if (mNeedsExtentUpdate)
     {
-        // Update extent if necessary.
-        // if the frame counnter + the first byte of the UUID % upd_freq = 0 then update the extent.
-        mNeedsExtentUpdate = ((thisFrame + mID.mData[0]) % upd_freq == 0);
+        mNextFrameForExtentUpdate = thisFrame + llmax(4, mUpdatePeriod);
     }
 
     checkTextureLoading() ;
@@ -2954,12 +2955,18 @@ void LLVOAvatar::idleUpdateVoiceVisualizer(bool voice_enabled, const LLVector3 &
 
     mVoiceVisualizer->setVoiceEnabled(render_visualizer);
 
-    if ( voice_enabled )
+    if (!voice_enabled || gFrameTimeSeconds < mNextVoiceVisualizerUpdate)
     {
-        //----------------------------------------------------------------
-        // Only do gesture triggering for your own avatar, and only when you're in a proximal channel.
-        //----------------------------------------------------------------
-        if( isSelf() )
+        return;
+    }
+    // No more than 5 updates per second, please... HB
+    constexpr F32 MIN_DELAY = 0.2f;
+    mNextVoiceVisualizerUpdate = gFrameTimeSeconds + MIN_DELAY;
+
+    //----------------------------------------------------------------
+    // Only do gesture triggering for your own avatar, and only when you're in a proximal channel.
+    //----------------------------------------------------------------
+    if( isSelf() )
         {
             //----------------------------------------------------------------------------------------
             // The following takes the voice signal and uses that to trigger gesticulations.
@@ -3028,7 +3035,6 @@ void LLVOAvatar::idleUpdateVoiceVisualizer(bool voice_enabled, const LLVector3 &
             }
         }
         mVoiceVisualizer->setPositionAgent(position);
-    }//if ( voiceEnabled )
 }
 
 static void override_bbox(LLDrawable* drawable, LLVector4a* extents)

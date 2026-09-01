@@ -277,7 +277,7 @@ inline void LLVector4a::setCross3(const LLVector4a& a, const LLVector4a& b)
 // Set all elements to the dot product of the x, y, and z elements in a and b
 inline void LLVector4a::setAllDot3(const LLVector4a& a, const LLVector4a& b)
 {
-#if (defined(__AVX__) || defined(__AVX2__) || defined(__arm64__) || defined(__aarch64__))
+#if (defined(LL_SSE41) || defined(__SSE4_1__) || defined(__AVX__) || defined(__AVX2__) || defined(__arm64__) || defined(__aarch64__))
     mQ = _mm_dp_ps(a.mQ, b.mQ, 0x7f);
 #else
     // ab = { a[W]*b[W], a[Z]*b[Z], a[Y]*b[Y], a[X]*b[X] }
@@ -298,7 +298,7 @@ inline void LLVector4a::setAllDot3(const LLVector4a& a, const LLVector4a& b)
 // Set all elements to the dot product of the x, y, z, and w elements in a and b
 inline void LLVector4a::setAllDot4(const LLVector4a& a, const LLVector4a& b)
 {
-#if (defined(__AVX__) || defined(__AVX2__) || defined(__arm64__) || defined(__aarch64__))
+#if (defined(LL_SSE41) || defined(__SSE4_1__) || defined(__AVX__) || defined(__AVX2__) || defined(__arm64__) || defined(__aarch64__))
     mQ = _mm_dp_ps(a.mQ, b.mQ, 0xff);
 #else
     // ab = { a[W]*b[W], a[Z]*b[Z], a[Y]*b[Y], a[X]*b[X] }
@@ -319,7 +319,7 @@ inline void LLVector4a::setAllDot4(const LLVector4a& a, const LLVector4a& b)
 // Return the 3D dot product of this vector and b
 inline LLSimdScalar LLVector4a::dot3(const LLVector4a& b) const
 {
-#if (defined(__AVX__) || defined(__AVX2__) || defined(__arm64__) || defined(__aarch64__))
+#if (defined(LL_SSE41) || defined(__SSE4_1__) || defined(__AVX__) || defined(__AVX2__) || defined(__arm64__) || defined(__aarch64__))
     return _mm_dp_ps(mQ, b.mQ, 0x7f);
 #else
     const LLQuad ab = _mm_mul_ps( mQ, b.mQ );
@@ -333,7 +333,7 @@ inline LLSimdScalar LLVector4a::dot3(const LLVector4a& b) const
 // Return the 4D dot product of this vector and b
 inline LLSimdScalar LLVector4a::dot4(const LLVector4a& b) const
 {
-#if (defined(__AVX__) || defined(__AVX2__) || defined(__arm64__) || defined(__aarch64__))
+#if (defined(LL_SSE41) || defined(__SSE4_1__) || defined(__AVX__) || defined(__AVX2__) || defined(__arm64__) || defined(__aarch64__))
     return _mm_dp_ps(mQ, b.mQ, 0xff);
 #else
     // ab = { w, z, y, x }

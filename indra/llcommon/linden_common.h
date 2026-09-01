@@ -43,6 +43,7 @@
 #endif
 
 #include "llpreprocessor.h"
+#include "hbintrinsics.h"
 
 #include <cstring>
 #include <cfloat>
