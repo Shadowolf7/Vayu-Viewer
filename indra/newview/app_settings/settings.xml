@@ -17379,5 +17379,38 @@
     <string />
   </map>
   <!-- </FSPoseStand> -->
+  <key>FSDrawDistanceVRAMOptimization</key>
+  <map>
+    <key>Comment</key>
+    <string>Reduce draw distance automatically when the texture VRAM budget is exceeded. On by default; disable to always render at full draw distance regardless of VRAM pressure (FIRE-35748).</string>
+    <key>Persist</key>
+    <integer>1</integer>
+    <key>Type</key>
+    <string>Boolean</string>
+    <key>Value</key>
+    <integer>1</integer>
+  </map>
+  <key>FSFrameRateLimit</key>
+  <map>
+    <key>Comment</key>
+    <string>Target upper limit of frames per second when FSLimitFramerate is enabled.</string>
+    <key>Persist</key>
+    <integer>1</integer>
+    <key>Type</key>
+    <string>U32</string>
+    <key>Value</key>
+    <integer>60</integer>
+  </map>
+  <key>FSLimitFramerate</key>
+  <map>
+    <key>Comment</key>
+    <string>Sleep at the end of each frame to cap the frame rate at FSFrameRateLimit.</string>
+    <key>Persist</key>
+    <integer>1</integer>
+    <key>Type</key>
+    <string>Boolean</string>
+    <key>Value</key>
+    <integer>0</integer>
+  </map>
 </map>
 </llsd>

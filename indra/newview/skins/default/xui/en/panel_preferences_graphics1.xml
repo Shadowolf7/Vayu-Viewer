@@ -382,13 +382,13 @@
   </slider>
 
   <check_box
-    control_name="ALDrawDistanceVRAMOptimization"
+    control_name="FSDrawDistanceVRAMOptimization"
     follows="left|top"
     height="16"
     label="Reduce draw distance when VRAM is full"
     layout="topleft"
     left="30"
-    name="ALDrawDistanceVRAMOptimization"
+    name="FSDrawDistanceVRAMOptimization"
     tool_tip="Automatically reduces your draw distance when texture VRAM usage becomes too high."
     top_pad="10"
     width="300" />
@@ -407,18 +407,18 @@
     width="300" />
 
   <check_box
-    control_name="ALLimitFramerate"
+    control_name="FSLimitFramerate"
     height="16"
     label="Limit framerate"
     layout="topleft"
     left="30"
-    name="ALLimitFramerate"
+    name="FSLimitFramerate"
     tool_tip="Limits the framerate to a user defined value. Can reduce GPU/CPU power consumption and heat."
     top_pad="6"
     width="150" />
   <slider
-    control_name="ALFrameRateLimit"
-    enabled_control="ALLimitFramerate"
+    control_name="FSFrameRateLimit"
+    enabled_control="FSLimitFramerate"
     decimal_digits="0"
     follows="left|top"
     height="16"
@@ -429,7 +429,7 @@
     left_pad="10"
     max_val="360"
     min_val="15"
-    name="ALFrameRateLimitSlider"
+    name="FSFrameRateLimitSlider"
     show_text="true"
     top_delta="0"
     width="200" />

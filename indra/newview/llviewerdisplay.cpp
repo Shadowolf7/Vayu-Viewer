@@ -234,7 +234,7 @@ void display_update_camera()
     // When system memory is critically low or recovering, shrink draw distance.
     else if (const F32 mem_factor = LLMemory::getSystemMemoryBudgetFactor(); mem_factor > 1.f)
     {
-        static LLCachedControl<bool> vram_draw_distance_optimization(gSavedSettings, "ALDrawDistanceVRAMOptimization", true);
+        static LLCachedControl<bool> vram_draw_distance_optimization(gSavedSettings, "FSDrawDistanceVRAMOptimization", true);
         if (vram_draw_distance_optimization)
         {
             final_far = llmax(32.f, final_far / mem_factor);

@@ -1640,8 +1640,8 @@ bool LLAppViewer::doFrame()
             // target frame time. Ported from Firestorm's FSLimitFramerate.
             {
                 static LLTimer s_frame_limit_timer;
-                static LLCachedControl<bool> limit_framerate(gSavedSettings, "ALLimitFramerate", false);
-                static LLCachedControl<U32> frame_rate_limit(gSavedSettings, "ALFrameRateLimit", 60);
+                static LLCachedControl<bool> limit_framerate(gSavedSettings, "FSLimitFramerate", false);
+                static LLCachedControl<U32> frame_rate_limit(gSavedSettings, "FSFrameRateLimit", 60);
                 if (limit_framerate && LLStartUp::getStartupState() == STATE_STARTED
                     && !gTeleportDisplay && !logoutRequestSent() && frame_rate_limit > 0)
                 {

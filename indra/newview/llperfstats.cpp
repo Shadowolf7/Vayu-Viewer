@@ -303,7 +303,7 @@ namespace LLPerfStats
         // and the plain getter is a string-keyed map lookup each time even when
         // the feature is off. LLCachedControl reads the value once and refreshes
         // only when the setting actually changes -- the same pattern used for
-        // other per-frame settings reads (see ALLimitFramerate in llappviewer).
+        // other per-frame settings reads (see FSLimitFramerate in llappviewer).
         static LLCachedControl<bool> perf_frame_log(gSavedSettings, "VayuPerfFrameLog", false);
         if (!perf_frame_log)
         {
