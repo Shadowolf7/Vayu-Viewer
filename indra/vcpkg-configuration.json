@@ -28,7 +28,6 @@
         "pipewire",
         "ppqsort",
         "pulseaudio",
-        "sdl3",
         "secondlife-emoji-shortcodes",
         "tinygltf",
         "tracy",
@@ -40,6 +39,9 @@
         "zlib"
       ]
     }
+  ],
+  "overlay-ports": [
+    "vcpkg/ports"
   ],
   "overlay-triplets": [
     "cmake/triplets"
