@@ -760,7 +760,7 @@ void LLWebRTCImpl::workerStartPlayout()
     // Only run playout while voice is enabled and there is something to render:
     // either a connection, or the device preview echoing capture back.  Running
     // the output device with neither is heard as a buzz.
-    if (!mDeviceModule || !mVoiceEnabled || mDeviceModule->Playing() || (!mTuningMode && mPeerConnections.empty()))
+    if (!mDeviceModule || !mVoiceEnabled || (!mTuningMode && mPeerConnections.empty()))
     {
         return;
     }
@@ -782,6 +782,16 @@ void LLWebRTCImpl::workerStartPlayout()
                 break;
             }
         }
+    }
+
+    if (mDeviceModule->Playing())
+    {
+        if (mDeviceModule->GetPlayoutDevice() == playoutDevice)
+        {
+            return;
+        }
+
+        mDeviceModule->StopPlayout();
     }
 
 #if WEBRTC_WIN
