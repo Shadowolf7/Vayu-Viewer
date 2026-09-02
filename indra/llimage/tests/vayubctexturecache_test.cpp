@@ -8,8 +8,10 @@
 #include "../test/lltut.h"
 
 #include "../vayubctexturecache.h"
+#include "boost/filesystem.hpp"
 
 #include <filesystem>
+#include <fstream>
 #include <memory>
 #include <utility>
 
@@ -74,7 +76,7 @@ namespace tut
         ensure_equals("Width round-trips", read_header.mWidth, header.mWidth);
         ensure("Buffer bytes round-trip", read_buffer == buffer);
 
-        VayuBCTextureCache::instance().purge();
+        VayuBCTextureCache::instance().clear();
     }
 
     // Test 2: unknown (id, discard) is a miss
@@ -92,7 +94,7 @@ namespace tut
         bool ok = VayuBCTextureCache::instance().readEntry(id, 0, 0, header, buffer);
         ensure("Unknown entry is a miss", !ok);
 
-        VayuBCTextureCache::instance().purge();
+        VayuBCTextureCache::instance().clear();
     }
 
     // Test 3: a cached entry below the requested preset is treated as a miss,
@@ -119,10 +121,10 @@ namespace tut
         bool at_or_below = VayuBCTextureCache::instance().readEntry(id, 0, /*min_preset*/ 1, out_header, out_buffer);
         ensure("Cached-at-configured preset is a hit", at_or_below);
 
-        VayuBCTextureCache::instance().purge();
+        VayuBCTextureCache::instance().clear();
     }
 
-    // Test 4: exceeding the size budget evicts the least-recently-touched entry
+    // Test 4: purge() removes oldest files when exceeding nominal budget
     template<> template<>
     void bc_texture_cache_object::test<4>()
     {
@@ -132,8 +134,8 @@ namespace tut
         std::vector<U8> payload(64, 0x42);
         VayuBCCacheEntryHeader header = make_header(1, 2);
 
-        // Budget for roughly 2 entries; a 3rd write should evict the oldest.
-        S64 approx_entry_size = (S64)(sizeof(header) + payload.size() + 16);
+        // Budget for 2 entries nominal
+        S64 approx_entry_size = (S64)(sizeof(VayuBCCacheEntryHeader) + 16 + payload.size());
         VayuBCTextureCache::instance().initCache(dir, approx_entry_size * 2);
 
         LLUUID id_a, id_b, id_c;
@@ -145,34 +147,37 @@ namespace tut
         VayuBCTextureCache::instance().writeEntry(id_b, 0, header, make_buffer(payload));
         VayuBCTextureCache::instance().writeEntry(id_c, 0, header, make_buffer(payload));
 
-        ensure("Cache stays within its size budget", VayuBCTextureCache::instance().getCurrentSize() <= approx_entry_size * 2);
+        // Flush writes to disk
+        VayuBCTextureCache::instance().shutdown();
+
+        // Adjust timestamps so id_a is oldest, id_c is newest
+        std::string path_a = VayuBCTextureCache::instance().getFilePath(id_a, 0);
+        std::string path_b = VayuBCTextureCache::instance().getFilePath(id_b, 0);
+        std::string path_c = VayuBCTextureCache::instance().getFilePath(id_c, 0);
+
+        time_t now = time(NULL);
+        boost::system::error_code ec;
+        boost::filesystem::last_write_time(path_a, now - 7200, ec);
+        boost::filesystem::last_write_time(path_b, now - 3600, ec);
+        boost::filesystem::last_write_time(path_c, now, ec);
+
+        VayuBCTextureCache::instance().purge();
+
+        ensure("Cache stays within its nominal size budget",
+               VayuBCTextureCache::instance().getCurrentSize() <= approx_entry_size * 2);
 
         VayuBCCacheEntryHeader out_header;
         std::vector<U8> out_buffer;
         bool a_survived = VayuBCTextureCache::instance().readEntry(id_a, 0, 0, out_header, out_buffer);
         bool c_survived = VayuBCTextureCache::instance().readEntry(id_c, 0, 0, out_header, out_buffer);
-        ensure("Most recently written entry survives eviction", c_survived);
-        ensure("Oldest entry was evicted to make room", !a_survived);
+        ensure("Most recently written entry survives purge", c_survived);
+        ensure("Oldest entry was purged to make room", !a_survived);
 
-        VayuBCTextureCache::instance().purge();
+        VayuBCTextureCache::instance().clear();
     }
 
     // Test 5: the in-RAM pending-write backlog stays under its ceiling, and
     // trimming it never discards the write that was just queued.
-    //
-    // This is the memory-safety property the bound exists for: N decode
-    // workers can queue writes far faster than the single writer thread
-    // drains them, and before this bound existed that backlog was unbounded
-    // RAM growth in exactly the situation that generates the most writes
-    // (arriving somewhere texture-dense). Overflow drops oldest-first rather
-    // than blocking the producer, so a drop costs one re-encode later and
-    // nothing more.
-    //
-    // Deliberately asserts the invariant rather than an exact drop count:
-    // how many entries survive depends on how much of the backlog the writer
-    // thread happened to flush concurrently, which isn't deterministic. What
-    // is deterministic is that writeEntry() returns with the backlog under
-    // its ceiling, and that the newest write is never the one dropped.
     template<> template<>
     void bc_texture_cache_object::test<5>()
     {
@@ -182,12 +187,7 @@ namespace tut
         constexpr size_t kCount = 200;
         constexpr size_t kPayloadSize = 1024;
 
-        // Disk budget generous enough that nothing is evicted for size -
-        // this test is about the RAM backlog, not on-disk eviction.
         const S64 disk_budget = (S64)(kCount * (kPayloadSize + 256) * 4);
-        // Room for a couple of entries' worth of queued writes, comfortably
-        // more than any single entry, so the bound is strict - the
-        // never-drop-the-newest carve-out can't be what satisfies it.
         const S64 pending_budget = (S64)((kPayloadSize + 256) * 2);
 
         VayuBCTextureCache::instance().initCache(dir, disk_budget, pending_budget);
@@ -208,46 +208,26 @@ namespace tut
                        <= VayuBCTextureCache::instance().getMaxPendingBytes());
         }
 
-        // Drop-oldest, never drop-newest: the final write must still be
-        // retrievable, whether it's still queued or already flushed.
         VayuBCCacheEntryHeader out_header;
         std::vector<U8> out_buffer;
         ensure("The most recently queued write is never the one dropped",
                VayuBCTextureCache::instance().readEntry(newest_id, 0, 0, out_header, out_buffer));
         ensure_equals("Surviving entry's payload is intact", out_buffer.size(), kPayloadSize);
 
-        VayuBCTextureCache::instance().purge();
+        VayuBCTextureCache::instance().clear();
     }
 
     // Test 6: a backlog of many uniquely-keyed writes queued back-to-back is
-    // fully drained by shutdown() - regression test for the writer-pool
-    // deadlock fixed by replacing one WorkQueue ticket per queued key with a
-    // single self-looping drain pass (see queuePendingWrite()/
-    // drainPendingWrites() in vayubctexturecache.cpp). This doesn't attempt
-    // to reproduce the deadlock itself - that needed the old per-key-post
-    // shape plus real multi-threaded timing to saturate the WorkQueue, which
-    // isn't practical to force deterministically from a single-threaded
-    // test. What it verifies instead is the property the fix depends on:
-    // an arbitrarily large backlog still gets completely flushed to disk by
-    // the time shutdown()'s join() returns, with none of it silently
-    // stranded.
-    //
-    // NOTE: this test calls shutdown(), which tears down the process-wide
-    // singleton's writer pool. Keep it LAST in this file. initCache()
-    // self-heals a null mWriterPool (see vayubctexturecache.cpp), so later
-    // tests would still work even out of order, but a shutdown()-invoking
-    // test is easiest to reason about kept at the end.
+    // fully drained by shutdown().
     template<> template<>
     void bc_texture_cache_object::test<6>()
     {
         auto dir = test_dir("drain_backlog");
         std::filesystem::remove_all(dir);
 
-        constexpr size_t kCount = 1500; // > the old WorkQueue capacity (1024)
+        constexpr size_t kCount = 1500;
         constexpr size_t kPayloadSize = 32;
 
-        // Generous budget - this test is about the drain loop, not
-        // eviction, so keep every entry alive.
         S64 budget = (S64)(kCount * (sizeof(VayuBCCacheEntryHeader) + kPayloadSize + 64) * 2);
         VayuBCTextureCache::instance().initCache(dir, budget);
 
@@ -257,16 +237,12 @@ namespace tut
             ids[i].generate();
             VayuBCCacheEntryHeader header = make_header(2, 1);
             std::vector<U8> buffer(kPayloadSize, 0);
-            // Stamp the index into the payload so a misdirected/corrupted
-            // write shows up as a content mismatch, not just a miss.
             memcpy(buffer.data(), &i, sizeof(i));
 
             VayuBCTextureCache::instance().writeEntry(ids[i], 0, header, make_buffer(std::move(buffer)));
         }
 
-        // Force a full, deterministic drain: shutdown()'s join() doesn't
-        // return until drainPendingWrites() has emptied mPendingWrites
-        // entirely.
+        // Force a full, deterministic drain
         VayuBCTextureCache::instance().shutdown();
 
         size_t verified = 0;
@@ -285,20 +261,95 @@ namespace tut
         ensure_equals("Every queued entry is readable and intact after shutdown() drains the backlog",
                       verified, kCount);
 
-        // Cross-check against the raw files on disk too, independent of any
-        // in-memory bookkeeping readEntry() relies on.
+        // Cross-check against the raw files across the 16 subdirectories on disk
         size_t bc_file_count = 0;
         std::error_code ec;
-        for (const auto& dirent : std::filesystem::directory_iterator(dir, ec))
+        for (const auto& dirent : std::filesystem::recursive_directory_iterator(dir, ec))
         {
             if (!ec && dirent.is_regular_file() && dirent.path().extension() == ".bc")
                 ++bc_file_count;
         }
-        ensure_equals("Every entry actually reached disk", bc_file_count, kCount);
+        ensure_equals("Every entry actually reached disk across subdirectories", bc_file_count, kCount);
 
-        ensure_equals("In-memory index matches the drained backlog",
+        ensure_equals("Entry count matches the drained backlog",
                        VayuBCTextureCache::instance().getEntryCount(), kCount);
 
-        VayuBCTextureCache::instance().purge();
+        VayuBCTextureCache::instance().clear();
+    }
+
+    // Test 7: 16 hex subdirectories ('0' - 'f') partition and file path structure
+    template<> template<>
+    void bc_texture_cache_object::test<7>()
+    {
+        auto dir = test_dir("subdirs");
+        std::filesystem::remove_all(dir);
+        VayuBCTextureCache::instance().initCache(dir, 1024 * 1024);
+
+        for (char ch : std::string("0123456789abcdef"))
+        {
+            ensure("Subdirectory exists", std::filesystem::is_directory(dir / std::string(1, ch)));
+        }
+
+        LLUUID id;
+        id.generate();
+        std::string expected_subdir(1, id.asString()[0]);
+        std::string filepath = VayuBCTextureCache::instance().getFilePath(id, 0);
+
+        ensure("File path contains correct hex subdir",
+               filepath.find((dir / expected_subdir).string()) != std::string::npos);
+
+        VayuBCTextureCache::instance().clear();
+    }
+
+    // Test 8: Migration of legacy flat root files into 16 subdirectories
+    template<> template<>
+    void bc_texture_cache_object::test<8>()
+    {
+        auto dir = test_dir("migration");
+        std::filesystem::remove_all(dir);
+        std::filesystem::create_directories(dir);
+
+        LLUUID id;
+        id.generate();
+        std::string legacy_filename = id.asString() + "_0.bc";
+        std::filesystem::path legacy_path = dir / legacy_filename;
+
+        // Create a dummy file in root
+        {
+            std::ofstream out(legacy_path, std::ios::binary);
+            out << "dummy";
+        }
+        ensure("Legacy file exists in root", std::filesystem::exists(legacy_path));
+
+        // Init cache should trigger migration
+        VayuBCTextureCache::instance().initCache(dir, 1024 * 1024);
+
+        ensure("Legacy file removed from root", !std::filesystem::exists(legacy_path));
+        std::string expected_subdir(1, id.asString()[0]);
+        std::filesystem::path migrated_path = dir / expected_subdir / legacy_filename;
+        ensure("File migrated into hex subdirectory", std::filesystem::exists(migrated_path));
+
+        VayuBCTextureCache::instance().clear();
+    }
+
+    // Test 9: Atomic byte accounting (addBytesWritten)
+    template<> template<>
+    void bc_texture_cache_object::test<9>()
+    {
+        auto dir = test_dir("accounting");
+        std::filesystem::remove_all(dir);
+        VayuBCTextureCache::instance().initCache(dir, 1024 * 1024);
+
+        S64 initial_size = VayuBCTextureCache::instance().getCurrentSize();
+        VayuBCTextureCache::instance().addBytesWritten(5000);
+        ensure_equals("addBytesWritten increases size",
+                      VayuBCTextureCache::instance().getCurrentSize(), initial_size + 5000);
+
+        VayuBCTextureCache::instance().addBytesWritten(-2000);
+        ensure_equals("addBytesWritten with negative decreases size",
+                      VayuBCTextureCache::instance().getCurrentSize(), initial_size + 3000);
+
+        VayuBCTextureCache::instance().clear();
+        VayuBCTextureCache::instance().shutdown();
     }
 }

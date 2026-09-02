@@ -4888,7 +4888,7 @@ void LLAppViewer::applyBCTextureCacheBudgets()
 
     VayuBCTextureCache::instance().initCache(
         std::filesystem::path(gDirUtilp->getExpandedFilename(LL_PATH_CACHE, "bccache")),
-        bc_texture_cache_size, bc_texture_cache_pending_size);
+        bc_texture_cache_size, bc_texture_cache_pending_size, mSecondInstance);
 }
 
 bool LLAppViewer::initCache()
@@ -4975,6 +4975,7 @@ bool LLAppViewer::initCache()
         if (gSavedSettings.getS32("DiskCacheVersion") != LLAppViewer::getDiskCacheVersion())
         {
             LLDiskCache::clear();
+            VayuBCTextureCache::instance().clear();
             gSavedSettings.setS32("DiskCacheVersion", LLAppViewer::getDiskCacheVersion());
         }
 
@@ -4985,11 +4986,13 @@ bool LLAppViewer::initCache()
 
             // clear the local disk cache
             LLDiskCache::clear();
+            VayuBCTextureCache::instance().clear();
         }
         else if (gSavedSettings.getBOOL("PurgeDiskCacheOnStartup"))
         {
             // request background purge without stalling startup
             LLDiskCache::threadedPurge();
+            VayuBCTextureCache::instance().threadedPurge();
         }
     }
 

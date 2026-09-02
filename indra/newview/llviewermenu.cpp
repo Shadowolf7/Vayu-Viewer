@@ -58,6 +58,7 @@
 #include "llconsole.h"
 #include "lldebugview.h"
 #include "lldiskcache.h"
+#include "vayubctexturecache.h"
 #include "llenvironment.h"
 #include "llfilepicker.h"
 #include "llfirstuse.h"
@@ -2425,6 +2426,7 @@ class LLAdvancedPurgeDiskCache : public view_listener_t
     bool handleEvent(const LLSD& userdata) override
     {
         LLDiskCache::threadedPurge();
+        VayuBCTextureCache::instance().threadedPurge();
         return true;
     }
 };

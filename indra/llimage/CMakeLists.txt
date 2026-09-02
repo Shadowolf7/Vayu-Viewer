@@ -103,6 +103,11 @@ if (BUILD_TESTING)
     vayubctexturecache.cpp
     )
   set_source_files_properties(
+    vayubctexturecache.cpp
+    PROPERTIES
+    LL_TEST_ADDITIONAL_LIBRARIES "llfilesystem"
+    )
+  set_source_files_properties(
     vayuimageblockcompressor.cpp
     PROPERTIES
     LL_TEST_ADDITIONAL_SOURCE_FILES "bc7e/rgbcx.cpp;${BC7E_ISPC_OUTPUTS}"
@@ -112,7 +117,7 @@ if (BUILD_TESTING)
     llimageworker.cpp
     PROPERTIES
     LL_TEST_ADDITIONAL_SOURCE_FILES "vayuimageblockcompressor.cpp;vayubctexturecache.cpp;bc7e/rgbcx.cpp;${BC7E_ISPC_OUTPUTS}"
-    LL_TEST_ADDITIONAL_LIBRARIES "ll::libyuv"
+    LL_TEST_ADDITIONAL_LIBRARIES "llfilesystem;ll::libyuv"
     )
   LL_ADD_PROJECT_UNIT_TESTS(llimage "${llimage_TEST_SOURCE_FILES}")
 endif ()
