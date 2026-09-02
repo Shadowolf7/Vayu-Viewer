@@ -252,11 +252,21 @@ See `workflowPresets` in `indra/CMakePresets.json` for the full set.
 
 After configuring, build with CMake or your IDE.
 
+> [!IMPORTANT]
+> **Always activate `.venv` for full viewer builds**:
+> The project virtual environment (`source .venv/bin/activate` on Unix, `.\.venv\Scripts\Activate.ps1` on Windows) must be active whenever building full viewer binaries or packages (e.g. `vayu-bin`). Post-build staging scripts (`viewer_manifest.py`) and packaging utilities require the venv's Python environment and installed packages (`requirements.txt`).
+
 ### From the command line
 
-```
+```bash
+# Activate the virtual environment
+source .venv/bin/activate
+
 # Multi-config generators (VS, Xcode, Ninja Multi-Config)
 cmake --build <build-dir> --config Release
+
+# Or using Ninja Multi-Config directly
+ninja -C build-Linux-ninja-perf -f build-Release.ninja vayu-bin:Release
 
 # Or use a build preset
 cmake --build --preset ninja-os-release

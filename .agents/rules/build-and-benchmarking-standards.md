@@ -9,12 +9,17 @@ always_on: true
 Strictly adhere to the following build and benchmarking protocols:
 
 ## 1. Strict Canonical Build Procedures (Ninja Multi-Config)
+* **Virtualenv Prerequisite:**
+  The project Python virtual environment (`.venv`) **MUST** be activated for every full viewer build so post-build staging (`viewer_manifest.py`, asset packaging, dependencies) executes with the correct Python interpreter:
+  `source .venv/bin/activate` (Windows: `.\.venv\Scripts\Activate.ps1`)
 * **Never invoke plain `ninja` without an explicit config flag.** The project uses CMake with `Ninja Multi-Config`. Plain `ninja` defaults to `RelWithDebInfo` (generating an unoptimized ~1GB debug binary and leaving `Release/` stale).
 * **Canonical Build Commands:**
-  - **Release component build:** `ninja -C build-Linux-ninja-perf -f build-Release.ninja <target>:Release`
+  - **Release full package (requires active .venv):**
+    `source .venv/bin/activate && ninja -C build-Linux-ninja-perf -f build-Release.ninja vayu-bin:Release`
+    *(or `source .venv/bin/activate && cmake --build build-Linux-ninja-perf --config Release`)*
+  - **Release component build:**
+    `ninja -C build-Linux-ninja-perf -f build-Release.ninja <target>:Release`
     *(or `cmake --build build-Linux-ninja-perf --config Release --target <target>`)*
-  - **Release full package:** `ninja -C build-Linux-ninja-perf -f build-Release.ninja vayu-bin:Release`
-    *(or `cmake --build build-Linux-ninja-perf --config Release`)*
 * **Never launch or benchmark from `RelWithDebInfo/` for profiling or performance verification.**
 
 ## 2. Pre-Launch & Benchmark Invariants
