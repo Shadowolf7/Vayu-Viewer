@@ -5120,7 +5120,8 @@ bool LLVOAvatar::updateCharacter(LLAgent &agent)
         {
             LL_INFOS("Avatar") << avString() << " sitting with a null parent outside the markDead() "
                 "path; forcing unseat via per-frame reconciliation" << LL_ENDL;
-            getOffObject();
+            // Route through setParent(NULL) so self also resets its camera.
+            setParent(NULL);
         }
     }
 
@@ -8421,6 +8422,11 @@ void LLVOAvatar::getOffObject()
             stopMotionFromSource(child_objectp->getID());
             LLFollowCamMgr::getInstance()->setCameraActive(child_objectp->getID(), false);
         }
+    }
+    else if (isSelf())
+    {
+        // Recover from a missing seat parent without retaining a stale followcam.
+        LLFollowCamMgr::getInstance()->clearActiveFollowCamParams();
     }
 
     // assumes that transform will not be updated with drawable still having a parent
@@ -12643,4 +12649,3 @@ bool LLVOAvatar::isBuddy() const
     }
     return is_friend;
 }
-
