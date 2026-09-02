@@ -2,6 +2,38 @@
 
 add_library(llmath STATIC)
 
+# ---------------------------------------------------------------------------
+# ISPC frustum culling kernel — SSE2 / SSE4 / AVX / AVX2, runtime dispatch
+# Follows the same pattern as llimage/CMakeLists.txt (bc7e.ispc).
+# ---------------------------------------------------------------------------
+find_program(ISPC_EXECUTABLE ispc DOC "Intel Implicit SPMD Program Compiler")
+if (ISPC_EXECUTABLE)
+  set(ISPC_CULL_TARGETS "sse2-i32x4,sse4-i32x4,avx1-i32x8,avx2-i32x8")
+  set(FRUSTUM_CULL_ISPC_OUTPUTS
+      ${CMAKE_CURRENT_BINARY_DIR}/frustum_cull.o
+      ${CMAKE_CURRENT_BINARY_DIR}/frustum_cull_sse2.o
+      ${CMAKE_CURRENT_BINARY_DIR}/frustum_cull_sse4.o
+      ${CMAKE_CURRENT_BINARY_DIR}/frustum_cull_avx.o
+      ${CMAKE_CURRENT_BINARY_DIR}/frustum_cull_avx2.o
+  )
+  add_custom_command(
+      OUTPUT  ${FRUSTUM_CULL_ISPC_OUTPUTS}
+              ${CMAKE_CURRENT_SOURCE_DIR}/frustum_cull_ispc.h
+      COMMAND ${ISPC_EXECUTABLE}
+              -O3 --pic --opt=fast-math
+              --target=${ISPC_CULL_TARGETS}
+              -h ${CMAKE_CURRENT_SOURCE_DIR}/frustum_cull_ispc.h
+              -o ${CMAKE_CURRENT_BINARY_DIR}/frustum_cull.o
+              ${CMAKE_CURRENT_SOURCE_DIR}/frustum_cull.ispc
+      DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/frustum_cull.ispc
+      COMMENT "Compiling frustum_cull.ispc (SSE2, SSE4, AVX, AVX2)"
+  )
+  target_compile_definitions(llmath PUBLIC HAVE_FRUSTUM_CULL_ISPC)
+else ()
+  set(FRUSTUM_CULL_ISPC_OUTPUTS "")
+  message(STATUS "ISPC not found — frustum_cull.ispc skipped; scalar fallback active")
+endif ()
+
 target_sources(llmath
     PRIVATE
     llbbox.cpp
@@ -36,6 +68,7 @@ target_sources(llmath
     v4coloru.cpp
     v4math.cpp
     xform.cpp
+    ${FRUSTUM_CULL_ISPC_OUTPUTS}
     )
 
 target_sources(llmath
@@ -90,6 +123,11 @@ target_sources(llmath
     v4math.h
     xform.h
     )
+
+if (ISPC_EXECUTABLE)
+  target_sources(llmath PUBLIC FILE_SET HEADERS FILES
+      ${CMAKE_CURRENT_SOURCE_DIR}/frustum_cull_ispc.h)
+endif ()
 
 target_link_libraries(llmath PUBLIC llcommon ll::mikktspace ll::sse2neon ll::meshoptimizer)
 target_include_directories(llmath  INTERFACE   ${CMAKE_CURRENT_SOURCE_DIR})

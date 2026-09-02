@@ -119,12 +119,15 @@ public:
         HORIZ_PLANE_ALL_MASK = 0x3
     };
 
-private:
+
+protected:
     LLPlane mAgentPlanes[AGENT_PLANE_USER_CLIP_NUM];  //frustum planes in agent space a la gluUnproject (I'm a bastard, I know) - DaveP
     LLPlane mRegionPlanes[AGENT_PLANE_USER_CLIP_NUM];  //frustum planes in a local region space, derived from mAgentPlanes
     LLPlane mLastAgentPlanes[AGENT_PLANE_USER_CLIP_NUM];
     U8 mPlaneMask[PLANE_MASK_NUM];         // 8 for alignment
+    U32 mPlaneCount;  //defaults to 6, if setUserClipPlane is called, uses user supplied clip plane in
 
+private:
     F32 mView;                  // angle between top and bottom frustum planes in radians.
     F32 mAspect;                // width/height
     S32 mViewHeightInPixels;    // for ViewHeightInPixels() only
@@ -134,13 +137,14 @@ private:
     LLVector3 mFrustCenter;     // center of frustum and radius squared for ultra-quick exclusion test
     F32 mFrustRadiusSquared;
 
-    U32 mPlaneCount;  //defaults to 6, if setUserClipPlane is called, uses user supplied clip plane in
-
     LLVector3 mWorldPlanePos;       // Position of World Planes (may be offset from camera)
 public:
     LLVector3 mAgentFrustum[AGENT_FRUSTRUM_NUM];  //8 corners of 6-plane frustum
     F32 mFrustumCornerDist;     //distance to corner of frustum against far clip plane
     LLPlane& getAgentPlane(U32 idx) { return mAgentPlanes[idx]; }
+    const LLPlane& getAgentPlane(U32 idx) const { return mAgentPlanes[idx]; }
+    U8 getPlaneMask(U32 i) const { return mPlaneMask[i]; }
+    U32 getPlaneCount() const { return mPlaneCount; }
 
 public:
     LLCamera();
