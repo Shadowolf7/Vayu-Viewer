@@ -90,7 +90,7 @@
 #include "lltoolmgr.h"
 #include "llviewercamera.h"
 #if defined(HAVE_FRUSTUM_CULL_ISPC)
-#include "frustum_cull_ispc.h"
+#include "vayu_frustum_cull_ispc.h"
 #endif
 #include "llviewermediafocus.h"
 #include "llviewertexturelist.h"

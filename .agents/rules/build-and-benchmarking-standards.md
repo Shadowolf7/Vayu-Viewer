@@ -22,3 +22,13 @@ Strictly adhere to the following build and benchmarking protocols:
   1. **Verify Binary Freshness:** Run `ls -l <build_dir>/newview/Release/bin/vayu-bin` and mathematically verify the modification timestamp is newer than the latest edited source file.
   2. **Verify Process Isolation:** Ensure no other viewer instances (`vayu`, `alchemy`, `secondlife`) or background compilations (`ninja`, `cmake`) are running before launching or recording.
   3. **Launch Explicit Release Executable:** Always launch the packaged wrapper at `<build_dir>/newview/Release/vayu` (or installed baseline at `~/.vayu-install/vayu`).
+
+## 3. Interactive Process & Launch Control Invariants
+* **Never launch an interactive GUI application (the viewer) without explicit, turn-by-turn user confirmation.**
+  - Building/compiling in the background is acceptable.
+  - Launching the interactive viewer (`vayu`, `vayu-bin`) MUST always be explicitly requested or confirmed by the user in that specific turn.
+* **Strict Prohibition on Autonomous Re-launches / Retries:**
+  - If a benchmark, capture, or export fails, segfaults, or produces incomplete data, **STOP IMMEDIATELY**.
+  - Report the exact error output and state to the user in plain text.
+  - **Never** attempt to re-launch the application, retry a benchmark, or restart background recording without direct user instruction.
+

@@ -8,6 +8,10 @@
 ## GL Driver Options
 export mesa_glthread=true
 
+## Wayland Window Decorations (Client-Side Decorations for GNOME/Mutter & Weston)
+export SDL_VIDEO_WAYLAND_ALLOW_LIBDECOR=1
+export SDL_VIDEO_WAYLAND_PREFER_LIBDECOR=1
+
 ## --- AMD PERFORMANCE TUNING (carried over from the Firestorm High
 ##     Performance launcher) ---
 ## AMD_DEBUG=lowprecision trades a small amount of rendering precision

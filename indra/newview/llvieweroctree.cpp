@@ -33,6 +33,9 @@
 #include "llglslshader.h"
 #include "llviewershadermgr.h"
 #include "lldrawpoolwater.h"
+#if defined(HAVE_FRUSTUM_CULL_ISPC)
+#include "vayu_frustum_cull_ispc.h"
+#endif
 
 //-----------------------------------------------------------------------------------
 //static variables definitions
@@ -1336,6 +1339,48 @@ bool LLViewerOctreePartition::isOcclusionEnabled()
 //class LLViewerOctreeCull definitions
 //-----------------------------------------------------------------------------------
 
+LLViewerOctreeCull::LLViewerOctreeCull(LLCamera* camera, bool no_far_clip, bool check_sphere)
+    : mCamera(camera), mRes(0)
+{
+#if defined(HAVE_FRUSTUM_CULL_ISPC)
+    initPlanesSoA(no_far_clip, check_sphere);
+#endif
+}
+
+#if defined(HAVE_FRUSTUM_CULL_ISPC)
+void LLViewerOctreeCull::initPlanesSoA(bool no_far_clip, bool check_sphere)
+{
+    if (!mCamera)
+    {
+        mPlanesSoA.num_planes = 0;
+        mPlanesSoA.sphere_radius_sq = -1.f;
+        return;
+    }
+    U32 count = no_far_clip ? 5 : LLCamera::AGENT_PLANE_NO_USER_CLIP_NUM;
+    mPlanesSoA.num_planes = (int32_t)count;
+    for (U32 i = 0; i < count; ++i)
+    {
+        const LLPlane& p = mCamera->getAgentPlane(i);
+        mPlanesSoA.px[i] = p[0];
+        mPlanesSoA.py[i] = p[1];
+        mPlanesSoA.pz[i] = p[2];
+        mPlanesSoA.pd[i] = p[3];
+    }
+    const LLVector3& origin = mCamera->getOrigin();
+    mPlanesSoA.cam_pos[0] = origin.mV[0];
+    mPlanesSoA.cam_pos[1] = origin.mV[1];
+    mPlanesSoA.cam_pos[2] = origin.mV[2];
+    if (check_sphere)
+    {
+        mPlanesSoA.sphere_radius_sq = mCamera->mFrustumCornerDist * mCamera->mFrustumCornerDist;
+    }
+    else
+    {
+        mPlanesSoA.sphere_radius_sq = -1.f;
+    }
+}
+#endif
+
 //virtual
 bool LLViewerOctreeCull::earlyFail(LLViewerOctreeGroup* group)
 {
@@ -1352,20 +1397,76 @@ void LLViewerOctreeCull::traverse(const OctreeNode* n)
         return;
     }
 
-    if (mRes == 2 ||
-        (mRes && group->hasState(LLViewerOctreeGroup::SKIP_FRUSTUM_CHECK)))
-    {   //fully in, just add everything
-        OctreeTraveler::traverse(n);
+    if (mRes == 0 && !group->hasState(LLViewerOctreeGroup::SKIP_FRUSTUM_CHECK))
+    {
+        mRes = frustumCheck(group);
+        if (mRes == 0)
+        {
+            return;
+        }
+    }
+
+    n->accept(this);
+
+    const U32 child_count = n->getChildCount();
+    if (child_count == 0)
+    {
+        mRes = 0;
+        return;
+    }
+
+    if (mRes == 2 || group->hasState(LLViewerOctreeGroup::SKIP_FRUSTUM_CHECK))
+    {
+        mRes = 2;
+        for (U32 i = 0; i < child_count; ++i)
+        {
+            traverse(n->getChild(i));
+        }
+        mRes = 0;
     }
     else
     {
-        mRes = frustumCheck(group);
+#if defined(HAVE_FRUSTUM_CULL_ISPC)
+        if (mPlanesSoA.num_planes > 0 && child_count > 0)
+        {
+            alignas(32) float cx[8], cy[8], cz[8];
+            alignas(32) float rx[8], ry[8], rz[8];
+            alignas(32) int32_t child_res[8];
 
-        if (mRes)
-        { //at least partially in, run on down
-            OctreeTraveler::traverse(n);
+            for (U32 i = 0; i < child_count; ++i)
+            {
+                const LLViewerOctreeGroup* cg = (const LLViewerOctreeGroup*) n->getChild(i)->getListener(0);
+                const F32* c = cg->mBounds[0].getF32ptr();
+                const F32* r = cg->mBounds[1].getF32ptr();
+                cx[i] = c[0]; cy[i] = c[1]; cz[i] = c[2];
+                rx[i] = r[0]; ry[i] = r[1]; rz[i] = r[2];
+            }
+
+            ispc::frustum_and_sphere_cull_aabbs(
+                mPlanesSoA.px, mPlanesSoA.py, mPlanesSoA.pz, mPlanesSoA.pd,
+                mPlanesSoA.num_planes,
+                mPlanesSoA.cam_pos[0], mPlanesSoA.cam_pos[1], mPlanesSoA.cam_pos[2],
+                mPlanesSoA.sphere_radius_sq,
+                cx, cy, cz, rx, ry, rz,
+                (int32_t)child_count, child_res);
+
+            for (U32 i = 0; i < child_count; ++i)
+            {
+                if (child_res[i] != 0)
+                {
+                    mRes = child_res[i];
+                    traverse(n->getChild(i));
+                }
+            }
+            mRes = 0;
+            return;
         }
-
+#endif
+        for (U32 i = 0; i < child_count; ++i)
+        {
+            mRes = 0;
+            traverse(n->getChild(i));
+        }
         mRes = 0;
     }
 }

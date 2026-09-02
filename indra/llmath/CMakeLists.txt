@@ -3,35 +3,61 @@
 add_library(llmath STATIC)
 
 # ---------------------------------------------------------------------------
-# ISPC frustum culling kernel — SSE2 / SSE4 / AVX / AVX2, runtime dispatch
+# Vayu ISPC kernels — SSE2 / SSE4 / AVX / AVX2, runtime dispatch
 # Follows the same pattern as llimage/CMakeLists.txt (bc7e.ispc).
 # ---------------------------------------------------------------------------
 find_program(ISPC_EXECUTABLE ispc DOC "Intel Implicit SPMD Program Compiler")
 if (ISPC_EXECUTABLE)
-  set(ISPC_CULL_TARGETS "sse2-i32x4,sse4-i32x4,avx1-i32x8,avx2-i32x8")
+  set(ISPC_TARGETS "sse2-i32x4,sse4-i32x4,avx1-i32x8,avx2-i32x8")
+
+  # 1. Frustum & Sphere culling kernel
   set(FRUSTUM_CULL_ISPC_OUTPUTS
-      ${CMAKE_CURRENT_BINARY_DIR}/frustum_cull.o
-      ${CMAKE_CURRENT_BINARY_DIR}/frustum_cull_sse2.o
-      ${CMAKE_CURRENT_BINARY_DIR}/frustum_cull_sse4.o
-      ${CMAKE_CURRENT_BINARY_DIR}/frustum_cull_avx.o
-      ${CMAKE_CURRENT_BINARY_DIR}/frustum_cull_avx2.o
+      ${CMAKE_CURRENT_BINARY_DIR}/vayu_frustum_cull.o
+      ${CMAKE_CURRENT_BINARY_DIR}/vayu_frustum_cull_sse2.o
+      ${CMAKE_CURRENT_BINARY_DIR}/vayu_frustum_cull_sse4.o
+      ${CMAKE_CURRENT_BINARY_DIR}/vayu_frustum_cull_avx.o
+      ${CMAKE_CURRENT_BINARY_DIR}/vayu_frustum_cull_avx2.o
   )
   add_custom_command(
       OUTPUT  ${FRUSTUM_CULL_ISPC_OUTPUTS}
-              ${CMAKE_CURRENT_SOURCE_DIR}/frustum_cull_ispc.h
+              ${CMAKE_CURRENT_SOURCE_DIR}/vayu_frustum_cull_ispc.h
       COMMAND ${ISPC_EXECUTABLE}
               -O3 --pic --opt=fast-math
-              --target=${ISPC_CULL_TARGETS}
-              -h ${CMAKE_CURRENT_SOURCE_DIR}/frustum_cull_ispc.h
-              -o ${CMAKE_CURRENT_BINARY_DIR}/frustum_cull.o
-              ${CMAKE_CURRENT_SOURCE_DIR}/frustum_cull.ispc
-      DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/frustum_cull.ispc
-      COMMENT "Compiling frustum_cull.ispc (SSE2, SSE4, AVX, AVX2)"
+              --target=${ISPC_TARGETS}
+              -h ${CMAKE_CURRENT_SOURCE_DIR}/vayu_frustum_cull_ispc.h
+              -o ${CMAKE_CURRENT_BINARY_DIR}/vayu_frustum_cull.o
+              ${CMAKE_CURRENT_SOURCE_DIR}/vayu_frustum_cull.ispc
+      DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/vayu_frustum_cull.ispc
+      COMMENT "Compiling vayu_frustum_cull.ispc (SSE2, SSE4, AVX, AVX2)"
   )
   target_compile_definitions(llmath PUBLIC HAVE_FRUSTUM_CULL_ISPC)
+
+  # 2. Skinning ISPC kernel
+  set(SKINNING_ISPC_OUTPUTS
+      ${CMAKE_CURRENT_BINARY_DIR}/vayu_skinning.o
+      ${CMAKE_CURRENT_BINARY_DIR}/vayu_skinning_sse2.o
+      ${CMAKE_CURRENT_BINARY_DIR}/vayu_skinning_sse4.o
+      ${CMAKE_CURRENT_BINARY_DIR}/vayu_skinning_avx.o
+      ${CMAKE_CURRENT_BINARY_DIR}/vayu_skinning_avx2.o
+  )
+  add_custom_command(
+      OUTPUT  ${SKINNING_ISPC_OUTPUTS}
+              ${CMAKE_CURRENT_SOURCE_DIR}/vayu_skinning_ispc.h
+      COMMAND ${ISPC_EXECUTABLE}
+              -O3 --pic --opt=fast-math
+              --target=${ISPC_TARGETS}
+              -h ${CMAKE_CURRENT_SOURCE_DIR}/vayu_skinning_ispc.h
+              -o ${CMAKE_CURRENT_BINARY_DIR}/vayu_skinning.o
+              ${CMAKE_CURRENT_SOURCE_DIR}/vayu_skinning.ispc
+      DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/vayu_skinning.ispc
+      COMMENT "Compiling vayu_skinning.ispc (SSE2, SSE4, AVX, AVX2)"
+  )
+  target_compile_definitions(llmath PUBLIC HAVE_SKINNING_ISPC)
+
 else ()
   set(FRUSTUM_CULL_ISPC_OUTPUTS "")
-  message(STATUS "ISPC not found — frustum_cull.ispc skipped; scalar fallback active")
+  set(SKINNING_ISPC_OUTPUTS "")
+  message(STATUS "ISPC not found — ISPC kernels skipped; scalar fallback active")
 endif ()
 
 target_sources(llmath
@@ -69,6 +95,7 @@ target_sources(llmath
     v4math.cpp
     xform.cpp
     ${FRUSTUM_CULL_ISPC_OUTPUTS}
+    ${SKINNING_ISPC_OUTPUTS}
     )
 
 target_sources(llmath
@@ -126,7 +153,8 @@ target_sources(llmath
 
 if (ISPC_EXECUTABLE)
   target_sources(llmath PUBLIC FILE_SET HEADERS FILES
-      ${CMAKE_CURRENT_SOURCE_DIR}/frustum_cull_ispc.h)
+      ${CMAKE_CURRENT_SOURCE_DIR}/vayu_frustum_cull_ispc.h
+      ${CMAKE_CURRENT_SOURCE_DIR}/vayu_skinning_ispc.h)
 endif ()
 
 target_link_libraries(llmath PUBLIC llcommon ll::mikktspace ll::sse2neon ll::meshoptimizer)

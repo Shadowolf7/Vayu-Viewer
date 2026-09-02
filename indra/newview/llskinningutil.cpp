@@ -33,6 +33,9 @@
 #include "llmeshrepository.h"
 #include "llvolume.h"
 #include "llrigginginfo.h"
+#if defined(HAVE_SKINNING_ISPC)
+#include "vayu_skinning_ispc.h"
+#endif
 
 #define DEBUG_SKINNING  LL_DEBUG
 
@@ -172,6 +175,9 @@ void LLSkinningUtil::initSkinningMatrixPalette(
     }
 
     //NOTE: pointer striders used here as a micro-optimization over vector/array lookups
+#if defined(HAVE_SKINNING_ISPC)
+    ispc::ispc_matMul_aos((const float*)&(skin->mInvBindMatrix[0]), (const float*)world, (float*)mat, count);
+#else
     const LLMatrix4a* invBind = &(skin->mInvBindMatrix[0]);
     const LLMatrix4a* w = world;
     LLMatrix4a* m = mat;
@@ -181,6 +187,7 @@ void LLSkinningUtil::initSkinningMatrixPalette(
     {
         matMulUnsafe(*(invBind++), *(w++), *(m++));
     }
+#endif
 }
 
 void LLSkinningUtil::checkSkinWeights(LLVector4a* weights, U32 num_vertices, const LLMeshSkinInfo* skin)

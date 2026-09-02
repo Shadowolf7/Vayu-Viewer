@@ -364,8 +364,7 @@ public:
 class LLViewerOctreeCull : public OctreeTraveler
 {
 public:
-    LLViewerOctreeCull(LLCamera* camera)
-        : mCamera(camera), mRes(0) { }
+    LLViewerOctreeCull(LLCamera* camera, bool no_far_clip = false, bool check_sphere = false);
 
     virtual void traverse(const OctreeNode* n);
 
@@ -404,6 +403,21 @@ protected:
 protected:
     LLCamera *mCamera;
     S32 mRes;
+
+#if defined(HAVE_FRUSTUM_CULL_ISPC)
+    struct FrustumPlanesSoA
+    {
+        float px[6];
+        float py[6];
+        float pz[6];
+        float pd[6];
+        float cam_pos[3];
+        float sphere_radius_sq;
+        int32_t num_planes;
+    };
+    FrustumPlanesSoA mPlanesSoA;
+    void initPlanesSoA(bool no_far_clip, bool check_sphere = false);
+#endif
 };
 
 //scan the octree, output the info of each node for debug use.

@@ -41,6 +41,9 @@
 #include "llprimitive.h"
 #include "llvolume.h"
 #include "llvolumeoctree.h"
+#if defined(HAVE_SKINNING_ISPC)
+#include "vayu_skinning_ispc.h"
+#endif
 #include "llvolumemgr.h"
 #include "llvolumemessage.h"
 #include "material_codes.h"
@@ -5148,6 +5151,16 @@ void LLRiggedVolume::update(
             #if USE_SEPARATE_JOINT_INDICES_AND_WEIGHTS
                 if (vol_face.mJointIndices) // fast path with preconditioned joint indices
                 {
+#if defined(HAVE_SKINNING_ISPC)
+                    ispc::ispc_skin_vertices(
+                        (const float*)mat,
+                        (const float*)&bind_shape_matrix,
+                        (const float*)vol_face.mPositions,
+                        (const float*)vol_face.mJustWeights,
+                        (const uint8_t*)vol_face.mJointIndices,
+                        (float*)pos,
+                        dst_face.mNumVertices);
+#else
                     LLMatrix4a src[4];
                     U8* joint_indices_cursor = vol_face.mJointIndices;
                     LLVector4a* just_weights = vol_face.mJustWeights;
@@ -5165,6 +5178,7 @@ void LLRiggedVolume::update(
                         final_mat.affineTransform(t, dst);
                         pos[j] = dst;
                     }
+#endif
                 }
                 else
             #endif

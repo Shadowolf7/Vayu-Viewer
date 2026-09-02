@@ -1035,7 +1035,7 @@ void LLSpatialPartition::shift(const LLVector4a &offset)
 class LLOctreeCull : public LLViewerOctreeCull
 {
 public:
-    LLOctreeCull(LLCamera* camera) : LLViewerOctreeCull(camera) {}
+    LLOctreeCull(LLCamera* camera, bool no_far_clip = true, bool check_sphere = true) : LLViewerOctreeCull(camera, no_far_clip, check_sphere) {}
 
     virtual bool earlyFail(LLViewerOctreeGroup* base_group)
     {
@@ -1090,7 +1090,7 @@ class LLOctreeCullNoFarClip : public LLOctreeCull
 {
 public:
     LLOctreeCullNoFarClip(LLCamera* camera)
-        : LLOctreeCull(camera) { }
+        : LLOctreeCull(camera, true, false) { }
 
     virtual S32 frustumCheck(const LLViewerOctreeGroup* group)
     {
@@ -1108,7 +1108,7 @@ class LLOctreeCullShadow : public LLOctreeCull
 {
 public:
     LLOctreeCullShadow(LLCamera* camera)
-        : LLOctreeCull(camera) { }
+        : LLOctreeCull(camera, false, false) { }
 
     virtual S32 frustumCheck(const LLViewerOctreeGroup* group)
     {
@@ -1139,33 +1139,6 @@ public:
         }
 
         return false;
-    }
-
-    virtual void traverse(const OctreeNode* n)
-    {
-        LLSpatialGroup* group = (LLSpatialGroup*) n->getListener(0);
-
-        if (earlyFail(group))
-        {
-            return;
-        }
-
-        if ((mRes && group->hasState(LLSpatialGroup::SKIP_FRUSTUM_CHECK)) ||
-            mRes == 2)
-        {   //don't need to do frustum check
-            OctreeTraveler::traverse(n);
-        }
-        else
-        {
-            mRes = frustumCheck(group);
-
-            if (mRes)
-            { //at least partially in, run on down
-                OctreeTraveler::traverse(n);
-            }
-
-            mRes = 0;
-        }
     }
 
     virtual void processGroup(LLViewerOctreeGroup* base_group)

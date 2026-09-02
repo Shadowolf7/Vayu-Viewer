@@ -120,6 +120,11 @@ LLWindowSDL::LLWindowSDL(LLWindowCallbacks* callbacks,
         : LLWindow(callbacks, fullscreen, flags),
         mGamma(1.0f), mFlashing(false)
 {
+#if LL_LINUX
+    SDL_SetHint(SDL_HINT_VIDEO_WAYLAND_ALLOW_LIBDECOR, "1");
+    SDL_SetHint(SDL_HINT_VIDEO_WAYLAND_PREFER_LIBDECOR, "1");
+#endif
+
     if (!SDL_GL_LoadLibrary(nullptr))
     {
         // SDL3 returns bool; on failure GL functions won't be available.
@@ -365,6 +370,7 @@ bool LLWindowSDL::createContext(int x, int y, int width, int height, int bits, b
     SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_OPENGL_BOOLEAN, true);
     SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_FULLSCREEN_BOOLEAN, mFullscreen);
     SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_HIGH_PIXEL_DENSITY_BOOLEAN, gHiDPISupport);
+    SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_BORDERLESS_BOOLEAN, false);
 
     mWindow = SDL_CreateWindowWithProperties(props);
     if (mWindow == nullptr)
@@ -375,6 +381,11 @@ bool LLWindowSDL::createContext(int x, int y, int width, int height, int bits, b
         return false;
     }
     SDL_DestroyProperties(props); // Free properties once window is created
+
+    if (!mFullscreen)
+    {
+        SDL_SetWindowBordered(mWindow, true);
+    }
 
     // Create the context. A core profile requires an explicit >= 3.2 version
     // (set above); the exact 4.6 request fails on drivers that cap lower, so
