@@ -25,6 +25,7 @@ Alchemy represents a major modernization of the viewer codebase. Vayu inherits A
 - **Massively reduced VRAM usage via Block Texture Compression (BC7/BC1/BC4/BC5)** — Textures are compressed off the main thread into native GPU formats as they stream in, freeing up gigabytes of video memory and eliminating texture thrashing in crowded events. Compressed textures are cached locally to disk in a modernized, lockless CoolVL-style cache hierarchy (`0/`–`f/` partitions with zero-contention parallel reads, atomic size tracking, rate-limited access timestamps, and dedicated background thread purging). Includes configurable quality presets (Ultrafast/Fast/Basic/Slow) and an in-memory safety ceiling (`VayuBCTextureCacheMaxPendingSize`) to protect system RAM. ([#76](https://github.com/Shadowolf7/Vayu-Viewer/pull/76) / [236aefa71a](https://github.com/Shadowolf7/Vayu-Viewer/commit/236aefa71a), [#82](https://github.com/Shadowolf7/Vayu-Viewer/pull/82) / [2340f4c914](https://github.com/Shadowolf7/Vayu-Viewer/commit/2340f4c914))
 - **Higher, smoother framerates via AVX2 / FMA Vector Acceleration** — 256-bit AVX2 SIMD culls off-screen objects against all 6 frustum planes simultaneously, while hardware FMA3 accelerates matrix transformations and vector math (`_mm_fnmadd_ps` cross products) on modern CPUs, with full cross-architecture parity on ARM64/NEON. ([0631f98847](https://github.com/Shadowolf7/Vayu-Viewer/commit/0631f98847), [3cb66b9848](https://github.com/Shadowolf7/Vayu-Viewer/commit/3cb66b9848))
 - **Correct Transparency & Attachment Sorting** — Fixes visual sorting defects where alpha attachments or clothing would incorrectly render behind transparent world objects.
+- **High-Performance Memory Allocator (`rpmalloc`)** — Employs Rampant Pixels' cache-friendly `rpmalloc` as the process-wide memory allocator on Linux and Windows. Dedicated thread-local allocation caches virtually eliminate global heap lock contention across background texture decoding, mesh streaming, and coroutine execution, minimizing micro-stutters and reducing long-session memory fragmentation.
 - **Two-Tier Performance Diagnostics** — Built-in low-overhead frame-time diagnostics (`VayuPerfFrameLog`) and Tracy GPU profiling for identifying lag spikes. ([#80](https://github.com/Shadowolf7/Vayu-Viewer/pull/80) / [524bb4e2ad](https://github.com/Shadowolf7/Vayu-Viewer/commit/524bb4e2ad))
 
 ### Camera & Vehicle Movement
@@ -68,7 +69,6 @@ Alchemy represents a major modernization of the viewer codebase. Vayu inherits A
 
 - **One-Click GPU & Performance Launcher** — Automatic discrete GPU switching and GameMode integration (`switcherooctl`/`gamemoderun`) built directly into the launcher script.
 - **Native Wayland Window Decorations** — Dedicated SDL3 overlay port with full client-side window decoration support (cairo / `libdecor`) on modern Wayland compositors lacking server-side decorations (GNOME/Mutter, Weston). ([d8fb15c644](https://github.com/Shadowolf7/Vayu-Viewer/commit/d8fb15c644))
-- **Robust FMOD Audio Packaging** — Out-of-the-box FMOD Studio audio build and runtime packaging.
 
 ---
 
