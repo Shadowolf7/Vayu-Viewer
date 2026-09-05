@@ -60,7 +60,7 @@
    follows="left|top"
    height="23"
    increment="64"
-   initial_value="4096"
+   initial_value="8192"
    label="BC cache size (512 - 32768MB)"
    label_width="190"
    layout="topleft"

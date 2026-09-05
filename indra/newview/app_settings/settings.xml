@@ -1603,7 +1603,7 @@
       <key>Type</key>
       <string>U32</string>
       <key>Value</key>
-      <integer>6144</integer>
+      <integer>4096</integer>
     </map>
     <key>VayuBCTextureCacheMaxSize</key>
     <map>
@@ -1614,7 +1614,7 @@
       <key>Type</key>
       <string>U32</string>
       <key>Value</key>
-      <integer>4096</integer>
+      <integer>8192</integer>
     </map>
     <key>VayuBCTextureCacheMaxPendingSize</key>
     <map>
@@ -7771,13 +7771,13 @@
     <key>RenderCompressTexturesPreset</key>
     <map>
       <key>Comment</key>
-      <string>0 - ultrafast, 1 - fast, 2 - basic (default), 3 - slow. Trades block texture compression encode latency for VRAM-image quality.</string>
+      <string>0 - ultrafast, 1 - fast, 2 - basic, 3 - slow (default). Trades block texture compression encode latency for VRAM-image quality.</string>
       <key>Persist</key>
       <integer>1</integer>
       <key>Type</key>
       <string>S32</string>
       <key>Value</key>
-      <real>2</real>
+      <integer>3</integer>
     </map>
     <key>RenderAnisotropic</key>
     <map>
