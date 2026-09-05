@@ -114,3 +114,5 @@ indra/newview/app_settings/keywords_lua_default.xml
 *.csv
 .antigravity
 
+# Local agent configuration, rules, and skills
+.agents/
