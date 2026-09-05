@@ -940,10 +940,8 @@ class DarwinManifest(ViewerManifest):
                         self.path( "*.dylib" )
                         self.path( "plugins.dat" )
 
-        # We always code-sign the app bundle when not building in GHA
-        RUNNER_TEMP = os.getenv('RUNNER_TEMP')
-        if not RUNNER_TEMP:
-            self.macos_code_sign()
+        # We always code-sign the app bundle
+        self.macos_code_sign()
 
         # This will be overwritten in package_finish during the actual package step
         self.package_file = "copied_deps"
@@ -980,6 +978,22 @@ class DarwinManifest(ViewerManifest):
                 tarball.add(self.get_dst_prefix(),
                             arcname=self.app_name() + ".app")
             self.set_github_output_path('viewer_app', tarpath)
+
+            # Generate DMG for distribution
+            dmg_path = os.path.join(RUNNER_TEMP, finalname)
+            print(f'Creating DMG {dmg_path} from {self.get_dst_prefix()}')
+            self.run_command(['hdiutil', 'create',
+                              '-volname', self.app_name(),
+                              '-srcfolder', self.get_dst_prefix(),
+                              '-ov', '-format', 'UDZO', dmg_path])
+            self.set_github_output_path('viewer_dmg', dmg_path)
+        else:
+            dmg_path = self.build_path_of(finalname)
+            print(f'Creating DMG {dmg_path} from {self.get_dst_prefix()}')
+            self.run_command(['hdiutil', 'create',
+                              '-volname', self.app_name(),
+                              '-srcfolder', self.get_dst_prefix(),
+                              '-ov', '-format', 'UDZO', dmg_path])
 
         # Generate Velopack update packages if enabled
         # This creates the nupkg and RELEASES files needed for auto-updates

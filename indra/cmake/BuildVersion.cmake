@@ -16,10 +16,6 @@ if (NOT DEFINED VIEWER_SHORT_VERSION) # will be true in indra/, false in indra/n
            set(VIEWER_VERSION_REVISION $ENV{revision})
            message(STATUS "Revision (from environment): ${VIEWER_VERSION_REVISION}")
 
-        elseif (DEFINED ENV{GITHUB_RUN_ID})
-           set(VIEWER_VERSION_REVISION $ENV{GITHUB_RUN_ID})
-           message(STATUS "Revision (from github environment): ${VIEWER_VERSION_REVISION}")
-
         else ()
             find_package(Git)
             if (Git_FOUND)

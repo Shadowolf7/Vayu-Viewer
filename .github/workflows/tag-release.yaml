@@ -1,11 +1,6 @@
 name: Tag a Build
 
 on:
-  # schedule event triggers always run on the default branch
-  # https://docs.github.com/en/actions/using-workflows/events-that-trigger-workflows#schedule
-  schedule:
-    # run "nightly" builds on default branch every fri
-    - cron: "21 2 * * 6"     # 2:21am UTC sat == 7:21pm PDT fri -- see https://crontab.guru/#21_01_*_*_2,4,6
   workflow_dispatch:
     inputs:
       channel:
@@ -45,7 +40,7 @@ jobs:
           # https://stackoverflow.com/a/71372524
           # https://docs.github.com/en/actions/using-workflows/triggering-a-workflow#triggering-a-workflow-from-a-workflow
           # this token will need to be renewed anually in January
-          github-token: ${{ secrets.LL_TAG_RELEASE_TOKEN }}
+          github-token: ${{ secrets.TAG_RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
           script: |
             const override = `${{ inputs.tag_override }}`.trim();
             const baseTag = override || `${{ env.VIEWER_CHANNEL }}#${{ env.TAG_ID }}`;

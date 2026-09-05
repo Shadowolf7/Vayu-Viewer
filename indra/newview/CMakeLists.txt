@@ -824,7 +824,7 @@ set(viewer_SOURCE_FILES
     llurllineeditorctrl.cpp
     llurlwhitelist.cpp
     llversioninfo.cpp
-#    llvvmquery.cpp
+    llvvmquery.cpp
     llviewchildren.cpp
     llviewerassetstats.cpp
     llviewerassetstorage.cpp
@@ -1605,7 +1605,7 @@ set(viewer_HEADER_FILES
     llurllineeditorctrl.h
     llurlwhitelist.h
     llversioninfo.h
-#    llvvmquery.h
+    llvvmquery.h
     llviewchildren.h
     llviewerassetstats.h
     llviewerassetstorage.h

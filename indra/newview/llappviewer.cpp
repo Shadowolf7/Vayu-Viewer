@@ -104,7 +104,7 @@
 #include "llurlmatch.h"
 #include "lltextutil.h"
 #include "lllogininstance.h"
-//#include "llvvmquery.h"
+#include "llvvmquery.h"
 
 #if LL_VELOPACK
 #include "llvelopack.h"
@@ -1213,8 +1213,8 @@ bool LLAppViewer::init()
 
     gGLActive = false;
 
-#if 0
-    // Launch VVM update check
+#if LL_VELOPACK
+    // Launch update check
     if (!gSavedSettings.getBOOL("CmdLineSkipUpdater") && !gNonInteractive)
     {
         initVVMUpdateCheck();
