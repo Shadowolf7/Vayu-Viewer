@@ -928,13 +928,13 @@ void LLPreviewNotecard::detectAndApplyRulerWidth()
     static const size_t RULER_MIN_LENGTH = 35;
     static const size_t MAX_HEADER_LINES = 15;
 
-    const LLWString& wtext = mEditor->getWText();
-    if (wtext.empty())
+    std::string_view text = mEditor->getText();
+    if (text.empty())
     {
         return;
     }
 
-    LLWString best_ruler;
+    std::string best_ruler;
     size_t line_start = 0;
     size_t line_count = 0;
 
@@ -959,34 +959,33 @@ void LLPreviewNotecard::detectAndApplyRulerWidth()
         }
     };
 
-    while (line_start < wtext.size() && line_count < MAX_HEADER_LINES)
+    while (line_start < text.size() && line_count < MAX_HEADER_LINES)
     {
-        size_t line_end = wtext.find((llwchar)'\n', line_start);
-        if (line_end == LLWString::npos)
+        size_t line_end = text.find('\n', line_start);
+        if (line_end == std::string_view::npos)
         {
-            line_end = wtext.size();
+            line_end = text.size();
         }
 
         // Trim trailing \r, spaces, tabs
         size_t eff_end = line_end;
-        while (eff_end > line_start && (wtext[eff_end - 1] == (llwchar)'\r' || LLStringOps::isSpace((char)wtext[eff_end - 1])))
+        while (eff_end > line_start && (text[eff_end - 1] == '\r' || LLStringOps::isSpace(text[eff_end - 1])))
         {
             --eff_end;
         }
 
         // Trim leading spaces/tabs for length analysis
         size_t eff_start = line_start;
-        while (eff_start < eff_end && LLStringOps::isSpace((char)wtext[eff_start]))
+        while (eff_start < eff_end && LLStringOps::isSpace(text[eff_start]))
         {
             ++eff_start;
         }
 
-        size_t len = eff_end - eff_start;
-        if (len >= RULER_MIN_LENGTH)
+        std::string_view line_sub = text.substr(eff_start, eff_end - eff_start);
+        size_t cp_count = utf8str_codepoint_count(line_sub);
+        if (cp_count >= RULER_MIN_LENGTH)
         {
-            LLWString line_sub = wtext.substr(eff_start, len);
-            std::string utf8_line = wstring_to_utf8str(line_sub);
-            std::string upper_line = utf8_line;
+            std::string upper_line(line_sub);
             LLStringUtil::toUpper(upper_line);
 
             // Check 1: Explicit ruler keywords embedded in the line
@@ -1000,12 +999,15 @@ void LLPreviewNotecard::detectAndApplyRulerWidth()
 
             // Count ruler glyphs vs total characters
             size_t glyph_count = 0;
-            for (llwchar wc : line_sub)
+            size_t pos = 0;
+            while (pos < line_sub.size())
             {
-                if (is_ruler_glyph(wc))
+                LLCodepointAt at = utf8str_decode_at(line_sub, pos);
+                if (is_ruler_glyph(at.cp))
                 {
                     ++glyph_count;
                 }
+                pos = at.next;
             }
 
             // A line qualifies if it has an explicit ruler keyword bordered by glyphs,
@@ -1015,14 +1017,14 @@ void LLPreviewNotecard::detectAndApplyRulerWidth()
             {
                 is_ruler = true;
             }
-            else if (glyph_count * 10 >= len * 8) // >= 80% ruler glyphs
+            else if (glyph_count * 10 >= cp_count * 8) // >= 80% ruler glyphs
             {
                 is_ruler = true;
             }
 
-            if (is_ruler && len > best_ruler.size())
+            if (is_ruler && cp_count > utf8str_codepoint_count(best_ruler))
             {
-                best_ruler = line_sub;
+                best_ruler = std::string(line_sub);
             }
         }
 
