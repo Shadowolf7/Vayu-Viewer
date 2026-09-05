@@ -3246,7 +3246,7 @@ bool LLAppViewer::initConfiguration()
     {
         gWindowTitle += std::string(" ") + gArgs;
     }
-    LLStringUtil::truncate(gWindowTitle, 255);
+    gWindowTitle = utf8str_truncate(gWindowTitle, 255);
 
     //
     // Check for another instance of the app running
@@ -6716,7 +6716,11 @@ void LLAppViewer::setMasterSystemAudioMute(bool mute)
 //virtual
 bool LLAppViewer::getMasterSystemAudioMute()
 {
-    return gSavedSettings.getBOOL("MuteAudio");
+    // Cached, because the status bar asks this on every frame it draws to keep
+    // its volume button in step, and looking a setting up by its name hashes
+    // the name and walks the map. The control keeps itself current.
+    static LLCachedControl<bool> mute_audio(gSavedSettings, "MuteAudio", false);
+    return mute_audio;
 }
 
 //----------------------------------------------------------------------------
