@@ -14,6 +14,8 @@ Alchemy represents a major modernization of the viewer codebase. Vayu inherits A
 - **Chat & Communication QoL** — Unified chat gesture and slash-command completion with dedicated auto-complete picker floaters, slash-style chat commands (quick teleport home, draw distance adjustments, coordinates, inline math), styled/colorized nearby chat, typing and status notifications, and integrated radar alerts.
 - **Radar & Minimap Enhancements** — Clear visual highlighting for parcels for sale or with collision restrictions, live nearby-agent counts, adjustable radar update rates, and proximity chat range rings.
 - **Mouselook & Controls** — Friend/foe identification overlays in mouselook, customizable zoom timing, realistic mouselook inertia, and dedicated toggles for click-to-sit and mouse-steering.
+- **Faster Text & Interface Responsiveness (Optimization Project 1)** — Modernized text engine and font layout caching that eliminate micro-stutters when rendering chat, nametags, or complex international text, coupled with streamlined UI layouts so floaters and panels open faster and use less memory.
+- **Smooth In-World Video & Web Screens (Dullahan)** — Hardware-accelerated media-on-a-prim rendering directly on the GPU, eliminating the CPU hitches that used to drop your framerate around active video screens, with background media clamped to 30 FPS so in-world TVs can't starve your gameplay performance.
 - **Interface Conveniences** — Auto-hiding toolbars, custom font overrides, and comprehensive remembered UI layout states.
 
 ---
@@ -68,6 +70,7 @@ Alchemy represents a major modernization of the viewer codebase. Vayu inherits A
 ### Linux Platform Enhancements
 
 - **One-Click GPU & Performance Launcher** — Automatic discrete GPU switching and GameMode integration (`switcherooctl`/`gamemoderun`) built directly into the launcher script.
+- **Hardware-Accelerated In-World Media on Linux** — Direct GPU-to-GPU video and web streaming (`dma-buf` zero-copy) that plays media-on-a-prim smoothly without CPU translation or memory copies. ([d05f3c275e](https://github.com/Shadowolf7/Vayu-Viewer/commit/d05f3c275e))
 - **Native Wayland Window Decorations** — Dedicated SDL3 overlay port with full client-side window decoration support (cairo / `libdecor`) on modern Wayland compositors lacking server-side decorations (GNOME/Mutter, Weston). ([d8fb15c644](https://github.com/Shadowolf7/Vayu-Viewer/commit/d8fb15c644))
 
 ---
