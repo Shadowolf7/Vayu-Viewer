@@ -5,6 +5,15 @@ if(DEFINED ENV{PYTHON})
     set(Python3_ROOT_DIR "$ENV{PYTHON}")
 endif()
 
+# If no explicit Python or active virtualenv, auto-detect repo root .venv
+if(NOT DEFINED Python3_ROOT_DIR AND NOT DEFINED ENV{VIRTUAL_ENV})
+    if(EXISTS "${CMAKE_SOURCE_DIR}/../.venv")
+        set(Python3_ROOT_DIR "${CMAKE_SOURCE_DIR}/../.venv")
+    elseif(EXISTS "${CMAKE_SOURCE_DIR}/.venv")
+        set(Python3_ROOT_DIR "${CMAKE_SOURCE_DIR}/.venv")
+    endif()
+endif()
+
 # On Windows, prefer registry entries to avoid Cygwin/MSYS Python
 # The registry is searched first by default, which finds native Windows Python
 # installations rather than Cygwin/MSYS Python

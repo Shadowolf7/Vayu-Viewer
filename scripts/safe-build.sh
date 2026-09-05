@@ -23,6 +23,14 @@
 
 set -euo pipefail
 
+# Auto-activate repo virtualenv if not already active
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if [ -z "${VIRTUAL_ENV:-}" ] && [ -f "$REPO_ROOT/.venv/bin/activate" ]; then
+    # shellcheck disable=SC1091
+    source "$REPO_ROOT/.venv/bin/activate"
+    echo "safe-build: auto-activated virtual environment ($VIRTUAL_ENV)" >&2
+fi
+
 if ! command -v systemd-run >/dev/null 2>&1 || \
    [ "$(stat -fc %T /sys/fs/cgroup 2>/dev/null)" != "cgroup2fs" ]; then
     echo "safe-build: systemd-run or cgroup v2 not available here, running unwrapped" >&2
