@@ -8,11 +8,13 @@ layout: default
 
 Vayu is a third-party client for [Second Life](https://secondlife.com), forked from [Alchemy Viewer](https://www.alchemyviewer.org), which is itself forked from the official [Linden Lab viewer](https://github.com/secondlife/viewer). See [FEATURES.md](https://github.com/Shadowolf7/Vayu-Viewer/blob/develop/FEATURES.md) for what's already shipped.
 
-Please pardon the ugliness of this page, and the weird file names for the downloads. I've not used GitHub to build with before, and am learning as I go. In my excitement I got others excited also, so I've been pushing hard to have builds ready for consumption.
+Please pardon the ugliness of this page, if this project takes off I may bother with a proper website.
 
-My upstream, Alchemy, is moving at an incredible pace of development. All but the most superficial of work and features will be on hold due to the churn. I've already had two features made irrelevant.
+My upstream, Alchemy, is moving at an incredible pace of development, so many potential features are on hold pending those changes. Vayu should be regarded as being in a state of perpetual Beta.
 
-In essence, think of Vayu as Alchemy with a different shirt and a set of car keys.
+Vayu is primarily focused on QOL features for drivers and other vehicle enthusiasts. I've merged the best sim-crossing protection features from Firestorm and CoolVL courtesy of the amazing work by Animats and Henri Beauchamp respectively. I've also applied my own fixes towards the same. 
+
+Perhaps my most notable unique feature is Block Compression. Textures are decoded from jpeg2000 and cached in their respective BC format according to type. This enables a radical savings on vRAM use, and so long as the textures are still in-cache prevents them from needing to be decoded from jpeg2000 again. Instead BC is already immediately consumable by the GPU, cutting down on processing needed for decoding and enabling nearly instantaneous loading of textures. By default this feature is on, and set to "basic" profile for a good balance of quality and performance. This feature will work differently on Mac OS and may be slightly slower and lower quality. This feature necessitated implementing a second texture cache. I recommend keeping the BC texture cache as large as possible, while you can keep the regular texture cache very small. Both caches have inherited the advanced and performant cache architecture of CoolVL viewer.
 
 ## Download
 
