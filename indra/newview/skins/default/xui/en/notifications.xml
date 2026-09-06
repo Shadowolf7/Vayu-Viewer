@@ -4609,6 +4609,22 @@ Proceed?
   </notification>
 
   <notification
+   icon="alert.tga"
+   name="VayuUpdateAvailable"
+   type="alert">
+A new version of Vayu Viewer ([VERSION]) is available!
+Release notes: [URL]
+
+Would you like to open the download page now?
+    <tag>confirm</tag>
+    <usetemplate
+     canceltext="Later"
+     name="okcancelbuttons"
+     notext="Later"
+     yestext="Download"/>
+  </notification>
+
+  <notification
    icon="alertmodal.tga"
    name="LoginFailedUnknown"
    type="alertmodal">

@@ -1213,7 +1213,6 @@ bool LLAppViewer::init()
 
     gGLActive = false;
 
-#if LL_VELOPACK
     // Launch update check
     if (!gSavedSettings.getBOOL("CmdLineSkipUpdater") && !gNonInteractive)
     {
@@ -1223,7 +1222,6 @@ bool LLAppViewer::init()
     {
         LL_WARNS("InitInfo") << "Skipping updater check." << LL_ENDL;
     }
-#endif
 
     {
         // Iterate over --leap command-line options. But this is a bit tricky: if
