@@ -16,10 +16,11 @@ In essence, think of Vayu as Alchemy with a different shirt and a set of car key
 
 ## Download
 
-- **Windows** — [latest release](https://github.com/Shadowolf7/Vayu-Viewer/releases/download/Vayu_Alpha_4/Vayu_Develop_26_3_0_31458787956_x86_64_Setup.exe): `_Setup.exe` to install.
-~**Windows Portable** — [latest release](https://github.com/Shadowolf7/Vayu-Viewer/releases/download/Vayu_Alpha_4/Vayu_Develop_26_3_0_31458787956_x86_64_Portable.zip): `_Portable.zip` to run without installing.
-- **Linux** — [latest release](https://github.com/Shadowolf7/Vayu-Viewer/releases/download/Vayu_Alpha_4/Vayu_Develop_26_3_0_31458787956_x86_64.tar.xz): `.tar.xz`
-- **macOS** — not yet available; builds aren't signed/notarized for distribution
+- **Windows** — [latest release](https://github.com/Shadowolf7/Vayu-Viewer/releases/download/Vayu_Beta_1/Vayu_Beta_26_4_0_1_x86_64_Setup.exe): `_Setup.exe` to install.
+- **Windows Portable** — [latest release](https://github.com/Shadowolf7/Vayu-Viewer/releases/download/Vayu_Beta_1/Vayu_Beta_26_4_0_1_x86_64_Portable.zip): `_Portable.zip` to run without installing.
+- **macOS (Apple Silicon)** — [latest release](https://github.com/Shadowolf7/Vayu-Viewer/releases/download/Vayu_Beta_1/Vayu_Beta_26_4_0_1_arm64.dmg): `_arm64.dmg` for M-series Macs.
+- **macOS (Intel)** — [latest release](https://github.com/Shadowolf7/Vayu-Viewer/releases/download/Vayu_Beta_1/Vayu_Beta_26_4_0_1_x86_64.dmg): `_x86_64.dmg` for Intel Macs.
+- **Linux** — [latest release](https://github.com/Shadowolf7/Vayu-Viewer/releases/download/Vayu_Beta_1/Vayu_Beta_26_4_0_1_x86_64.tar.xz): `.tar.xz` application bundle.
 
 See the [releases page](https://github.com/Shadowolf7/Vayu-Viewer/releases) for all versions.
 
