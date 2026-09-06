@@ -2157,7 +2157,8 @@ bool LLViewerFetchedTexture::updateFetch()
         // bypass texturefetch directly by pulling from LLTextureCache
         S32 fetch_request_response = -1;
         S32 worker_discard = -1;
-        const bool allow_compression = mGLTexturep->getAllowCompression()
+        const bool allow_compression = LLImageGL::sCompressTextures
+            && mGLTexturep->getAllowCompression()
             && LLImageGL::categoryAllowsCompression(mBoostLevel);
         fetch_request_response = LLAppViewer::getTextureFetch()->createRequest(mFTType, mUrl, getID(), getTargetHost(), decode_priority,
             w, h, c, desired_discard, needsAux(), mCanUseHTTP, allow_compression);
