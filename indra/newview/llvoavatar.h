@@ -950,7 +950,7 @@ public:
     typedef fast_hmap<U64, MatrixPaletteCache> matrix_palette_cache_t;
     matrix_palette_cache_t mMatrixPaletteCache;
 
-    U32             mNextFrameForExtentUpdate = 0;
+    S32             mNextFrameForExtentUpdate = 0;
     F32             mNextVoiceVisualizerUpdate = 0.f;
 
 protected:

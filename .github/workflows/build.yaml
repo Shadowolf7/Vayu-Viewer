@@ -248,7 +248,9 @@ jobs:
             libthai-dev libtool libudev-dev libunwind-dev liburing-dev libvlc-dev libwayland-dev \
             libx11-dev libxcursor-dev libxext-dev libxfixes-dev libxft-dev libxi-dev libxinerama-dev \
             libxkbcommon-dev libxrandr-dev libxss-dev libxtst-dev linux-libc-dev mono-complete \
-            ispc nasm ninja-build pkgconf tar tex-common texinfo unzip zip
+            ca-certificates-mono ispc nasm ninja-build pkgconf tar tex-common texinfo unzip zip
+
+          sudo cert-sync /etc/ssl/certs/ca-certificates.crt
 
           sudo locale-gen en_US.UTF-8
           sudo locale-gen en_GB.UTF-8
@@ -381,6 +383,9 @@ jobs:
 
           cmake -S indra --preset $cmake_preset_name \
             -DVCPKG_TARGET_TRIPLET="$vcpkg_triplet" \
+            -DVCPKG_CLEAN_BUILDTREES_AFTER_BUILD=ON \
+            -DVCPKG_CLEAN_PACKAGES_AFTER_BUILD=ON \
+            -DVCPKG_CLEAN_DOWNLOADS_AFTER_BUILD=ON \
             -DBUILD_VIEWER:BOOL="$BUILD_VIEWER" \
             -DBUILD_APPEARANCE_UTIL:BOOL="$BUILD_APPEARANCE_UTIL" \
             -DBUILD_TESTING:BOOL="$BUILD_TESTS" \
@@ -395,6 +400,11 @@ jobs:
             -DGRID:STRING="\"$VIEWER_GRID\"" \
             -DTEMPLATE_VERIFIER_OPTIONS:STRING="$template_verifier_options" $template_verifier_master_url \
             "${SIGNING[@]}"
+
+          if [[ "$RUNNER_OS" == "Linux" ]]; then
+            rm -rf "${VCPKG_ROOT}/buildtrees" "${VCPKG_ROOT}/downloads"
+            df -h
+          fi
 
       - name: Build
         id: build
@@ -421,7 +431,7 @@ jobs:
             cmake --build --preset $CMAKE_PRESET_NAME-$BUILD_CONFIG --target BUILD_AND_RUN_TESTS
           elif $BUILD_VIEWER
           then
-            cmake --build --preset $CMAKE_PRESET_NAME-$BUILD_CONFIG || fatal "failed building $BUILD_CONFIG viewer"
+            cmake --build --preset $CMAKE_PRESET_NAME-$BUILD_CONFIG || { echo "failed building $BUILD_CONFIG viewer" >&2; exit 1; }
           else
             echo "::notice::Skipping build due to both viewer and tests being disabled"
           fi

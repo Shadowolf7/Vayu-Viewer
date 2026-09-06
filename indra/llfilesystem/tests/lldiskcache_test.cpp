@@ -7,6 +7,14 @@
 #include "lltut.h"
 #include "../lldiskcache.h"
 #include "llfile.h"
+#include "../lldir.h"
+
+// Stubs for LLDir symbols referenced by lldiskcache.cpp fallback init
+LLDir* gDirUtilp = nullptr;
+std::string LLDir::getExpandedFilename(ELLPath /*location*/, std::string_view /*filename*/) const
+{
+    return {};
+}
 
 #include <chrono>
 #include <filesystem>
