@@ -268,7 +268,7 @@ jobs:
       - name: macOS Homebrew Dependency Install
         if: runner.os == 'macOS'
         run: |
-          brew install autoconf autoconf-archive automake ispc libtool mono nasm unzip zip
+          brew install autoconf autoconf-archive automake libtool mono nasm unzip zip
 
       - name: Checkout code
         uses: actions/checkout@v7

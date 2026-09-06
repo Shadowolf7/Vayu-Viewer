@@ -132,7 +132,7 @@ protected:
     S32         mMode;
     S32         mPosition;
     S32         mBytesRead;
-    S32         mTotalBytesWritten;
+    S64         mTotalBytesWritten;
     bool        mExists;
     bool        mValid;
 };

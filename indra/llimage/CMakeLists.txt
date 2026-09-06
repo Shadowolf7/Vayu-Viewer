@@ -3,8 +3,8 @@
 add_library (llimage STATIC)
 
 find_program(ISPC_EXECUTABLE ispc DOC "Intel Implicit SPMD Program Compiler")
-# Only enable ISPC on x86 targets; ISPC targets below are x86-only
-if (ISPC_EXECUTABLE AND NOT BUILD_TARGET_IS_ARM64 AND NOT CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64" AND NOT CMAKE_OSX_ARCHITECTURES MATCHES "arm64")
+# Only enable ISPC on x86 targets outside Darwin; portable bc7enc is used on Darwin and ARM64
+if (ISPC_EXECUTABLE AND NOT DARWIN AND NOT BUILD_TARGET_IS_ARM64)
   set(ISPC_TARGETS "sse2-i32x4,sse4-i32x4,avx1-i32x8,avx2-i32x8")
   set(BC7E_ISPC_OUTPUTS
       ${CMAKE_CURRENT_BINARY_DIR}/bc7e/bc7e.o

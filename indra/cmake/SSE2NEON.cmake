@@ -2,7 +2,7 @@
 include_guard()
 add_library(ll::sse2neon INTERFACE IMPORTED)
 
-if(BUILD_TARGET_IS_ARM64 OR (DARWIN AND (CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64" OR CMAKE_OSX_ARCHITECTURES MATCHES "arm64")))
+if(BUILD_TARGET_IS_ARM64)
     find_path(SSE2NEON_INCLUDE_DIRS "sse2neon/sse2neon.h" REQUIRED)
     target_include_directories(ll::sse2neon SYSTEM INTERFACE ${SSE2NEON_INCLUDE_DIRS})
     target_compile_definitions(ll::sse2neon INTERFACE SSE2NEON=1)

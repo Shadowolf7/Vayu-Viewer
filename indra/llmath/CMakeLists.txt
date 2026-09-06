@@ -7,7 +7,7 @@ add_library(llmath STATIC)
 # Follows the same pattern as llimage/CMakeLists.txt (bc7e.ispc).
 # ---------------------------------------------------------------------------
 find_program(ISPC_EXECUTABLE ispc DOC "Intel Implicit SPMD Program Compiler")
-if (ISPC_EXECUTABLE)
+if (ISPC_EXECUTABLE AND NOT DARWIN AND NOT BUILD_TARGET_IS_ARM64)
   set(ISPC_CULL_TARGETS "sse2-i32x4,sse4-i32x4,avx1-i32x8,avx2-i32x8")
   set(FRUSTUM_CULL_ISPC_OUTPUTS
       ${CMAKE_CURRENT_BINARY_DIR}/frustum_cull.o
@@ -29,9 +29,10 @@ if (ISPC_EXECUTABLE)
       COMMENT "Compiling frustum_cull.ispc (SSE2, SSE4, AVX, AVX2)"
   )
   target_compile_definitions(llmath PUBLIC HAVE_FRUSTUM_CULL_ISPC)
+  set(ENABLE_FRUSTUM_CULL_ISPC ON)
 else ()
   set(FRUSTUM_CULL_ISPC_OUTPUTS "")
-  message(STATUS "ISPC not found — frustum_cull.ispc skipped; scalar fallback active")
+  message(STATUS "ISPC not found or disabled for platform/arch — frustum_cull.ispc skipped; scalar fallback active")
 endif ()
 
 target_sources(llmath
@@ -124,7 +125,7 @@ target_sources(llmath
     xform.h
     )
 
-if (ISPC_EXECUTABLE)
+if (ENABLE_FRUSTUM_CULL_ISPC)
   target_sources(llmath PUBLIC FILE_SET HEADERS FILES
       ${CMAKE_CURRENT_SOURCE_DIR}/frustum_cull_ispc.h)
 endif ()
