@@ -196,7 +196,7 @@ public:
 
     inline void rotate(const LLVector4a& v, LLVector4a& res) const
     {
-#if (defined(__AVX2__) || defined(__FMA__) || defined(__ARM_NEON) || defined(__aarch64__))
+#if (defined(__AVX2__) || defined(__FMA__)) && !defined(SSE2NEON) && !defined(__ARM_NEON) && !defined(__aarch64__)
         LLVector4a x = _mm_shuffle_ps(v, v, _MM_SHUFFLE(0, 0, 0, 0));
         LLVector4a y = _mm_shuffle_ps(v, v, _MM_SHUFFLE(1, 1, 1, 1));
         LLVector4a z = _mm_shuffle_ps(v, v, _MM_SHUFFLE(2, 2, 2, 2));
@@ -204,6 +204,14 @@ public:
         res = _mm_mul_ps(x, mMatrix[0]);
         res = _mm_fmadd_ps(y, mMatrix[1], res);
         res = _mm_fmadd_ps(z, mMatrix[2], res);
+#elif defined(__ARM_NEON) || defined(__aarch64__)
+        LLVector4a x = _mm_shuffle_ps(v, v, _MM_SHUFFLE(0, 0, 0, 0));
+        LLVector4a y = _mm_shuffle_ps(v, v, _MM_SHUFFLE(1, 1, 1, 1));
+        LLVector4a z = _mm_shuffle_ps(v, v, _MM_SHUFFLE(2, 2, 2, 2));
+
+        res = _mm_mul_ps(x, mMatrix[0]);
+        res = vmlaq_f32(res, y, mMatrix[1]);
+        res = vmlaq_f32(res, z, mMatrix[2]);
 #else
         LLVector4a y,z;
 
@@ -222,7 +230,7 @@ public:
 
     inline void affineTransformSSE(const LLVector4a& v, LLVector4a& res) const
     {
-#if (defined(__AVX2__) || defined(__FMA__) || defined(__ARM_NEON) || defined(__aarch64__))
+#if (defined(__AVX2__) || defined(__FMA__)) && !defined(SSE2NEON) && !defined(__ARM_NEON) && !defined(__aarch64__)
         LLVector4a x = _mm_shuffle_ps(v, v, _MM_SHUFFLE(0, 0, 0, 0));
         LLVector4a y = _mm_shuffle_ps(v, v, _MM_SHUFFLE(1, 1, 1, 1));
         LLVector4a z = _mm_shuffle_ps(v, v, _MM_SHUFFLE(2, 2, 2, 2));
@@ -230,6 +238,14 @@ public:
         res = _mm_fmadd_ps(x, mMatrix[0], mMatrix[3]);
         res = _mm_fmadd_ps(y, mMatrix[1], res);
         res = _mm_fmadd_ps(z, mMatrix[2], res);
+#elif defined(__ARM_NEON) || defined(__aarch64__)
+        LLVector4a x = _mm_shuffle_ps(v, v, _MM_SHUFFLE(0, 0, 0, 0));
+        LLVector4a y = _mm_shuffle_ps(v, v, _MM_SHUFFLE(1, 1, 1, 1));
+        LLVector4a z = _mm_shuffle_ps(v, v, _MM_SHUFFLE(2, 2, 2, 2));
+
+        res = vmlaq_f32(mMatrix[3], x, mMatrix[0]);
+        res = vmlaq_f32(res, y, mMatrix[1]);
+        res = vmlaq_f32(res, z, mMatrix[2]);
 #else
         LLVector4a x,y,z;
 
@@ -269,11 +285,16 @@ static_assert(std::is_trivial<LLMatrix4a>::value, "LLMatrix4a must be a trivial 
 inline LLVector4a rowMul(const LLVector4a &row, const LLMatrix4a &mat)
 {
     LLVector4a result;
-#if (defined(__AVX2__) || defined(__FMA__) || defined(__ARM_NEON) || defined(__aarch64__))
+#if (defined(__AVX2__) || defined(__FMA__)) && !defined(SSE2NEON) && !defined(__ARM_NEON) && !defined(__aarch64__)
     result = _mm_mul_ps(_mm_shuffle_ps(row, row, _MM_SHUFFLE(0, 0, 0, 0)), mat.mMatrix[0]);
     result = _mm_fmadd_ps(_mm_shuffle_ps(row, row, _MM_SHUFFLE(1, 1, 1, 1)), mat.mMatrix[1], result);
     result = _mm_fmadd_ps(_mm_shuffle_ps(row, row, _MM_SHUFFLE(2, 2, 2, 2)), mat.mMatrix[2], result);
     result = _mm_fmadd_ps(_mm_shuffle_ps(row, row, _MM_SHUFFLE(3, 3, 3, 3)), mat.mMatrix[3], result);
+#elif defined(__ARM_NEON) || defined(__aarch64__)
+    result = _mm_mul_ps(_mm_shuffle_ps(row, row, _MM_SHUFFLE(0, 0, 0, 0)), mat.mMatrix[0]);
+    result = vmlaq_f32(result, _mm_shuffle_ps(row, row, _MM_SHUFFLE(1, 1, 1, 1)), mat.mMatrix[1]);
+    result = vmlaq_f32(result, _mm_shuffle_ps(row, row, _MM_SHUFFLE(2, 2, 2, 2)), mat.mMatrix[2]);
+    result = vmlaq_f32(result, _mm_shuffle_ps(row, row, _MM_SHUFFLE(3, 3, 3, 3)), mat.mMatrix[3]);
 #else
     result = _mm_mul_ps(_mm_shuffle_ps(row, row, _MM_SHUFFLE(0, 0, 0, 0)), mat.mMatrix[0]);
     result = _mm_add_ps(result, _mm_mul_ps(_mm_shuffle_ps(row, row, _MM_SHUFFLE(1, 1, 1, 1)), mat.mMatrix[1]));
