@@ -45,7 +45,13 @@ namespace tut
             out.close();
 
             std::error_code ec;
+#if defined(_MSC_VER)
+            auto s_time = std::chrono::system_clock::from_time_t(write_time);
+            auto u_time = std::chrono::utc_clock::from_sys(s_time);
+            auto ftime = std::chrono::file_clock::from_utc(u_time);
+#else
             auto ftime = std::chrono::file_clock::from_sys(std::chrono::system_clock::from_time_t(write_time));
+#endif
             std::filesystem::last_write_time(path, ftime, ec);
         }
     };

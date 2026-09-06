@@ -20,6 +20,7 @@ if (ISPC_EXECUTABLE AND NOT DARWIN AND NOT BUILD_TARGET_IS_ARM64)
       DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/bc7e/bc7e.ispc
       COMMENT "Compiling bc7e.ispc with ISPC multi-target (SSE2, SSE4, AVX, AVX2)"
   )
+  add_compile_definitions(HAVE_BC7E_ISPC)
   target_compile_definitions(llimage PUBLIC HAVE_BC7E_ISPC)
   set(BC7E_SOURCES ${BC7E_ISPC_OUTPUTS})
 else ()
