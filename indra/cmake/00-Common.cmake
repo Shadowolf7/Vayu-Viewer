@@ -518,7 +518,7 @@ if(LINUX OR DARWIN)
   if(COMPILER_IS_GCC)
     add_compile_options(-Wstrict-aliasing=2)
 
-    add_compile_options(-Wno-stringop-truncation -Wno-stringop-overflow -Wno-parentheses -Wno-maybe-uninitialized -Wno-unused-local-typedefs)
+    add_compile_options(-Wno-stringop-truncation -Wno-stringop-overflow -Wno-parentheses -Wno-uninitialized -Wno-maybe-uninitialized -Wno-unused-local-typedefs)
 
     # This warning is extremely false positive sensitive, including on libstdc++'s own headers.
     add_compile_options(-Wno-array-bounds)

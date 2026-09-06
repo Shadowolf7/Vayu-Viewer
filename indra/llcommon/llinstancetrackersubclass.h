@@ -70,7 +70,8 @@ public:
     weak_t getWeak()
     {
         // call base-class getWeak(), try to lock, downcast to SUBCLASS
-        return std::dynamic_pointer_cast<SUBCLASS>(T::getWeak().lock());
+        auto sp = std::dynamic_pointer_cast<SUBCLASS>(T::getWeak().lock());
+        return sp ? weak_t(sp) : weak_t();
     }
 
     template <typename KEY>
