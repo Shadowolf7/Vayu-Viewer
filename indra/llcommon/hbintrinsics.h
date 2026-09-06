@@ -38,10 +38,10 @@
 // The __AVX*__ defines can be used "as is" (for now, and until sse2neon.h
 // implements support for AVX intrinsics).
 
-#if SSE2NEON
+#if defined(SSE2NEON) || LL_ARM64 || defined(__arm64__) || defined(__aarch64__)
 # define SSE2NEON_ALLOC_DEFINED
-# include "sse2neon.h"
-// sse2non offers most SSE* equivalent intrinsics, but for now lacks AVX ones.
+# include "sse2neon/sse2neon.h"
+// sse2neon offers most SSE* equivalent intrinsics, but for now lacks AVX ones.
 # define LL_SSE3 1
 # define LL_SSSE3 1
 # define LL_SSE41 1

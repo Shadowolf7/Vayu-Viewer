@@ -305,6 +305,19 @@ public:
         return LLFile::fopen(file_path, accessmode, lmode);
     }
     static LLFILE* fopen(const std::filesystem::path& file_path, const fopen_flags_t* accessmode, int lmode = 0);
+#if LL_WINDOWS
+    inline static LLFILE* fopen(const std::filesystem::path& file_path, const char* accessmode, int lmode = 0)
+    {
+        std::wstring wmode(accessmode, accessmode + strlen(accessmode));
+        return LLFile::fopen(file_path, wmode.c_str(), lmode);
+    }
+    inline static LLFILE* fopen(const std::string& filename, const char* accessmode, int lmode = 0)
+    {
+        std::filesystem::path file_path = fsyspath(filename);
+        std::wstring wmode(accessmode, accessmode + strlen(accessmode));
+        return LLFile::fopen(file_path, wmode.c_str(), lmode);
+    }
+#endif
     ///< 'accessmode' follows the rules of the Posix fopen() mode parameter
     ///  "r" open the file for reading only and positions the stream at the beginning
     ///  "r+" open the file for reading and writing and positions the stream at the beginning

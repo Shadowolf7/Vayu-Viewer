@@ -3,7 +3,8 @@
 add_library (llimage STATIC)
 
 find_program(ISPC_EXECUTABLE ispc DOC "Intel Implicit SPMD Program Compiler")
-if (ISPC_EXECUTABLE)
+# Only enable ISPC on x86 targets; ISPC targets below are x86-only
+if (ISPC_EXECUTABLE AND NOT BUILD_TARGET_IS_ARM64 AND NOT CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64" AND NOT CMAKE_OSX_ARCHITECTURES MATCHES "arm64")
   set(ISPC_TARGETS "sse2-i32x4,sse4-i32x4,avx1-i32x8,avx2-i32x8")
   set(BC7E_ISPC_OUTPUTS
       ${CMAKE_CURRENT_BINARY_DIR}/bc7e/bc7e.o
@@ -19,6 +20,10 @@ if (ISPC_EXECUTABLE)
       DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/bc7e/bc7e.ispc
       COMMENT "Compiling bc7e.ispc with ISPC multi-target (SSE2, SSE4, AVX, AVX2)"
   )
+  target_compile_definitions(llimage PUBLIC HAVE_BC7E_ISPC)
+  set(BC7E_SOURCES ${BC7E_ISPC_OUTPUTS})
+else ()
+  set(BC7E_SOURCES bc7e/bc7enc.cpp)
 endif ()
 
 target_sources(llimage
@@ -39,11 +44,17 @@ target_sources(llimage
     vayuimageblockcompressor.cpp
     vayubctexturecache.cpp
     bc7e/rgbcx.cpp
-    ${BC7E_ISPC_OUTPUTS}
+    ${BC7E_SOURCES}
     )
 
 set_source_files_properties(
     bc7e/rgbcx.cpp
+    PROPERTIES
+    COMPILE_FLAGS "-Wno-unused-function -Wno-unused-variable"
+    )
+
+set_source_files_properties(
+    bc7e/bc7enc.cpp
     PROPERTIES
     COMPILE_FLAGS "-Wno-unused-function -Wno-unused-variable"
     )
@@ -69,6 +80,7 @@ target_sources(llimage
     vayuimageblockcompressor.h
     vayubctexturecache.h
     bc7e/rgbcx.h
+    bc7e/bc7enc.h
     bc7e/bc7e_ispc.h
     )
 
@@ -110,13 +122,13 @@ if (BUILD_TESTING)
   set_source_files_properties(
     vayuimageblockcompressor.cpp
     PROPERTIES
-    LL_TEST_ADDITIONAL_SOURCE_FILES "bc7e/rgbcx.cpp;${BC7E_ISPC_OUTPUTS}"
+    LL_TEST_ADDITIONAL_SOURCE_FILES "bc7e/rgbcx.cpp;${BC7E_SOURCES}"
     LL_TEST_ADDITIONAL_LIBRARIES "ll::libyuv"
     )
   set_source_files_properties(
     llimageworker.cpp
     PROPERTIES
-    LL_TEST_ADDITIONAL_SOURCE_FILES "vayuimageblockcompressor.cpp;vayubctexturecache.cpp;bc7e/rgbcx.cpp;${BC7E_ISPC_OUTPUTS}"
+    LL_TEST_ADDITIONAL_SOURCE_FILES "vayuimageblockcompressor.cpp;vayubctexturecache.cpp;bc7e/rgbcx.cpp;${BC7E_SOURCES}"
     LL_TEST_ADDITIONAL_LIBRARIES "llfilesystem;ll::libyuv"
     )
   LL_ADD_PROJECT_UNIT_TESTS(llimage "${llimage_TEST_SOURCE_FILES}")

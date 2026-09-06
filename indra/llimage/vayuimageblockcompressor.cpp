@@ -6,7 +6,11 @@
 #include "linden_common.h"
 #include "vayuimageblockcompressor.h"
 #include "bc7e/rgbcx.h"
+#if defined(HAVE_BC7E_ISPC)
 #include "bc7e/bc7e_ispc.h"
+#else
+#include "bc7e/bc7enc.h"
+#endif
 #include "llerror.h"
 
 #include <algorithm>
@@ -70,6 +74,7 @@ static uint32_t bc1_level_for_preset(EVayuBlockCompressionPreset preset)
     }
 }
 
+#if defined(HAVE_BC7E_ISPC)
 // Applies the preset's mode/partition/uber-level tradeoff to an ISPC BC7 params block
 static void apply_bc7_preset(ispc::bc7e_compress_block_params& params, EVayuBlockCompressionPreset preset, bool perceptual = false)
 {
@@ -90,6 +95,31 @@ static void apply_bc7_preset(ispc::bc7e_compress_block_params& params, EVayuBloc
         break;
     }
 }
+#else
+static void apply_bc7_preset(bc7enc_compress_block_params& params, EVayuBlockCompressionPreset preset)
+{
+    switch (preset)
+    {
+    case EVayuBlockCompressionPreset::Ultrafast:
+        params.m_mode_mask = (1u << 6); // mode 6 only: single partition, handles RGB + alpha
+        params.m_max_partitions = 0;
+        params.m_uber_level = 0;
+        break;
+    case EVayuBlockCompressionPreset::Fast:
+        params.m_max_partitions = 16;
+        params.m_uber_level = 0;
+        break;
+    case EVayuBlockCompressionPreset::Slow:
+        params.m_uber_level = BC7ENC_MAX_UBER_LEVEL;
+        break;
+    case EVayuBlockCompressionPreset::Basic:
+    default:
+        params.m_max_partitions = BC7ENC_MAX_PARTITIONS;
+        params.m_uber_level = 0;
+        break;
+    }
+}
+#endif
 
 static void init_tables()
 {
@@ -121,7 +151,11 @@ static void init_compression_tables()
 {
     std::call_once(g_init_once, []() {
         rgbcx::init(rgbcx::bc1_approx_mode::cBC1Ideal);
+#if defined(HAVE_BC7E_ISPC)
         ispc::bc7e_compress_block_init();
+#else
+        bc7enc_compress_block_init();
+#endif
         init_tables();
     });
 }
@@ -506,11 +540,20 @@ bool VayuImageBlockCompressor::encode(const U8* src_data, U32 width, U32 height,
     const EVayuBlockCompressionPreset preset = getEffectivePreset();
     result.mPreset = preset;
 
+#if defined(HAVE_BC7E_ISPC)
     ispc::bc7e_compress_block_params bc7e_params;
     if (resolved == EVayuBlockCompressionFormat::BC7)
     {
         apply_bc7_preset(bc7e_params, preset, true);
     }
+#else
+    bc7enc_compress_block_params bc7_params;
+    if (resolved == EVayuBlockCompressionFormat::BC7)
+    {
+        bc7enc_compress_block_params_init(&bc7_params);
+        apply_bc7_preset(bc7_params, preset);
+    }
+#endif
 
     // 4. Encode mips into reverse order (smallest mip at offset 0, largest mip at end)
     // Calculate mip offsets in reverse order:
@@ -537,10 +580,12 @@ bool VayuImageBlockCompressor::encode(const U8* src_data, U32 width, U32 height,
 
         uint8_t* out = result.mBuffer.data() + buffer_offsets[i];
 
+#if defined(HAVE_BC7E_ISPC)
         constexpr size_t kBC7BatchSize = 64;
         alignas(32) uint32_t bc7_batch_rgba[kBC7BatchSize * 16];
         size_t bc7_batch_count = 0;
         uint8_t* bc7_batch_out = out;
+#endif
 
         for (uint32_t by = 0; by < bh; by++)
         {
@@ -707,6 +752,7 @@ bool VayuImageBlockCompressor::encode(const U8* src_data, U32 width, U32 height,
                     break;
                 case EVayuBlockCompressionFormat::BC7:
                 default:
+#if defined(HAVE_BC7E_ISPC)
                     memcpy(bc7_batch_rgba + bc7_batch_count * 16, block_rgba, 64);
                     bc7_batch_count++;
                     if (bc7_batch_count == kBC7BatchSize)
@@ -718,11 +764,16 @@ bool VayuImageBlockCompressor::encode(const U8* src_data, U32 width, U32 height,
                         bc7_batch_out += bc7_batch_count * 16;
                         bc7_batch_count = 0;
                     }
+#else
+                    bc7enc_compress_block(out, block_rgba, &bc7_params);
+                    out += 16;
+#endif
                     break;
                 }
             }
         }
 
+#if defined(HAVE_BC7E_ISPC)
         if (resolved == EVayuBlockCompressionFormat::BC7 && bc7_batch_count > 0)
         {
             ispc::bc7e_compress_blocks((uint32_t)bc7_batch_count,
@@ -732,6 +783,7 @@ bool VayuImageBlockCompressor::encode(const U8* src_data, U32 width, U32 height,
             bc7_batch_out += bc7_batch_count * 16;
             bc7_batch_count = 0;
         }
+#endif
     }
 
     return true;

@@ -312,7 +312,7 @@ void LLDiskCache::purge()
                     return x.first > y.first;
               });
 
-    U32 count = file_info.size();
+    const size_t count = file_info.size();
 
     LL_INFOS("DiskCache") << count
                           << " files found in cache. Checking the total size and possibly purging old files..."
@@ -321,7 +321,7 @@ void LLDiskCache::purge()
     U64 files_size_total = 0;
     U64 removed_bytes = 0;
     U32 purged_files = 0;
-    for (U32 i = 0; i < count; ++i)
+    for (size_t i = 0; i < count; ++i)
     {
         if (LLApp::isQuitting())
         {
@@ -431,7 +431,7 @@ std::string LLDiskCache::getFilePath(const LLUUID& id, const char* extra_info)
 }
 
 //static
-void LLDiskCache::addBytesWritten(S32 bytes)
+void LLDiskCache::addBytesWritten(S64 bytes)
 {
     if (bytes >= 0)
     {

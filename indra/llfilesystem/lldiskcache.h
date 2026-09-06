@@ -107,7 +107,7 @@ public:
 
     // Used to update the disk cache about file writes ('bytes' may be negative
     // when removing or truncating a file).
-    static void addBytesWritten(S32 bytes);
+    static void addBytesWritten(S64 bytes);
 
     // Formatted cache info for UI / About Box
     static const std::string getCacheInfo();
