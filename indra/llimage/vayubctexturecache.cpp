@@ -270,7 +270,7 @@ void VayuBCTextureCache::purge()
                   return x.first > y.first;
               });
 
-    U32 count = file_info.size();
+    size_t count = file_info.size();
     LL_INFOS("Texture") << "VayuBCTextureCache: " << count
                         << " files found in cache. Checking total size and purging old files..."
                         << LL_ENDL;
@@ -278,7 +278,7 @@ void VayuBCTextureCache::purge()
     U64 files_size_total = 0;
     U64 removed_bytes = 0;
     U32 purged_files = 0;
-    for (U32 i = 0; i < count; ++i)
+    for (size_t i = 0; i < count; ++i)
     {
         if (LLApp::isQuitting())
         {

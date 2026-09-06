@@ -249,8 +249,10 @@ inline void LLVector4a::setCross3(const LLVector4a& a, const LLVector4a& b)
     const LLQuad vector3 = _mm_shuffle_ps( a.mQ, a.mQ, _MM_SHUFFLE( 3, 1, 0, 2 ));
     // vector4 = { b[W], b[X], b[Z], b[Y] }
     const LLQuad vector4 = _mm_shuffle_ps( b.mQ, b.mQ, _MM_SHUFFLE( 3, 0, 2, 1 ));
-#if (defined(__AVX2__) || defined(__FMA__) || defined(__ARM_NEON) || defined(__aarch64__))
+#if (defined(__AVX2__) || defined(__FMA__)) && !defined(SSE2NEON) && !defined(__ARM_NEON) && !defined(__aarch64__)
     mQ = _mm_fnmadd_ps( vector3, vector4, mQ );
+#elif defined(__ARM_NEON) || defined(__aarch64__)
+    mQ = vmlsq_f32( mQ, vector3, vector4 );
 #else
     // mQ = { 0, a[X]*b[Y] - a[Y]*b[X], a[Z]*b[X] - a[X]*b[Z], a[Y]*b[Z] - a[Z]*b[Y] }
     mQ = _mm_sub_ps( mQ, _mm_mul_ps( vector3, vector4 ));
@@ -364,8 +366,10 @@ inline void LLVector4a::normalize3()
     // Our first approx is w = rsqrt. We need out = a * w[i+1] (this is the input vector 'a', not the 'a' from the above formula
     // which is actually lenSqrd). So out = a * [0.5*rsqrt * (3 - lenSqrd*rsqrt*rsqrt)]
     const LLQuad AtimesRsqrt = _mm_mul_ps( lenSqrd.mQ, rsqrt );
-#if (defined(__AVX2__) || defined(__FMA__) || defined(__ARM_NEON) || defined(__aarch64__))
+#if (defined(__AVX2__) || defined(__FMA__)) && !defined(SSE2NEON) && !defined(__ARM_NEON) && !defined(__aarch64__)
     const LLQuad threeMinusAtimesRsqrtTimesRsqrt = _mm_fnmadd_ps(AtimesRsqrt, rsqrt, _mm_set_ps1(3.f));
+#elif defined(__ARM_NEON) || defined(__aarch64__)
+    const LLQuad threeMinusAtimesRsqrtTimesRsqrt = vmlsq_f32(vdupq_n_f32(3.f), AtimesRsqrt, rsqrt);
 #else
     const LLQuad AtimesRsqrtTimesRsqrt = _mm_mul_ps( AtimesRsqrt, rsqrt );
     const LLQuad threeMinusAtimesRsqrtTimesRsqrt = _mm_sub_ps(_mm_set_ps1(3.f), AtimesRsqrtTimesRsqrt);
@@ -390,8 +394,10 @@ inline void LLVector4a::normalize4()
     // Our first approx is w = rsqrt. We need out = a * w[i+1] (this is the input vector 'a', not the 'a' from the above formula
     // which is actually lenSqrd). So out = a * [0.5*rsqrt * (3 - lenSqrd*rsqrt*rsqrt)]
     const LLQuad AtimesRsqrt = _mm_mul_ps( lenSqrd.mQ, rsqrt );
-#if (defined(__AVX2__) || defined(__FMA__) || defined(__ARM_NEON) || defined(__aarch64__))
+#if (defined(__AVX2__) || defined(__FMA__)) && !defined(SSE2NEON) && !defined(__ARM_NEON) && !defined(__aarch64__)
     const LLQuad threeMinusAtimesRsqrtTimesRsqrt = _mm_fnmadd_ps(AtimesRsqrt, rsqrt, _mm_set_ps1(3.f));
+#elif defined(__ARM_NEON) || defined(__aarch64__)
+    const LLQuad threeMinusAtimesRsqrtTimesRsqrt = vmlsq_f32(vdupq_n_f32(3.f), AtimesRsqrt, rsqrt);
 #else
     const LLQuad AtimesRsqrtTimesRsqrt = _mm_mul_ps( AtimesRsqrt, rsqrt );
     const LLQuad threeMinusAtimesRsqrtTimesRsqrt = _mm_sub_ps(_mm_set_ps1(3.f), AtimesRsqrtTimesRsqrt );
@@ -416,8 +422,10 @@ inline LLSimdScalar LLVector4a::normalize3withLength()
     // Our first approx is w = rsqrt. We need out = a * w[i+1] (this is the input vector 'a', not the 'a' from the above formula
     // which is actually lenSqrd). So out = a * [0.5*rsqrt * (3 - lenSqrd*rsqrt*rsqrt)]
     const LLQuad AtimesRsqrt = _mm_mul_ps( lenSqrd.mQ, rsqrt );
-#if (defined(__AVX2__) || defined(__FMA__) || defined(__ARM_NEON) || defined(__aarch64__))
+#if (defined(__AVX2__) || defined(__FMA__)) && !defined(SSE2NEON) && !defined(__ARM_NEON) && !defined(__aarch64__)
     const LLQuad threeMinusAtimesRsqrtTimesRsqrt = _mm_fnmadd_ps(AtimesRsqrt, rsqrt, _mm_set_ps1(3.f));
+#elif defined(__ARM_NEON) || defined(__aarch64__)
+    const LLQuad threeMinusAtimesRsqrtTimesRsqrt = vmlsq_f32(vdupq_n_f32(3.f), AtimesRsqrt, rsqrt);
 #else
     const LLQuad AtimesRsqrtTimesRsqrt = _mm_mul_ps( AtimesRsqrt, rsqrt );
     const LLQuad threeMinusAtimesRsqrtTimesRsqrt = _mm_sub_ps(_mm_set_ps1(3.f), AtimesRsqrtTimesRsqrt );

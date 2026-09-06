@@ -24,6 +24,10 @@ if (USE_RPMALLOC)
   # patch) collide with llcommon's at link time in any Tracy-enabled build.
   # See RPMALLOC_NO_CXX_OPERATOR_OVERRIDE's comment in that vendored file.
   target_compile_definitions(rpmalloc PRIVATE RPMALLOC_NO_CXX_OPERATOR_OVERRIDE=1)
+  set_target_properties(rpmalloc PROPERTIES
+    C_STANDARD 11
+    C_STANDARD_REQUIRED ON
+  )
 
   add_library(ll::rpmalloc ALIAS rpmalloc)
 endif ()
