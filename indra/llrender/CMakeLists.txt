@@ -167,14 +167,18 @@ if (BUILD_TESTING)
       "LLFONT_TEST_DATA_DIR=\"${font_test_data_dir}\""
       "LLFONT_TEST_FONTS_XML=\"${font_test_fonts_xml}\"")
 
-  LL_ADD_INTEGRATION_TEST(llfontgl "" "${gl_test_libs}" "${test_project}")
-  if (TARGET INTEGRATION_TEST_llfontgl)
-    target_compile_definitions(INTEGRATION_TEST_llfontgl PRIVATE ${gl_test_compile_defs})
-  endif()
+  # Headless Windows CI VMs do not have an OpenGL 4.1 hardware/software driver (ICD)
+  # installed, causing SDL GL context creation to fail with 0xC0000005.
+  if (NOT WINDOWS)
+    LL_ADD_INTEGRATION_TEST(llfontgl "" "${gl_test_libs}" "${test_project}")
+    if (TARGET INTEGRATION_TEST_llfontgl)
+      target_compile_definitions(INTEGRATION_TEST_llfontgl PRIVATE ${gl_test_compile_defs})
+    endif()
 
-  LL_ADD_INTEGRATION_TEST(llfonttextcache "" "${gl_test_libs}" "${test_project}")
-  if (TARGET INTEGRATION_TEST_llfonttextcache)
-    target_compile_definitions(INTEGRATION_TEST_llfonttextcache PRIVATE ${gl_test_compile_defs})
+    LL_ADD_INTEGRATION_TEST(llfonttextcache "" "${gl_test_libs}" "${test_project}")
+    if (TARGET INTEGRATION_TEST_llfonttextcache)
+      target_compile_definitions(INTEGRATION_TEST_llfonttextcache PRIVATE ${gl_test_compile_defs})
+    endif()
   endif()
   if (TARGET INTEGRATION_TEST_alfontcolrv1)
     # Hand the source-tree font directory to the test as a string literal.
