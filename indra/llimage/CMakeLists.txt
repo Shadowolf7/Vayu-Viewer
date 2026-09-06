@@ -47,17 +47,31 @@ target_sources(llimage
     ${BC7E_SOURCES}
     )
 
-set_source_files_properties(
-    bc7e/rgbcx.cpp
-    PROPERTIES
-    COMPILE_FLAGS "-Wno-unused-function -Wno-unused-variable"
-    )
+if (NOT MSVC)
+  set_source_files_properties(
+      bc7e/rgbcx.cpp
+      PROPERTIES
+      COMPILE_FLAGS "-Wno-unused-function -Wno-unused-variable"
+      )
 
-set_source_files_properties(
-    bc7e/bc7enc.cpp
-    PROPERTIES
-    COMPILE_FLAGS "-Wno-unused-function -Wno-unused-variable"
-    )
+  set_source_files_properties(
+      bc7e/bc7enc.cpp
+      PROPERTIES
+      COMPILE_FLAGS "-Wno-unused-function -Wno-unused-variable"
+      )
+else ()
+  set_source_files_properties(
+      bc7e/rgbcx.cpp
+      PROPERTIES
+      COMPILE_FLAGS "/wd4505 /wd4101"
+      )
+
+  set_source_files_properties(
+      bc7e/bc7enc.cpp
+      PROPERTIES
+      COMPILE_FLAGS "/wd4505 /wd4101"
+      )
+endif ()
 
 target_sources(llimage
     PUBLIC
