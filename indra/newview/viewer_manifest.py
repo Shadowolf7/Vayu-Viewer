@@ -805,9 +805,11 @@ class DarwinManifest(ViewerManifest):
             # Remember where we parked this car.
             with self.prefix(src=relpkgdir, dst="Frameworks"):
                 # WebRTC libraries
-                with self.prefix(src=os.path.join(self.args['build'], os.pardir,
-                                          'llwebrtc', self.args['configuration'])):
-                    self.path('libllwebrtc.dylib')
+                webrtc_dylib_dir = os.path.join(self.args['build'], os.pardir,
+                                                'llwebrtc', self.args['configuration'])
+                if os.path.exists(os.path.join(webrtc_dylib_dir, 'libllwebrtc.dylib')):
+                    with self.prefix(src=webrtc_dylib_dir):
+                        self.path('libllwebrtc.dylib')
 
                 # BugSplat framework — required at runtime when LL_BUGSPLAT
                 # is enabled. The viewer binary's INSTALL_RPATH

@@ -28,6 +28,9 @@ if (USE_RPMALLOC)
     C_STANDARD 11
     C_STANDARD_REQUIRED ON
   )
+  if (MSVC)
+    target_compile_options(rpmalloc PRIVATE /experimental:c11atomics)
+  endif ()
 
   add_library(ll::rpmalloc ALIAS rpmalloc)
 endif ()
