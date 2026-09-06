@@ -30,6 +30,12 @@
 #ifndef GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT1_EXT
 #define GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT1_EXT 0x8C4D
 #endif
+#ifndef GL_COMPRESSED_RGBA_S3TC_DXT5_EXT
+#define GL_COMPRESSED_RGBA_S3TC_DXT5_EXT  0x83F3
+#endif
+#ifndef GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT
+#define GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT 0x8C4F
+#endif
 
 // RGTC formats (BC4/BC5)
 #ifndef GL_COMPRESSED_RED_RGTC1
@@ -371,6 +377,15 @@ bool VayuImageBlockCompressor::encode(const U8* src_data, U32 width, U32 height,
     // 1. Resolve format
     EVayuBlockCompressionFormat resolved = format;
 
+#if LL_DARWIN
+    // macOS OpenGL 4.1 Core Profile does not support BC7 (GL_ARB_texture_compression_bptc).
+    // Demote any requested BC7 to BC3 (DXT5) so it loads successfully on Apple drivers.
+    if (resolved == EVayuBlockCompressionFormat::BC7)
+    {
+        resolved = EVayuBlockCompressionFormat::BC3;
+    }
+#endif
+
     if (resolved == EVayuBlockCompressionFormat::Auto)
     {
         if (components == 1)
@@ -389,7 +404,7 @@ bool VayuImageBlockCompressor::encode(const U8* src_data, U32 width, U32 height,
         {
             // Scan alpha channel across the entire image to distinguish:
             // 1. Fully opaque (all pixels have a == 255) -> BC1 (saves 50% VRAM)
-            // 2. Genuine cutout / transparency / transparent layers -> BC7 (preserves exact alpha)
+            // 2. Genuine cutout / transparency / transparent layers -> BC3 on macOS, BC7 elsewhere
             const size_t total_px = (size_t)width * height;
             uint8_t min_a = 255;
             size_t vec_px = 0;
@@ -460,13 +475,17 @@ bool VayuImageBlockCompressor::encode(const U8* src_data, U32 width, U32 height,
             }
             else
             {
-                // Transparency present: MUST USE BC7
+                // Transparency present: BC3 on macOS (no BPTC support), BC7 elsewhere
+#if LL_DARWIN
+                resolved = EVayuBlockCompressionFormat::BC3;
+#else
                 resolved = EVayuBlockCompressionFormat::BC7;
+#endif
             }
         }
     }
 
-    const bool is_srgb = (resolved == EVayuBlockCompressionFormat::BC1 || resolved == EVayuBlockCompressionFormat::BC7);
+    const bool is_srgb = (resolved == EVayuBlockCompressionFormat::BC1 || resolved == EVayuBlockCompressionFormat::BC3 || resolved == EVayuBlockCompressionFormat::BC7);
     const uint32_t block_bytes = (resolved == EVayuBlockCompressionFormat::BC1 || resolved == EVayuBlockCompressionFormat::BC4) ? 8 : 16;
 
     // 2. Generate uncompressed mip pyramid
@@ -521,6 +540,10 @@ bool VayuImageBlockCompressor::encode(const U8* src_data, U32 width, U32 height,
     case EVayuBlockCompressionFormat::BC1:
         result.mGLInternalFormat = GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT1_EXT;
         result.mGLPrimaryFormat = GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT1_EXT;
+        break;
+    case EVayuBlockCompressionFormat::BC3:
+        result.mGLInternalFormat = GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT;
+        result.mGLPrimaryFormat = GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT;
         break;
     case EVayuBlockCompressionFormat::BC4:
         result.mGLInternalFormat = GL_COMPRESSED_RED_RGTC1;
@@ -741,6 +764,10 @@ bool VayuImageBlockCompressor::encode(const U8* src_data, U32 width, U32 height,
                 case EVayuBlockCompressionFormat::BC1:
                     rgbcx::encode_bc1(bc1_level_for_preset(preset), out, block_rgba, false, false);
                     out += 8;
+                    break;
+                case EVayuBlockCompressionFormat::BC3:
+                    rgbcx::encode_bc3(bc1_level_for_preset(preset), out, block_rgba);
+                    out += 16;
                     break;
                 case EVayuBlockCompressionFormat::BC4:
                     rgbcx::encode_bc4(out, block_rgba, 4);

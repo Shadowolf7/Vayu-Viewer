@@ -24,6 +24,12 @@ namespace tut
     typedef block_compressor_group::object block_compressor_object;
     block_compressor_group block_compressor_testgroup("VayuImageBlockCompressor");
 
+#if LL_DARWIN
+    constexpr EVayuBlockCompressionFormat kExpectedTranslucentFormat = EVayuBlockCompressionFormat::BC3;
+#else
+    constexpr EVayuBlockCompressionFormat kExpectedTranslucentFormat = EVayuBlockCompressionFormat::BC7;
+#endif
+
     // Test 1: Eligibility checks
     template<> template<>
     void block_compressor_object::test<1>()
@@ -59,7 +65,7 @@ namespace tut
         ensure("Largest mip offset is valid", result.getLargestMipOffset() < result.mBuffer.size());
     }
 
-    // Test 3: Auto selection for fully transparent RGBA (all 0s) -> BC7
+    // Test 3: Auto selection for fully transparent RGBA (all 0s) -> BC7 (or BC3 on macOS)
     template<> template<>
     void block_compressor_object::test<3>()
     {
@@ -76,10 +82,10 @@ namespace tut
         VayuBlockCompressionResult result;
         bool ok = VayuImageBlockCompressor::encode(rgba.data(), width, height, 4, result, EVayuBlockCompressionFormat::Auto);
         ensure("Encoding fully transparent RGBA succeeded", ok);
-        ensure("Fully transparent RGBA resolves to BC7", result.mFormat == EVayuBlockCompressionFormat::BC7);
+        ensure("Fully transparent RGBA resolves to translucent format", result.mFormat == kExpectedTranslucentFormat);
     }
 
-    // Test 4: Auto selection for genuine cutout/translucent RGBA -> BC7
+    // Test 4: Auto selection for genuine cutout/translucent RGBA -> BC7 (or BC3 on macOS)
     template<> template<>
     void block_compressor_object::test<4>()
     {
@@ -96,7 +102,7 @@ namespace tut
         VayuBlockCompressionResult result;
         bool ok = VayuImageBlockCompressor::encode(rgba.data(), width, height, 4, result, EVayuBlockCompressionFormat::Auto);
         ensure("Encoding translucent RGBA succeeded", ok);
-        ensure("Translucent RGBA resolves to BC7", result.mFormat == EVayuBlockCompressionFormat::BC7);
+        ensure("Translucent RGBA resolves to translucent format", result.mFormat == kExpectedTranslucentFormat);
     }
 
     // Test 5: Normal map compression (2-channel -> BC5)
@@ -134,7 +140,7 @@ namespace tut
         ensure("1-channel mask resolves to BC4", result.mFormat == EVayuBlockCompressionFormat::BC4);
     }
 
-    // Test 7: Binary 1-bit alpha cutout (0 and 255) -> must resolve to BC7, not BC1
+    // Test 7: Binary 1-bit alpha cutout (0 and 255) -> must resolve to BC7 (or BC3 on macOS), not BC1
     template<> template<>
     void block_compressor_object::test<7>()
     {
@@ -152,7 +158,7 @@ namespace tut
         VayuBlockCompressionResult result;
         bool ok = VayuImageBlockCompressor::encode(rgba.data(), width, height, 4, result, EVayuBlockCompressionFormat::Auto);
         ensure("Encoding binary cutout RGBA succeeded", ok);
-        ensure("Binary cutout RGBA resolves to BC7", result.mFormat == EVayuBlockCompressionFormat::BC7);
+        ensure("Binary cutout RGBA resolves to translucent format", result.mFormat == kExpectedTranslucentFormat);
     }
 
     // Test 8: All presets encode successfully and don't affect the chosen format
@@ -166,7 +172,7 @@ namespace tut
             rgba[i * 4 + 0] = 180;
             rgba[i * 4 + 1] = 90;
             rgba[i * 4 + 2] = 45;
-            rgba[i * 4 + 3] = (i % 3 == 0) ? 128 : 255; // partial alpha -> BC7
+            rgba[i * 4 + 3] = (i % 3 == 0) ? 128 : 255; // partial alpha -> BC7 (or BC3 on macOS)
         }
 
         const EVayuBlockCompressionPreset saved_preset = VayuImageBlockCompressor::getPreset();
@@ -186,7 +192,7 @@ namespace tut
             VayuBlockCompressionResult result;
             bool ok = VayuImageBlockCompressor::encode(rgba.data(), width, height, 4, result, EVayuBlockCompressionFormat::Auto);
             ensure("Encoding succeeds at every preset", ok);
-            ensure("Preset doesn't change the resolved format", result.mFormat == EVayuBlockCompressionFormat::BC7);
+            ensure("Preset doesn't change the resolved format", result.mFormat == kExpectedTranslucentFormat);
             ensure("Preset run still produces mip data", result.mBuffer.size() > 0);
         }
 
@@ -281,7 +287,7 @@ namespace tut
             VayuBlockCompressionResult result;
             bool ok = VayuImageBlockCompressor::encode(rgba.data(), width, height, 4, result, EVayuBlockCompressionFormat::Auto);
             ensure("Tail cutout encodes successfully", ok);
-            ensure("Tail cutout resolves to BC7", result.mFormat == EVayuBlockCompressionFormat::BC7);
+            ensure("Tail cutout resolves to translucent format", result.mFormat == kExpectedTranslucentFormat);
         }
 
         // Case B: Cutout pixel placed early (index 2) (tests early SIMD exit)
@@ -292,7 +298,7 @@ namespace tut
             VayuBlockCompressionResult result;
             bool ok = VayuImageBlockCompressor::encode(rgba.data(), width, height, 4, result, EVayuBlockCompressionFormat::Auto);
             ensure("Early cutout encodes successfully", ok);
-            ensure("Early cutout resolves to BC7", result.mFormat == EVayuBlockCompressionFormat::BC7);
+            ensure("Early cutout resolves to translucent format", result.mFormat == kExpectedTranslucentFormat);
         }
 
         // Case C: Fully opaque non-multiple-of-8 image resolves to BC1
@@ -472,6 +478,46 @@ namespace tut
             VayuImageBlockCompressor::setPreset(saved);
         }
     }
+
+    // Test 15: Explicit BC3 compression for translucent textures
+    template<> template<>
+    void block_compressor_object::test<15>()
+    {
+        const U32 width = 16, height = 16;
+        std::vector<U8> rgba(width * height * 4);
+        for (size_t i = 0; i < width * height; ++i)
+        {
+            rgba[i * 4 + 0] = 120;
+            rgba[i * 4 + 1] = 60;
+            rgba[i * 4 + 2] = 30;
+            rgba[i * 4 + 3] = (i % 2 == 0) ? 255 : 100;
+        }
+
+        VayuBlockCompressionResult result;
+        bool ok = VayuImageBlockCompressor::encode(rgba.data(), width, height, 4, result, EVayuBlockCompressionFormat::BC3);
+        ensure("Encoding explicit BC3 succeeded", ok);
+        ensure("Explicit BC3 format is preserved", result.mFormat == EVayuBlockCompressionFormat::BC3);
+        ensure("BC3 produces correct mip levels", result.mMipLevels == 5);
+        ensure("BC3 buffer size is non-zero", result.mBuffer.size() > 0);
+    }
+
+    // Test 16: Demote BC7 to BC3 on macOS, preserve BC7 on other platforms
+    template<> template<>
+    void block_compressor_object::test<16>()
+    {
+        const U32 width = 16, height = 16;
+        std::vector<U8> rgba(width * height * 4, 255);
+
+        VayuBlockCompressionResult result;
+        bool ok = VayuImageBlockCompressor::encode(rgba.data(), width, height, 4, result, EVayuBlockCompressionFormat::BC7);
+        ensure("Encoding BC7 succeeded", ok);
+#if LL_DARWIN
+        ensure("BC7 demoted to BC3 on macOS", result.mFormat == EVayuBlockCompressionFormat::BC3);
+#else
+        ensure("BC7 preserved on non-macOS", result.mFormat == EVayuBlockCompressionFormat::BC7);
+#endif
+    }
 }
+
 
 

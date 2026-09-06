@@ -13,8 +13,9 @@
 
 enum class EVayuBlockCompressionFormat : U8
 {
-    Auto = 0,    // Auto-select: BC7 if image has non-trivial alpha (< 255), else BC1 (saving 50% VRAM)
+    Auto = 0,    // Auto-select: BC7 (or BC3 on macOS) if image has non-trivial alpha (< 255), else BC1 (saving 50% VRAM)
     BC1,         // Opaque albedo / punchthrough alpha: DXT1 (4 bpp, sRGB)
+    BC3,         // Translucent RGBA / DXT5 fallback for platforms without BPTC (8 bpp, sRGB)
     BC4,         // Single-channel mask / roughness: RGTC1 (4 bpp, linear)
     BC5,         // Two-channel normal map: RGTC2 (8 bpp, linear X/Y)
     BC7,         // Translucent / high-fidelity RGBA / PBR: BPTC (8 bpp, sRGB)
