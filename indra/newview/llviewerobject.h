@@ -45,6 +45,7 @@
 #include "llbbox.h"
 #include "llrigginginfo.h"
 #include "llreflectionmap.h"
+#include "fsregioncross.h" // <FS:JN> Improved region crossing support
 
 namespace LL
 {
@@ -1057,6 +1058,7 @@ private:
     LLUUID mAttachmentItemID; // ItemID of the associated object is in user inventory.
     EObjectUpdateType   mLastUpdateType;
     bool    mLastUpdateCached;
+    RegionCrossExtrapolate mExtrap; // <FS:JN> improved extrapolator
 
 public:
     // reflection probe state

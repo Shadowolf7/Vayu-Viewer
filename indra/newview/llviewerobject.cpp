@@ -1010,6 +1010,8 @@ void LLViewerObject::addChild(LLViewerObject *childp)
             }
         }
     }
+
+    mExtrap.changedlink(*this); // <FS:JN> if linking update, check for sitters
 }
 
 void LLViewerObject::onReparent(LLViewerObject *old_parent, LLViewerObject *new_parent)
@@ -1045,6 +1047,8 @@ void LLViewerObject::removeChild(LLViewerObject *childp)
             break;
         }
     }
+
+    mExtrap.changedlink(*this); // <FS:JN> if linking update, check for sitters
 
     if (childp->isSelected())
     {
@@ -2380,6 +2384,10 @@ U32 LLViewerObject::processUpdateMessage(LLMessageSystem *mesgsys,
             avatar->clampAttachmentPositions();
         }
 
+        // <FS:JN> Region crossing extrapolation improvement
+        mExtrap.update(*this);  // update extrapolation if needed
+        mRegionCrossExpire = 0; // restart extrapolation clock on object update
+
         // If we're snapping the position by more than 0.5m, update LLViewerStats::mAgentPositionSnaps
         if ( asAvatar() && asAvatar()->isSelf() && (mag_sqr > 0.25f) )
         {
@@ -2720,22 +2728,36 @@ void LLViewerObject::interpolateLinearMotion(const F64SecondsImplicit& frame_tim
                 }
                 else if (crossing_movement_mode == 0)
                 {
-                    // Predict mode (clamped to sMaxRegionCrossingInterpolationTime):
+                    // Predict mode (clamped to sMaxRegionCrossingInterpolationTime with smart adaptive limiting):
                     if (mRegionCrossExpire == 0)
                     {
                         // Workaround: we can't accurately figure out time when we cross border
                         // so just write down time 'after the fact', it is far from optimal in
                         // case of lags, but for lags sMaxUpdateInterpolationTime will kick in first
                         LL_DEBUGS("Interpolate") << "Predicted region crossing, new position " << new_pos << LL_ENDL;
-                        mRegionCrossExpire = frame_time + sMaxRegionCrossingInterpolationTime;
+                        // <FS:JN> Limit region crossing time using smart limiting
+                        F64Seconds saferegioncrosstimelimit(mExtrap.getextraptimelimit());  // longest time we can safely extrapolate
+                        F64Seconds maxregioncrosstime = std::min(saferegioncrosstimelimit, sMaxRegionCrossingInterpolationTime);
+                        mRegionCrossExpire = frame_time + maxregioncrosstime;
+                        setAcceleration(LLVector3::zero);                       // no accel during region crossings
+                        // </FS:JN>
                     }
                     else if (frame_time > mRegionCrossExpire)
                     {
-                        // Predicting crossing over 1s, stop motion
+                        // Predicting crossing over limit, stop motion
                         LL_DEBUGS("Interpolate") << "Predicting region crossing for too long, stopping at " << new_pos << LL_ENDL;
                         new_v.clear();
-                        setAcceleration(LLVector3::zero);
-                        setAngularVelocity(LLVector3::zero);
+                        // <FS:JN> For region crossing vehicles, stop rotation too. Paranoia consideration above about endlessly rotating objects does not apply.
+                        if (mExtrap.ismovingssaton(*this))
+                        {
+                            setAngularVelocity(LLVector3::zero);
+                            setAcceleration(LLVector3::zero);
+                        }
+                        else
+                        {
+                            setAcceleration(LLVector3::zero);
+                            setAngularVelocity(LLVector3::zero);
+                        }
                         mRegionCrossExpire = 0;
                     }
                 }

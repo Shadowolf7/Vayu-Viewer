@@ -290,8 +290,9 @@
    name="region_crossing_movement_combo"
    width="200">
     <combo_box.item
-     label="Predict trajectory"
+     label="Predict trajectory (adaptive)"
      name="0"
+     tool_tip="Smoothly extrapolates motion, automatically damping noisy ground-vehicle bumps while preserving full glides for watercraft"
      value="0"/>
     <combo_box.item
      label="Stop at boundary"

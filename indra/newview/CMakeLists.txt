@@ -227,6 +227,7 @@ set(viewer_SOURCE_FILES
     fsposeranimator.cpp
     fsposestate.cpp
     fsposingmotion.cpp
+    fsregioncross.cpp
     gltf/asset.cpp
     gltf/accessor.cpp
     gltf/primitive.cpp
@@ -1011,6 +1012,7 @@ set(viewer_HEADER_FILES
     fsposeranimator.h
     fsposestate.h
     fsposingmotion.h
+    fsregioncross.h
     groupchatlistener.h
     gltf/asset.h
     gltf/accessor.h
