@@ -4969,6 +4969,7 @@ bool LLAppViewer::initCache()
     }
 
     LLDiskCache::init(disk_cache_size, read_only);
+    applyBCTextureCacheBudgets();
 
     if (!read_only)
     {
@@ -5006,8 +5007,6 @@ bool LLAppViewer::initCache()
 
     const U32 CACHE_NUMBER_OF_REGIONS_FOR_OBJECTS = 128;
     LLVOCache::getInstance()->initCache(LL_PATH_CACHE, CACHE_NUMBER_OF_REGIONS_FOR_OBJECTS, getObjectCacheVersion());
-
-    applyBCTextureCacheBudgets();
 
     // Remove old, stale CEF cache folders
     purgeCefStaleCaches();
@@ -5125,6 +5124,8 @@ void LLAppViewer::purgeCacheImmediate()
 {
     LL_INFOS("AppCache") << "Purging Object Cache and Texture Cache immediately..." << LL_ENDL;
     LLAppViewer::getTextureCache()->purgeCache(LL_PATH_CACHE, false);
+    LLDiskCache::clear();
+    VayuBCTextureCache::instance().clear();
     if (LLVOCache::instanceExists())
     {
         LLVOCache::getInstance()->removeCache(LL_PATH_CACHE, true);
