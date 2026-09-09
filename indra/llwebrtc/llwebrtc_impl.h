@@ -237,12 +237,22 @@ public:
     {
         return inner_->RecordingDeviceName(index, name, guid);
     }
-    int32_t SetPlayoutDevice(uint16_t index) override { return inner_->SetPlayoutDevice(index); }
+    int32_t SetPlayoutDevice(uint16_t index) override
+    {
+        mPlayoutDevice = static_cast<int16_t>(index);
+        return inner_->SetPlayoutDevice(index);
+    }
     int32_t SetRecordingDevice(uint16_t index) override { return inner_->SetRecordingDevice(index); }
 
     // Windows default/communications selectors, if your branch exposes them:
-    int32_t SetPlayoutDevice(WindowsDeviceType type) override { return inner_->SetPlayoutDevice(type); }
+    int32_t SetPlayoutDevice(WindowsDeviceType type) override
+    {
+        mPlayoutDevice = static_cast<int16_t>(type);
+        return inner_->SetPlayoutDevice(type);
+    }
     int32_t SetRecordingDevice(WindowsDeviceType type) override { return inner_->SetRecordingDevice(type); }
+
+    int16_t GetPlayoutDevice() const { return mPlayoutDevice; }
 
     // --- Init/start/stop (forward) ---
     int32_t InitPlayout() override { return inner_->InitPlayout(); }
@@ -354,6 +364,7 @@ private:
     LLWebRTCAudioTransport                        audio_transport_;
 
     bool tuning_;
+    int16_t                                       mPlayoutDevice{-1};
 };
 
 class LLCustomProcessorState

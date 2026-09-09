@@ -2833,13 +2833,7 @@ namespace LLInitParam
 
 namespace LLTypeTags
 {
-    // After BaseBlock so Sequential, Atomic, and Lazy are in scope.
-    template<typename T>
-    struct IsSortable<LLInitParam::BaseBlock::Sequential<T> >
-    {
-        static const bool value = true;
-    };
-
+    // After BaseBlock so Atomic and Lazy are in scope.
     template<typename T>
     struct IsSortable<LLInitParam::BaseBlock::Atomic<T> >
     {
