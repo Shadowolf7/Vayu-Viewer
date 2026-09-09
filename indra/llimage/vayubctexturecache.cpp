@@ -218,6 +218,7 @@ void VayuBCTextureCache::clear()
     }
     mCurrentSizeBytes = 0;
     mEntryCount = 0;
+    LL_INFOS("Texture") << "VayuBCTextureCache: the entire BC texture cache is cleared." << LL_ENDL;
 }
 
 void VayuBCTextureCache::purge()
