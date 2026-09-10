@@ -8410,6 +8410,18 @@ void LLVOAvatar::getOffObject()
 
     if (sit_object)
     {
+        // A dead sit_object may be temporarily unavailable while it is being
+        // reconstructed during a crossing.
+        // Preserve the follow-cam grace period in that case.
+        // An avatar getting off an object is an explicit action that clears
+        // the grace period on its own.
+        // In such a case, FollowCam Params should've been or will be cleared
+        // in a different path.
+        if (isSelf() && !sit_object->isDead())
+        {
+            gAgentCamera.notifyFollowCamParamsCleared();
+        }
+
         stopMotionFromSource(sit_object->getID());
         LLFollowCamMgr::getInstance()->setCameraActive(sit_object->getID(), false);
 
@@ -8427,6 +8439,7 @@ void LLVOAvatar::getOffObject()
     {
         // Recover from a missing seat parent without retaining a stale followcam.
         LLFollowCamMgr::getInstance()->clearActiveFollowCamParams();
+        gAgentCamera.notifyFollowCamParamsCleared();
     }
 
     // assumes that transform will not be updated with drawable still having a parent
