@@ -122,6 +122,17 @@ bool enable_pay_object();
 bool enable_buy_object();
 bool handle_go_to();
 
+// Automated post-movement visibility & attachment refresh (ported from Cool VL)
+enum eRegionChangeType : U32
+{
+    AFTER_LOGIN = 0,
+    AFTER_CROSS_BORDER,
+    AFTER_FAR_TP,
+};
+void schedule_objects_visibility_refresh(U32 type);
+void handle_refresh_objects();
+void handle_refresh_attachments();
+
 // Convert strings to internal types
 U32 render_type_from_string(std::string_view render_type);
 U32 feature_from_string(std::string_view feature);

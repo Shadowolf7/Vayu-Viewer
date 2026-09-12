@@ -1145,6 +1145,13 @@ void LLAgent::setRegion(LLViewerRegion *regionp)
             }
         }
 
+        if (mRegionp)
+        {
+            // Schedule automated visibility and attachment refresh on arrival in new region (ported from Cool VL).
+            U32 sim_change_type = (mTeleportState == TELEPORT_NONE) ? AFTER_CROSS_BORDER : AFTER_FAR_TP;
+            schedule_objects_visibility_refresh(sim_change_type);
+        }
+
         // Pass new region along to metrics components that care about this level of detail.
         LLAppViewer::metricsUpdateRegion(regionp->getHandle());
     }

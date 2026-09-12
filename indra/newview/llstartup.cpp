@@ -2745,6 +2745,9 @@ bool idle_startup()
 
         LLAppViewer::instance()->handleLoginComplete();
 
+        // Schedule post-login objects visibility refresh if enabled (ported from Cool VL)
+        schedule_objects_visibility_refresh(AFTER_LOGIN);
+
         LLAgentPicksInfo::getInstance()->requestNumberOfPicks();
 
         do_startup_frame();

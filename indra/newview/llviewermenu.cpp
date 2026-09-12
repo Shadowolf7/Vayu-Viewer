@@ -30,6 +30,7 @@
 
 // linden library includes
 #include "llavatarnamecache.h"  // IDEVO (I Are Not Men!)
+#include "llcallbacklist.h"
 #include "llcombobox.h"
 #include "llcoros.h"
 #include "llfloaterreg.h"
@@ -2341,6 +2342,73 @@ void handle_refresh_attachments()
 void handle_refresh_objects()
 {
     gObjectList.refreshAllObjects();
+}
+
+void handle_objects_visibility(void* userdata)
+{
+    if (LLApp::isExiting() || !LLStartUp::isLoggedIn())
+    {
+        return;
+    }
+
+    U32 type = (U32)((intptr_t)userdata);
+    LL_INFOS("Renderer") << "Refreshing objects visibility";
+    switch (type)
+    {
+        case AFTER_LOGIN:
+            LL_CONT << " after login";
+            break;
+        case AFTER_CROSS_BORDER:
+            LL_CONT << " after sim border crossing";
+            break;
+        case AFTER_FAR_TP:
+            LL_CONT << " after far TP";
+            break;
+        default:
+            break;
+    }
+    LL_CONT << LL_ENDL;
+
+    gObjectList.refreshAllObjects();
+
+    static LLCachedControl<bool> refresh_attach(gSavedSettings, "AutoRefreshAttachmentsInSL");
+    if (refresh_attach && (type == AFTER_CROSS_BORDER || type == AFTER_FAR_TP))
+    {
+        handle_refresh_attachments();
+    }
+}
+
+void schedule_objects_visibility_refresh(U32 type)
+{
+    static LLCachedControl<U32> login_delay(gSavedSettings, "VisibilityAutoRefreshLogin");
+    static LLCachedControl<U32> cross_delay(gSavedSettings, "VisibilityAutoRefreshBorder");
+    static LLCachedControl<U32> tp_delay(gSavedSettings, "VisibilityAutoRefreshFarTP");
+
+    F32 delay = 0.f;
+    switch (type)
+    {
+        case AFTER_LOGIN:
+            delay = (F32)login_delay;
+            break;
+        case AFTER_CROSS_BORDER:
+            delay = (F32)cross_delay;
+            break;
+        case AFTER_FAR_TP:
+            delay = (F32)tp_delay;
+            break;
+        default:
+            delay = 0.f;
+            break;
+    }
+
+    // Skip if purposely disabled (0), or when not yet rendering the world.
+    if (delay <= 0.f || !LLStartUp::isLoggedIn())
+    {
+        return;
+    }
+
+    doAfterInterval(std::bind(handle_objects_visibility, (void*)((intptr_t)type)),
+                    llclamp(delay, 0.5f, 10.f));
 }
 
 #if 1 //ndef LL_RELEASE_FOR_DOWNLOAD
