@@ -181,11 +181,12 @@
    left="86"
    name="numpad_control_lbl"
    width="150"
-   top_pad="20">
+   top_pad="10">
     Numeric keypad:
   </text>
   <combo_box
    control_name="NumpadControl"
+   follows="left|top"
    height="23"
    layout="topleft"
    left_pad="10"
@@ -214,10 +215,11 @@
    left="86"
    name="single_click_action_lbl"
    width="150"
-   top_pad="20">
+   top_pad="10">
     Single click on land:
   </text>
   <combo_box
+   follows="left|top"
    height="23"
    layout="topleft"
    left_pad="10"
@@ -244,10 +246,11 @@
    left="86"
    name="double_click_action_lbl"
    width="150"
-   top_pad="12">
+   top_pad="8">
     Double click on land:
   </text>
   <combo_box
+   follows="left|top"
    height="23"
    layout="topleft"
    left_pad="10"
@@ -278,11 +281,12 @@
    left="86"
    name="region_crossing_movement_lbl"
    width="150"
-   top_pad="12">
+   top_pad="8">
     At region crossing:
   </text>
   <combo_box
    control_name="RegionCrossingMovementMode"
+   follows="left|top"
    height="23"
    layout="topleft"
    left_pad="10"
@@ -304,12 +308,13 @@
      value="2"/>
   </combo_box>
   <button
+   follows="left|top"
    height="23"
    label="Other Devices"
    layout="topleft"
    left="30"
    name="joystick_setup_button"
-   top_pad="15"
+   top_pad="10"
    width="155">
     <button.commit_callback
      function="Floater.Show"
