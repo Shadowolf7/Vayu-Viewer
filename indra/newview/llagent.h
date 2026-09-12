@@ -367,6 +367,8 @@ public:
     static bool     enableFlying();
     bool            canFly();           // Does this parcel allow you to fly?
     static bool     isSitting();
+    static bool     isSeatedOnVehicle();
+    static LLQuaternion getRollFreeRotation(const LLQuaternion& rot);
 
     //--------------------------------------------------------------------
     // Voice

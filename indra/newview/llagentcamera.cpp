@@ -1279,20 +1279,15 @@ void LLAgentCamera::updateCamera()
         camera_mode == CAMERA_MODE_MOUSELOOK)
     {
         static LLCachedControl<bool> decouple_vehicle_tilt(gSavedSettings, "VayuMouselookDecoupleVehicleTilt", false);
-        LLViewerObject* root_object = (LLViewerObject*)gAgentAvatarp->getRoot();
-        if (decouple_vehicle_tilt && gAgentAvatarp->getParent() && !root_object->flagCameraDecoupled())
+        if (decouple_vehicle_tilt && LLAgent::isSeatedOnVehicle())
         {
-            // Derive "up" from the vehicle's rotation with roll stripped out, rather
-            // than the avatar's full render rotation, so the horizon doesn't bank
-            // with the vehicle while heading and pitch still track it. Must match
-            // the roll-stripping in calcFocusPositionTargetGlobal() or the look and
-            // up vectors disagree. Gated on flagCameraDecoupled() the same way, so a
-            // script-controlled camera isn't fought over here either.
+            // Derive "up" from the vehicle's rotation with roll stripped out via orthonormal
+            // vector projection, so the horizon doesn't bank with the vehicle while heading
+            // and pitch still track it. Must match the roll-stripping in
+            // calcFocusPositionTargetGlobal() so the look and up vectors agree.
             LLQuaternion vehicle_rot = ((LLViewerObject*)gAgentAvatarp->getParent())->getRenderRotation();
-            F32 roll, pitch, yaw;
-            vehicle_rot.getEulerAngles(&roll, &pitch, &yaw);
-            vehicle_rot.setEulerAngles(0.f, pitch, yaw);
-            mCameraUpVector = mCameraUpVector * vehicle_rot;
+            LLQuaternion vehicle_rot_no_roll = LLAgent::getRollFreeRotation(vehicle_rot);
+            mCameraUpVector = LLVector3::z_axis * vehicle_rot_no_roll;
         }
         else
         {
@@ -1731,13 +1726,9 @@ LLVector3d LLAgentCamera::calcFocusPositionTargetGlobal()
             if (!root_object->flagCameraDecoupled())
             {
                 LLQuaternion vehicle_rot = ((LLViewerObject*)(gAgentAvatarp->getParent()))->getRenderRotation();
-                if (decouple_vehicle_tilt)
+                if (decouple_vehicle_tilt && LLAgent::isSeatedOnVehicle())
                 {
-                    // Keep heading and pitch coupled to the vehicle, but strip out roll so
-                    // mouselook doesn't bank sideways with the vehicle.
-                    F32 roll, pitch, yaw;
-                    vehicle_rot.getEulerAngles(&roll, &pitch, &yaw);
-                    vehicle_rot.setEulerAngles(0.f, pitch, yaw);
+                    vehicle_rot = LLAgent::getRollFreeRotation(vehicle_rot);
                 }
                 agent_rot *= vehicle_rot;
             }

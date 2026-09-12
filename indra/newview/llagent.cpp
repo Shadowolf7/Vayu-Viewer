@@ -1026,6 +1026,57 @@ bool LLAgent::isSitting()
     return sitting;
 }
 
+// static
+bool LLAgent::isSeatedOnVehicle()
+{
+    if (!isAgentAvatarValid() || !gAgentAvatarp->isSitting() || !gAgentAvatarp->getParent())
+    {
+        return false;
+    }
+
+    LLViewerObject* root_object = (LLViewerObject*)gAgentAvatarp->getRoot();
+    if (!root_object)
+    {
+        return false;
+    }
+
+    // If script explicitly requested camera decoupling, respect it as handled by the script
+    if (root_object->flagCameraDecoupled())
+    {
+        return false;
+    }
+
+    // Persistent vehicle criteria: driver controls taken, or physical vehicle linkset
+    return gAgent.anyControlGrabbed() || root_object->flagUsePhysics();
+}
+
+// static
+LLQuaternion LLAgent::getRollFreeRotation(const LLQuaternion& rot)
+{
+    // Extract vehicle forward vector in world space
+    LLVector3 fwd = LLVector3::x_axis * rot;
+    fwd.normalize();
+
+    // Construct horizontal left vector perpendicular to world up (Z) and forward
+    LLVector3 left = LLVector3::z_axis % fwd;
+    F32 left_mag = left.normalize();
+
+    // Singularity guard: if pointed nearly straight up or down, roll is degenerate
+    if (left_mag < 1e-3f)
+    {
+        return rot;
+    }
+
+    // Construct upright vector perpendicular to forward and horizontal left
+    LLVector3 up = fwd % left;
+    up.normalize();
+
+    // Build orthonormal rotation matrix [forward, left, up] and convert to quaternion
+    LLMatrix3 mat;
+    mat.setRows(fwd, left, up);
+    return mat.quaternion();
+}
+
 void LLAgent::standUp()
 {
     LL_INFOS("Avatar") << "Explicit stand requested, agent was "
@@ -1507,16 +1558,12 @@ LLVector3 LLAgent::getReferenceUpVector()
         else if (camera_mode == CAMERA_MODE_MOUSELOOK)
         {
             static LLCachedControl<bool> decouple_vehicle_tilt(gSavedSettings, "VayuMouselookDecoupleVehicleTilt", false);
-            LLViewerObject* root_object = (LLViewerObject*)gAgentAvatarp->getRoot();
-            if (decouple_vehicle_tilt && root_object && !root_object->flagCameraDecoupled())
+            if (decouple_vehicle_tilt && isSeatedOnVehicle())
             {
                 // In roll-decoupled mouselook, the reference up vector must be the roll-free
                 // up vector in parent frame so horizontal mouse look (yaw) does not induce roll.
                 LLQuaternion vehicle_rot = ((LLViewerObject*)gAgentAvatarp->getParent())->getRenderRotation();
-                F32 roll, pitch, yaw;
-                vehicle_rot.getEulerAngles(&roll, &pitch, &yaw);
-                LLQuaternion vehicle_rot_no_roll;
-                vehicle_rot_no_roll.setEulerAngles(0.f, pitch, yaw);
+                LLQuaternion vehicle_rot_no_roll = getRollFreeRotation(vehicle_rot);
                 up_vector = (LLVector3::z_axis * vehicle_rot_no_roll) * ~vehicle_rot;
             }
             else
@@ -2590,11 +2637,9 @@ void LLAgent::endAnimationUpdateUI()
                 {
                     static LLCachedControl<bool> decouple_vehicle_tilt(gSavedSettings, "VayuMouselookDecoupleVehicleTilt", false);
                     LLQuaternion vehicle_rot = ((LLViewerObject*)gAgentAvatarp->getParent())->getRenderRotation();
-                    if (decouple_vehicle_tilt)
+                    if (decouple_vehicle_tilt && isSeatedOnVehicle())
                     {
-                        F32 roll, pitch, yaw;
-                        vehicle_rot.getEulerAngles(&roll, &pitch, &yaw);
-                        vehicle_rot.setEulerAngles(0.f, pitch, yaw);
+                        vehicle_rot = getRollFreeRotation(vehicle_rot);
                     }
                     resetAxes(at_axis * ~vehicle_rot);
                 }
