@@ -16761,14 +16761,13 @@
     <key>SkipBenchmark</key>
     <map>
       <key>Comment</key>
-      <string>if true, disables running the GPU benchmark at startup
-      (default to class 1)</string>
+      <string>If true, disables running the GPU benchmark at startup (defaults GPU tier from detected VRAM)</string>
       <key>Persist</key>
       <integer>1</integer>
       <key>Type</key>
       <string>Boolean</string>
       <key>Value</key>
-      <integer>0</integer>
+      <integer>1</integer>
     </map>
   <key>TargetFPS</key>
   <map>

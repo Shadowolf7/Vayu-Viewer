@@ -692,10 +692,46 @@ bool LLFeatureManager::loadGPUClass()
     } //end if benchmark
     else
     {
-        //setting says don't benchmark MAINT-7558
-        LL_WARNS("RenderInit") << "Setting 'SkipBenchmark' is true; defaulting to class 1 (may be required for some GPUs)" << LL_ENDL;
+        // Skip benchmark: determine GPU class from detected VRAM and system memory
+        U32 vram_mb = gGLManager.mVRAM;
+        if (vram_mb >= 8192)
+        {
+            mGPUClass = GPU_CLASS_5;
+        }
+        else if (vram_mb >= 6144)
+        {
+            mGPUClass = GPU_CLASS_4;
+        }
+        else if (vram_mb >= 4096 || gGLManager.mIsApple)
+        {
+            mGPUClass = GPU_CLASS_3;
+        }
+        else if (vram_mb >= 2048)
+        {
+            mGPUClass = GPU_CLASS_2;
+        }
+        else if (vram_mb > 0)
+        {
+            mGPUClass = GPU_CLASS_1;
+        }
+        else
+        {
+            // VRAM query not supported; default to mid-high
+            mGPUClass = GPU_CLASS_3;
+        }
 
-        mGPUClass = GPU_CLASS_1;
+        LLMemory::updateMemoryInfo();
+#if LL_WINDOWS || LL_LINUX
+        const F32Gigabytes MIN_PHYSICAL_MEMORY(8);
+        F32Gigabytes physical_mem = LLMemory::getMaxMemKB();
+        if (MIN_PHYSICAL_MEMORY > physical_mem && mGPUClass > GPU_CLASS_1)
+        {
+            mGPUClass = (EGPUClass)(mGPUClass - 1);
+        }
+#endif // LL_WINDOWS || LL_LINUX
+
+        LL_INFOS("RenderInit") << "Setting 'SkipBenchmark' is true; assigned GPU class "
+                               << (S32)mGPUClass << " based on " << vram_mb << " MB VRAM" << LL_ENDL;
     }
 
     if (extractGLDeviceModel(mGPUString)) {
