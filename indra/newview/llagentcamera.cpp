@@ -155,6 +155,8 @@ LLAgentCamera::LLAgentCamera() :
     mSitCameraEnabled(false),
     mCameraSmoothingLastPositionGlobal(),
     mCameraSmoothingLastPositionAgent(),
+    mCameraSmoothingLastFocusGlobal(),
+    mCameraSmoothingLastFocusValid(false),
     mCameraSmoothingStop(false),
 
     mCameraUpVector(LLVector3::z_axis), // default is straight up
@@ -1095,6 +1097,13 @@ void LLAgentCamera::cameraOrbitIn(const F32 meters)
     }
 }
 
+void LLAgentCamera::setCameraSmoothingLastPositionGlobal(const LLVector3d& camera_position_global)
+{
+    mCameraSmoothingLastPositionGlobal = camera_position_global;
+    mCameraSmoothingLastFocusGlobal = mFocusGlobal;
+    mCameraSmoothingLastFocusValid = true;
+}
+
 //-----------------------------------------------------------------------------
 // cameraPanIn()
 //-----------------------------------------------------------------------------
@@ -1110,7 +1119,7 @@ void LLAgentCamera::cameraPanIn(F32 meters)
     // don't enforce zoom constraints as this is the only way for users to get past them easily
     updateFocusOffset();
     // NOTE: panning movements expect the camera to move exactly with the focus target, not animated behind -Nyx
-    mCameraSmoothingLastPositionGlobal = calcCameraPositionTargetGlobal();
+    setCameraSmoothingLastPositionGlobal(calcCameraPositionTargetGlobal());
 }
 
 //-----------------------------------------------------------------------------
@@ -1132,7 +1141,7 @@ void LLAgentCamera::cameraPanLeft(F32 meters)
     cameraZoomIn(1.f);
     updateFocusOffset();
     // NOTE: panning movements expect the camera to move exactly with the focus target, not animated behind - Nyx
-    mCameraSmoothingLastPositionGlobal = calcCameraPositionTargetGlobal();
+    setCameraSmoothingLastPositionGlobal(calcCameraPositionTargetGlobal());
 }
 
 //-----------------------------------------------------------------------------
@@ -1154,7 +1163,7 @@ void LLAgentCamera::cameraPanUp(F32 meters)
     cameraZoomIn(1.f);
     updateFocusOffset();
     // NOTE: panning movements expect the camera to move exactly with the focus target, not animated behind -Nyx
-    mCameraSmoothingLastPositionGlobal = calcCameraPositionTargetGlobal();
+    setCameraSmoothingLastPositionGlobal(calcCameraPositionTargetGlobal());
 }
 
 void LLAgentCamera::resetCameraPan()
@@ -1167,7 +1176,7 @@ void LLAgentCamera::resetCameraPan()
     cameraZoomIn(1.f);
     updateFocusOffset();
 
-    mCameraSmoothingLastPositionGlobal = calcCameraPositionTargetGlobal();
+    setCameraSmoothingLastPositionGlobal(calcCameraPositionTargetGlobal());
 
     resetPanDiff();
 }
@@ -1521,6 +1530,21 @@ void LLAgentCamera::updateCamera()
                     camera_pos_global = camera_pos_agent + agent_pos;
                 }
             }
+            else if (mTrackFocusObject && mFocusObject.notNull())
+            {
+                // Keep tracked-object translation exact and smooth only changes
+                // to the camera offset, as is done in avatar-relative mode.
+                LLVector3d camera_pos_focus = camera_pos_global - mFocusGlobal;
+                LLVector3d last_camera_pos_focus =
+                    mCameraSmoothingLastPositionGlobal - mCameraSmoothingLastFocusGlobal;
+                LLVector3d delta = camera_pos_focus - last_camera_pos_focus;
+                if (mCameraSmoothingLastFocusValid &&
+                    delta.magVec() < MAX_CAMERA_SMOOTH_DISTANCE)
+                {
+                    camera_pos_focus = lerp(last_camera_pos_focus, camera_pos_focus, smoothing);
+                    camera_pos_global = camera_pos_focus + mFocusGlobal;
+                }
+            }
             else
             {
                 LLVector3d delta = camera_pos_global - mCameraSmoothingLastPositionGlobal;
@@ -1531,7 +1555,7 @@ void LLAgentCamera::updateCamera()
             }
         }
 
-        mCameraSmoothingLastPositionGlobal = camera_pos_global;
+        setCameraSmoothingLastPositionGlobal(camera_pos_global);
         mCameraSmoothingLastPositionAgent = camera_pos_agent;
         mCameraSmoothingStop = false;
     }
