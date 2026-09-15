@@ -1798,7 +1798,7 @@ void LLViewerObjectList::refreshAllObjects()
         LLViewerObject* objectp = *iter;
         if (objectp && !objectp->isDead())
         {
-            objectp->markForUpdate(true);
+            objectp->markForUpdate();
             LLDrawable* drawable = objectp->mDrawable;
             if (drawable && !drawable->isDead())
             {

@@ -2346,7 +2346,7 @@ void handle_refresh_objects()
 
 void handle_objects_visibility(void* userdata)
 {
-    if (LLApp::isExiting() || !LLStartUp::isLoggedIn())
+    if (LLApp::isExiting() || LLStartUp::getStartupState() < STATE_STARTED)
     {
         return;
     }
@@ -2402,7 +2402,7 @@ void schedule_objects_visibility_refresh(U32 type)
     }
 
     // Skip if purposely disabled (0), or when not yet rendering the world.
-    if (delay <= 0.f || !LLStartUp::isLoggedIn())
+    if (delay <= 0.f || LLStartUp::getStartupState() < STATE_STARTED)
     {
         return;
     }
