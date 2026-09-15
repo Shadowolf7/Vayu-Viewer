@@ -262,6 +262,7 @@ bool ImageRequest::processRequest()
                     auto comp_res = std::make_shared<VayuBlockCompressionResult>();
                     comp_res->mFormat = (EVayuBlockCompressionFormat)cache_header.mFormat;
                     comp_res->mPreset = (EVayuBlockCompressionPreset)cache_header.mPreset;
+                    comp_res->mIsMask = (cache_header.mIsMask != 0);
                     comp_res->mGLInternalFormat = cache_header.mGLInternalFormat;
                     comp_res->mGLPrimaryFormat = cache_header.mGLPrimaryFormat;
                     comp_res->mWidth = cache_header.mWidth;
@@ -286,6 +287,7 @@ bool ImageRequest::processRequest()
                         VayuBCCacheEntryHeader cache_header;
                         cache_header.mFormat = (U8)comp_res->mFormat;
                         cache_header.mPreset = (U8)comp_res->mPreset;
+                        cache_header.mIsMask = comp_res->mIsMask ? 1 : 0;
                         cache_header.mMipLevels = comp_res->mMipLevels;
                         cache_header.mWidth = comp_res->mWidth;
                         cache_header.mHeight = comp_res->mHeight;

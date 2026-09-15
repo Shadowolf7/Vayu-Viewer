@@ -365,6 +365,112 @@ bool VayuImageBlockCompressor::encode(const LLImageRaw* raw_image,
                   raw_image->getComponents(), result, format);
 }
 
+bool VayuImageBlockCompressor::analyzeAlphaMask(
+    const U8* data_in,
+    U32 w,
+    U32 h,
+    S8 alpha_offset,
+    S8 alpha_stride)
+{
+    if (!data_in || alpha_stride < 1)
+    {
+        return false;
+    }
+
+    U32 length = w * h;
+    U32 alphatotal = 0;
+
+    U32 sample[16];
+    memset(sample, 0, sizeof(U32) * 16);
+
+    // generate histogram of quantized alpha.
+    // also add-in the histogram of a 2x2 box-sampled version.  The idea is
+    // this will mid-skew the data (and thus increase the chances of not
+    // being used as a mask) from high-frequency alpha maps which
+    // suffer the worst from aliasing when used as alpha masks.
+    if (w >= 2 && h >= 2)
+    {
+        const U32 paired_w = w & ~1u;
+        const U32 paired_h = h & ~1u;
+        const U8* rowstart = data_in + alpha_offset;
+        for (U32 y = 0; y < paired_h; y += 2)
+        {
+            const U8* current = rowstart;
+            for (U32 x = 0; x < paired_w; x += 2)
+            {
+                const U32 s1 = current[0];
+                alphatotal += s1;
+                const U32 s2 = current[w * alpha_stride];
+                alphatotal += s2;
+                current += alpha_stride;
+                const U32 s3 = current[0];
+                alphatotal += s3;
+                const U32 s4 = current[w * alpha_stride];
+                alphatotal += s4;
+                current += alpha_stride;
+
+                ++sample[s1 / 16];
+                ++sample[s2 / 16];
+                ++sample[s3 / 16];
+                ++sample[s4 / 16];
+
+                const U32 asum = (s1 + s2 + s3 + s4);
+                alphatotal += asum;
+                sample[asum / (16 * 4)] += 4;
+            }
+
+            rowstart += 2 * w * alpha_stride;
+        }
+        // Two histogram entries per source texel over the paired region.
+        length = 2 * paired_w * paired_h;
+    }
+    else
+    {
+        const U8* current = data_in + alpha_offset;
+        for (U32 i = 0; i < length; i++)
+        {
+            const U32 s1 = *current;
+            alphatotal += s1;
+            ++sample[s1 / 16];
+            current += alpha_stride;
+        }
+    }
+
+    // if more than 1/16th of alpha samples are mid-range, this
+    // shouldn't be treated as a 1-bit mask
+
+    // also, if all of the alpha samples are clumped on one half
+    // of the range (but not at an absolute extreme), then consider
+    // this to be an intentional effect and don't treat as a mask.
+
+    U32 midrangetotal = 0;
+    for (U32 i = 2; i < 13; i++)
+    {
+        midrangetotal += sample[i];
+    }
+    U32 lowerhalftotal = 0;
+    for (U32 i = 0; i < 8; i++)
+    {
+        lowerhalftotal += sample[i];
+    }
+    U32 upperhalftotal = 0;
+    for (U32 i = 8; i < 16; i++)
+    {
+        upperhalftotal += sample[i];
+    }
+
+    if (midrangetotal > length / 48 ||
+        (lowerhalftotal == length && alphatotal != 0) ||
+        (upperhalftotal == length && alphatotal != 255 * length))
+    {
+        return false; // not suitable for masking
+    }
+    else
+    {
+        return true; // is a mask
+    }
+}
+
 bool VayuImageBlockCompressor::encode(const U8* src_data, U32 width, U32 height, S32 components,
                                     VayuBlockCompressionResult& result,
                                     EVayuBlockCompressionFormat format)
@@ -376,6 +482,7 @@ bool VayuImageBlockCompressor::encode(const U8* src_data, U32 width, U32 height,
 
     // 1. Resolve format
     EVayuBlockCompressionFormat resolved = format;
+    bool is_mask = true;
 
 #if LL_DARWIN
     // macOS OpenGL 4.1 Core Profile does not support BC7 (GL_ARB_texture_compression_bptc).
@@ -386,19 +493,33 @@ bool VayuImageBlockCompressor::encode(const U8* src_data, U32 width, U32 height,
     }
 #endif
 
-    if (resolved == EVayuBlockCompressionFormat::Auto)
+    if (resolved != EVayuBlockCompressionFormat::Auto)
+    {
+        if (components == 4)
+        {
+            is_mask = analyzeAlphaMask(src_data, width, height, 3, 4);
+        }
+        else if (components == 2)
+        {
+            is_mask = analyzeAlphaMask(src_data, width, height, 1, 2);
+        }
+    }
+    else
     {
         if (components == 1)
         {
             resolved = EVayuBlockCompressionFormat::BC4;
+            is_mask = true;
         }
         else if (components == 2)
         {
             resolved = EVayuBlockCompressionFormat::BC5;
+            is_mask = analyzeAlphaMask(src_data, width, height, 1, 2);
         }
         else if (components == 3)
         {
             resolved = EVayuBlockCompressionFormat::BC1;
+            is_mask = true;
         }
         else if (components == 4)
         {
@@ -472,6 +593,7 @@ bool VayuImageBlockCompressor::encode(const U8* src_data, U32 width, U32 height,
             {
                 // Fully opaque already -> BC1
                 resolved = EVayuBlockCompressionFormat::BC1;
+                is_mask = true;
             }
             else
             {
@@ -481,6 +603,7 @@ bool VayuImageBlockCompressor::encode(const U8* src_data, U32 width, U32 height,
 #else
                 resolved = EVayuBlockCompressionFormat::BC7;
 #endif
+                is_mask = analyzeAlphaMask(src_data, width, height, 3, 4);
             }
         }
     }
@@ -533,6 +656,7 @@ bool VayuImageBlockCompressor::encode(const U8* src_data, U32 width, U32 height,
     result.mHeight = height;
     result.mMipLevels = (S32)num_mips;
     result.mComponents = components;
+    result.mIsMask = is_mask;
     result.mBuffer.resize(total_compressed_bytes);
 
     switch (resolved)

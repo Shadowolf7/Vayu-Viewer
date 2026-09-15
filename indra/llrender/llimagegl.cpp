@@ -1886,9 +1886,14 @@ bool LLImageGL::createGLTexture(S32 discard_level, const LLImageRaw* imageraw, S
         auto pre_comp = imageraw->getBlockCompressionResult();
         if (pre_comp && !pre_comp->mBuffer.empty())
         {
+            mIsMask = pre_comp->mIsMask;
             mFormatInternal = pre_comp->mGLInternalFormat;
             mFormatPrimary = pre_comp->mGLPrimaryFormat;
             mFormatType = GL_UNSIGNED_BYTE;
+            if (mNeedsAlphaAndPickMask && imageraw->getComponents() == 4)
+            {
+                updatePickMask(raw_w, raw_h, rawdata);
+            }
             const U8* comp_data = pre_comp->mBuffer.data() + pre_comp->getLargestMipOffset();
             return createGLTexture(discard_level, comp_data, true /* data_hasmips */, usename, defer_copy, tex_name);
         }
@@ -1897,9 +1902,14 @@ bool LLImageGL::createGLTexture(S32 discard_level, const LLImageRaw* imageraw, S
         VayuBlockCompressionResult comp_res;
         if (VayuImageBlockCompressor::encode(imageraw, comp_res))
         {
+            mIsMask = comp_res.mIsMask;
             mFormatInternal = comp_res.mGLInternalFormat;
             mFormatPrimary = comp_res.mGLPrimaryFormat;
             mFormatType = GL_UNSIGNED_BYTE;
+            if (mNeedsAlphaAndPickMask && imageraw->getComponents() == 4)
+            {
+                updatePickMask(raw_w, raw_h, rawdata);
+            }
             const U8* comp_data = comp_res.mBuffer.data() + comp_res.getLargestMipOffset();
             return createGLTexture(discard_level, comp_data, true /* data_hasmips */, usename, defer_copy, tex_name);
         }
@@ -2604,111 +2614,9 @@ bool LLImageGL::analyzeAlphaData(
     S8 alpha_offset,
     S8 alpha_stride)
 {
-    if (!data_in || alpha_stride < 1)
-    {
-        return false;
-    }
-
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
-
-    U32 length = w * h;
-    U32 alphatotal = 0;
-
-    U32 sample[16];
-    memset(sample, 0, sizeof(U32) * 16);
-
-    // generate histogram of quantized alpha.
-    // also add-in the histogram of a 2x2 box-sampled version.  The idea is
-    // this will mid-skew the data (and thus increase the chances of not
-    // being used as a mask) from high-frequency alpha maps which
-    // suffer the worst from aliasing when used as alpha masks.
-    if (w >= 2 && h >= 2)
-    {
-        // Walk only complete 2x2 quads. Odd dimensions previously hit
-        // asserts in debug and read OOB on the trailing row/column in
-        // release (`current[w * alpha_stride]` indexes one row down,
-        // which doesn't exist for the last odd row). Trailing odd row
-        // and column are dropped from the histogram; the remaining
-        // sample is still representative for the mask classifier.
-        const U32 paired_w = w & ~1u;
-        const U32 paired_h = h & ~1u;
-        const GLubyte* rowstart = ((const GLubyte*)data_in) + alpha_offset;
-        for (U32 y = 0; y < paired_h; y += 2)
-        {
-            const GLubyte* current = rowstart;
-            for (U32 x = 0; x < paired_w; x += 2)
-            {
-                const U32 s1 = current[0];
-                alphatotal += s1;
-                const U32 s2 = current[w * alpha_stride];
-                alphatotal += s2;
-                current += alpha_stride;
-                const U32 s3 = current[0];
-                alphatotal += s3;
-                const U32 s4 = current[w * alpha_stride];
-                alphatotal += s4;
-                current += alpha_stride;
-
-                ++sample[s1 / 16];
-                ++sample[s2 / 16];
-                ++sample[s3 / 16];
-                ++sample[s4 / 16];
-
-                const U32 asum = (s1 + s2 + s3 + s4);
-                alphatotal += asum;
-                sample[asum / (16 * 4)] += 4;
-            }
-
-            rowstart += 2 * w * alpha_stride;
-        }
-        // Two histogram entries per source texel over the paired region.
-        length = 2 * paired_w * paired_h;
-    }
-    else
-    {
-        const unsigned char* current = ((const unsigned char*)data_in) + alpha_offset;
-        for (U32 i = 0; i < length; i++)
-        {
-            const U32 s1 = *current;
-            alphatotal += s1;
-            ++sample[s1 / 16];
-            current += alpha_stride;
-        }
-    }
-
-    // if more than 1/16th of alpha samples are mid-range, this
-    // shouldn't be treated as a 1-bit mask
-
-    // also, if all of the alpha samples are clumped on one half
-    // of the range (but not at an absolute extreme), then consider
-    // this to be an intentional effect and don't treat as a mask.
-
-    U32 midrangetotal = 0;
-    for (U32 i = 2; i < 13; i++)
-    {
-        midrangetotal += sample[i];
-    }
-    U32 lowerhalftotal = 0;
-    for (U32 i = 0; i < 8; i++)
-    {
-        lowerhalftotal += sample[i];
-    }
-    U32 upperhalftotal = 0;
-    for (U32 i = 8; i < 16; i++)
-    {
-        upperhalftotal += sample[i];
-    }
-
-    if (midrangetotal > length / 48 ||
-        (lowerhalftotal == length && alphatotal != 0) ||
-        (upperhalftotal == length && alphatotal != 255 * length))
-    {
-        return false; // not suitable for masking
-    }
-    else
-    {
-        return true; // is a mask
-    }
+    return VayuImageBlockCompressor::analyzeAlphaMask(
+        static_cast<const U8*>(data_in), w, h, alpha_offset, alpha_stride);
 }
 
 void LLImageGL::analyzeAlpha(const void* data_in, U32 w, U32 h)
@@ -2882,7 +2790,8 @@ void LLImageGL::updatePickMask(S32 width, S32 height, const U8* data_in)
 
     if (mFormatType != GL_UNSIGNED_BYTE ||
         ((mFormatPrimary != GL_RGBA)
-      && (mFormatPrimary != GL_SRGB_ALPHA)))
+      && (mFormatPrimary != GL_SRGB_ALPHA)
+      && !isCompressed()))
     {
         //cannot generate a pick mask for this texture
         freePickMask();

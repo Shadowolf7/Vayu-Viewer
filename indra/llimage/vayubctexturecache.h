@@ -31,6 +31,8 @@ struct VayuBCCacheEntryHeader
 {
     U8  mFormat = 0;           // EVayuBlockCompressionFormat, as encoded by the caller
     U8  mPreset = 0;           // EVayuBlockCompressionPreset the buffer was encoded at
+    U8  mIsMask = 0;           // 1 if alpha mask, 0 if alpha blend / no mask
+    U8  mReserved = 0;         // Reserved padding
     S32 mMipLevels = 0;
     U32 mWidth = 0;
     U32 mHeight = 0;

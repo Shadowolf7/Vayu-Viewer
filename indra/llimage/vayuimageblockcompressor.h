@@ -41,6 +41,7 @@ struct VayuBlockCompressionResult
     U32 mHeight = 0;
     S32 mMipLevels = 0;
     S32 mComponents = 0;
+    bool mIsMask = false; // Evaluated alpha suitability for 1-bit cutout masking (PASS_ALPHA_MASK)
     std::vector<U8> mBuffer; // Mip chain stored in reverse order (smallest mip at offset 0, largest at end)
 
     // Offset in mBuffer where the largest mip starts
@@ -74,6 +75,10 @@ public:
 
     // Checks if dimensions and components are eligible for block compression
     static bool isEligible(U32 width, U32 height, S32 components);
+
+    // Evaluates alpha channel suitability for 1-bit cutout masking (PASS_ALPHA_MASK)
+    // using a 16-bin quantized histogram and 2x2 box-filter downsampling.
+    static bool analyzeAlphaMask(const U8* data_in, U32 w, U32 h, S8 alpha_offset, S8 alpha_stride);
 
     // Compress raw pixel buffer into a mipped block-compressed payload
     static bool encode(const U8* src_data, U32 width, U32 height, S32 components,

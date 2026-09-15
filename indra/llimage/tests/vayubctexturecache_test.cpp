@@ -37,11 +37,13 @@ namespace tut
         return std::make_shared<const std::vector<U8>>(std::move(bytes));
     }
 
-    static VayuBCCacheEntryHeader make_header(U8 format, U8 preset)
+    static VayuBCCacheEntryHeader make_header(U8 format, U8 preset, U8 is_mask = 1)
     {
         VayuBCCacheEntryHeader h;
         h.mFormat = format;
         h.mPreset = preset;
+        h.mIsMask = is_mask;
+        h.mReserved = 0;
         h.mMipLevels = 3;
         h.mWidth = 16;
         h.mHeight = 16;
@@ -61,7 +63,7 @@ namespace tut
 
         LLUUID id;
         id.generate();
-        VayuBCCacheEntryHeader header = make_header(3, 2);
+        VayuBCCacheEntryHeader header = make_header(3, 2, 1);
         std::vector<U8> buffer = { 1, 2, 3, 4, 5, 6, 7, 8 };
 
         VayuBCTextureCache::instance().writeEntry(id, 0, header, make_buffer(buffer));
@@ -73,6 +75,7 @@ namespace tut
         ensure("Write-then-read succeeds", ok);
         ensure_equals("Format round-trips", read_header.mFormat, header.mFormat);
         ensure_equals("Preset round-trips", read_header.mPreset, header.mPreset);
+        ensure_equals("IsMask round-trips", read_header.mIsMask, header.mIsMask);
         ensure_equals("Width round-trips", read_header.mWidth, header.mWidth);
         ensure("Buffer bytes round-trip", read_buffer == buffer);
 

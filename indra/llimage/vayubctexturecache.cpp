@@ -31,7 +31,7 @@ constexpr time_t TIME_THRESHOLD_PURGE = 60;
 namespace
 {
     constexpr U32 kMagic = 0x31434256; // "VBC1"
-    constexpr U32 kFormatVersion = 1;
+    constexpr U32 kFormatVersion = 2;
     constexpr F64 kDropLogIntervalSeconds = 10.0;
 
     struct FileHeader

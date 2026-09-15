@@ -517,6 +517,68 @@ namespace tut
         ensure("BC7 preserved on non-macOS", result.mFormat == EVayuBlockCompressionFormat::BC7);
 #endif
     }
+
+    // Test 17: Opaque 4-channel texture signs mIsMask == true and chooses BC1
+    template<> template<>
+    void block_compressor_object::test<17>()
+    {
+        const U32 width = 16, height = 16;
+        std::vector<U8> rgba(width * height * 4, 255);
+
+        VayuBlockCompressionResult result;
+        bool ok = VayuImageBlockCompressor::encode(rgba.data(), width, height, 4, result, EVayuBlockCompressionFormat::Auto);
+        ensure("Encoding opaque RGBA succeeded", ok);
+        ensure("Opaque RGBA resolves to BC1", result.mFormat == EVayuBlockCompressionFormat::BC1);
+        ensure("Opaque RGBA signs as mask", result.mIsMask == true);
+    }
+
+    // Test 18: Cutout 1-bit alpha signs mIsMask == true and chooses translucent format
+    template<> template<>
+    void block_compressor_object::test<18>()
+    {
+        const U32 width = 16, height = 16;
+        std::vector<U8> rgba(width * height * 4);
+        // Checkerboard of 2x2 solid (255) and 2x2 transparent (0) - punch-through cutout
+        for (U32 y = 0; y < height; ++y)
+        {
+            for (U32 x = 0; x < width; ++x)
+            {
+                size_t idx = (y * width + x) * 4;
+                rgba[idx + 0] = 200;
+                rgba[idx + 1] = 200;
+                rgba[idx + 2] = 200;
+                rgba[idx + 3] = ((x / 2 + y / 2) % 2 == 0) ? 255 : 0;
+            }
+        }
+
+        VayuBlockCompressionResult result;
+        bool ok = VayuImageBlockCompressor::encode(rgba.data(), width, height, 4, result, EVayuBlockCompressionFormat::Auto);
+        ensure("Encoding cutout RGBA succeeded", ok);
+        ensure("Cutout RGBA resolves to translucent format", result.mFormat == kExpectedTranslucentFormat);
+        ensure("Cutout RGBA signs as mask", result.mIsMask == true);
+    }
+
+    // Test 19: Smooth translucent gradient signs mIsMask == false and chooses translucent format
+    template<> template<>
+    void block_compressor_object::test<19>()
+    {
+        const U32 width = 16, height = 16;
+        std::vector<U8> rgba(width * height * 4);
+        // Smooth gradient from 32 to 200 (all mid-range values)
+        for (size_t i = 0; i < width * height; ++i)
+        {
+            rgba[i * 4 + 0] = 100;
+            rgba[i * 4 + 1] = 100;
+            rgba[i * 4 + 2] = 100;
+            rgba[i * 4 + 3] = (U8)(32 + (i * (200 - 32)) / (width * height));
+        }
+
+        VayuBlockCompressionResult result;
+        bool ok = VayuImageBlockCompressor::encode(rgba.data(), width, height, 4, result, EVayuBlockCompressionFormat::Auto);
+        ensure("Encoding gradient RGBA succeeded", ok);
+        ensure("Gradient RGBA resolves to translucent format", result.mFormat == kExpectedTranslucentFormat);
+        ensure("Gradient RGBA does NOT sign as mask", result.mIsMask == false);
+    }
 }
 
 
