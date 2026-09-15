@@ -5107,10 +5107,22 @@ bool LLVOAvatar::updateCharacter(LLAgent &agent)
     //--------------------------------------------------------------------
     if (getParent() && !isSitting())
     {
-        LL_INFOS("Avatar") << (isSelf() ? "Self a" : "A") << "vatar " << getID()
-            << " has parent " << ((LLViewerObject*)getParent())->getID()
-            << " but mIsSitting is false; auto-reseating via idle reconciliation" << LL_ENDL;
-        sitOnObject((LLViewerObject*)getParent());
+        LLViewerObject* parent = (LLViewerObject*)getParent();
+        if (parent->isDead() || (parent->getRegion() && getRegion() && parent->getRegion() != getRegion()))
+        {
+            LL_WARNS("Avatar") << (isSelf() ? "Self a" : "A") << "vatar " << getID()
+                << " has parent " << parent->getID()
+                << " but parent is " << (parent->isDead() ? "dead" : "in different region")
+                << "; clearing parent via idle reconciliation" << LL_ENDL;
+            setParent(NULL);
+        }
+        else
+        {
+            LL_INFOS("Avatar") << (isSelf() ? "Self a" : "A") << "vatar " << getID()
+                << " has parent " << parent->getID()
+                << " but mIsSitting is false; auto-reseating via idle reconciliation" << LL_ENDL;
+            sitOnObject(parent);
+        }
     }
     else if (!getParent() && isSitting() && !isMotionActive(ANIM_AGENT_SIT_GROUND_CONSTRAINED))
     {
@@ -7836,6 +7848,14 @@ bool LLVOAvatar::setParent(LLViewerObject* parent)
     }
     else
     {
+        if (parent->isDead() || (parent->getRegion() && getRegion() && parent->getRegion() != getRegion()))
+        {
+            LL_WARNS("Avatar") << (isSelf() ? "Self a" : "A") << "vatar " << getID()
+                << " rejecting parent " << parent->getID()
+                << " because parent is " << (parent->isDead() ? "dead" : "in different region") << LL_ENDL;
+            return false;
+        }
+
         ret = LLViewerObject::setParent(parent);
         if(ret)
         {
@@ -8323,6 +8343,21 @@ void LLVOAvatar::sitDown(bool bSitting)
 //-----------------------------------------------------------------------------
 void LLVOAvatar::sitOnObject(LLViewerObject *sit_object)
 {
+    if (!sit_object || sit_object->isDead())
+    {
+        LL_WARNS("Avatar") << (isSelf() ? "Self a" : "A") << "vatar " << getID()
+            << " cannot sit on null or dead object" << LL_ENDL;
+        return;
+    }
+    if (sit_object->getRegion() && getRegion() && sit_object->getRegion() != getRegion())
+    {
+        LL_WARNS("Avatar") << (isSelf() ? "Self a" : "A") << "vatar " << getID()
+            << " cannot sit on object " << sit_object->getID()
+            << " in different region (" << (sit_object->getRegion() ? sit_object->getRegion()->getName() : "(none)")
+            << " vs avatar in " << (getRegion() ? getRegion()->getName() : "(none)") << ")" << LL_ENDL;
+        return;
+    }
+
     LL_INFOS("Avatar") << (isSelf() ? "Self a" : "A") << "vatar " << getID()
         << " sitting on object " << sit_object->getID()
         << " in region " << (sit_object->getRegion() ? sit_object->getRegion()->getName() : "(none)")
