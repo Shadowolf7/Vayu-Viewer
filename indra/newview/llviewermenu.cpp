@@ -2370,12 +2370,31 @@ void handle_objects_visibility(void* userdata)
     LL_CONT << LL_ENDL;
 
     gObjectList.refreshAllObjects();
+}
 
-    static LLCachedControl<bool> refresh_attach(gSavedSettings, "AutoRefreshAttachmentsInSL");
-    if (refresh_attach && (type == AFTER_CROSS_BORDER || type == AFTER_FAR_TP))
+void handle_auto_refresh_attachments(void* userdata)
+{
+    if (LLApp::isExiting() || LLStartUp::getStartupState() < STATE_STARTED)
     {
-        handle_refresh_attachments();
+        return;
     }
+
+    U32 type = (U32)((intptr_t)userdata);
+    LL_INFOS("Renderer") << "Auto-refreshing attachments";
+    switch (type)
+    {
+        case AFTER_CROSS_BORDER:
+            LL_CONT << " after sim border crossing";
+            break;
+        case AFTER_FAR_TP:
+            LL_CONT << " after far TP";
+            break;
+        default:
+            break;
+    }
+    LL_CONT << LL_ENDL;
+
+    handle_refresh_attachments();
 }
 
 void schedule_objects_visibility_refresh(U32 type)
@@ -2384,31 +2403,43 @@ void schedule_objects_visibility_refresh(U32 type)
     static LLCachedControl<U32> cross_delay(gSavedSettings, "VisibilityAutoRefreshBorder");
     static LLCachedControl<U32> tp_delay(gSavedSettings, "VisibilityAutoRefreshFarTP");
 
-    F32 delay = 0.f;
+    F32 scene_delay = 0.f;
     switch (type)
     {
         case AFTER_LOGIN:
-            delay = (F32)login_delay;
+            scene_delay = (F32)login_delay;
             break;
         case AFTER_CROSS_BORDER:
-            delay = (F32)cross_delay;
+            scene_delay = (F32)cross_delay;
             break;
         case AFTER_FAR_TP:
-            delay = (F32)tp_delay;
+            scene_delay = (F32)tp_delay;
             break;
         default:
-            delay = 0.f;
+            scene_delay = 0.f;
             break;
     }
 
-    // Skip if purposely disabled (0), or when not yet rendering the world.
-    if (delay <= 0.f || LLStartUp::getStartupState() < STATE_STARTED)
+    if (LLStartUp::getStartupState() < STATE_STARTED)
     {
         return;
     }
 
-    doAfterInterval(std::bind(handle_objects_visibility, (void*)((intptr_t)type)),
-                    llclamp(delay, 0.5f, 10.f));
+    // 1. Scene objects visibility refresh (rebuilds scene geometry / octree)
+    if (scene_delay > 0.f)
+    {
+        doAfterInterval(std::bind(handle_objects_visibility, (void*)((intptr_t)type)),
+                        llclamp(scene_delay, 0.5f, 10.f));
+    }
+
+    // 2. Decoupled attachment re-synchronization (lightweight, worn attachments only)
+    static LLCachedControl<bool> refresh_attach(gSavedSettings, "AutoRefreshAttachmentsInSL");
+    if (refresh_attach && (type == AFTER_CROSS_BORDER || type == AFTER_FAR_TP))
+    {
+        F32 attach_delay = (scene_delay > 0.f) ? scene_delay : 2.0f;
+        doAfterInterval(std::bind(handle_auto_refresh_attachments, (void*)((intptr_t)type)),
+                        llclamp(attach_delay, 0.5f, 10.f));
+    }
 }
 
 #if 1 //ndef LL_RELEASE_FOR_DOWNLOAD
