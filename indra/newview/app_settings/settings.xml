@@ -1713,7 +1713,7 @@
       <key>Type</key>
       <string>U32</string>
       <key>Value</key>
-      <integer>2</integer>
+      <integer>0</integer>
     </map>
     <key>VisibilityAutoRefreshLogin</key>
     <map>
