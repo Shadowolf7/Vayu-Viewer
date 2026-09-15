@@ -1035,19 +1035,15 @@ bool LLAgent::isSeatedOnVehicle()
     }
 
     LLViewerObject* root_object = (LLViewerObject*)gAgentAvatarp->getRoot();
-    if (!root_object)
+    if (!root_object || root_object->flagCameraDecoupled())
     {
         return false;
     }
 
-    // If script explicitly requested camera decoupling, respect it as handled by the script
-    if (root_object->flagCameraDecoupled())
-    {
-        return false;
-    }
-
-    // Persistent vehicle criteria: driver controls taken, or physical vehicle linkset
-    return gAgent.anyControlGrabbed() || root_object->flagUsePhysics();
+    // Decouple tilt only for physical vehicles. In Second Life, dynamic vehicle physics
+    // (banking, pitch, roll from terrain/speed) requires STATUS_PHYSICS == TRUE.
+    // Static furniture (chairs, couches, beds) and non-physical objects have no dynamics.
+    return root_object->flagUsePhysics();
 }
 
 // static
