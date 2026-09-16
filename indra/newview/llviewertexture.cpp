@@ -482,8 +482,22 @@ void LLViewerTexture::updateClass()
     // If we detect 2048MB of VRAM, this will, by default, only use 1024.
     // If you set 1024MB of VRAM, this will, by default, use 512.
     // -Geenz 2025-03-03
-    static LLCachedControl<U32> tex_vram_divisor(gSavedSettings, "RenderTextureVRAMDivisor", 2);
+    static LLCachedControl<U32> tex_vram_divisor(gSavedSettings, "RenderTextureVRAMDivisor", 1);
     static LLCachedControl<U32> max_vram_budget(gSavedSettings, "RenderMaxVRAMBudget", 0);
+
+    // One-time migration: older builds defaulted RenderTextureVRAMDivisor to 2 and persisted it to
+    // user settings files. On GPUs with 4GB+ VRAM, migrate legacy 2 back to upstream default 1.
+    static bool sMigratedDivisor = false;
+    if (!sMigratedDivisor)
+    {
+        sMigratedDivisor = true;
+        if (tex_vram_divisor == 2 && gGLManager.mVRAM >= 4096)
+        {
+            LL_INFOS("Texture") << "Migrating legacy RenderTextureVRAMDivisor from 2 to 1 for "
+                                << gGLManager.mVRAM << " MB GPU." << LL_ENDL;
+            gSavedSettings.setU32("RenderTextureVRAMDivisor", 1);
+        }
+    }
 
     F64 texture_bytes_alloc = LLImageGL::getTextureBytesAllocated() / 1024.0 / 1024.0;
     F64 vertex_bytes_alloc = LLVertexBuffer::getBytesAllocated() / 1024.0 / 512.0;
@@ -496,7 +510,8 @@ void LLViewerTexture::updateClass()
     // But when manual control is not enabled, use the VRAM divisor.
     // While we're at it, assume we have 1024 to play with at minimum when the divisor is in use.  Works more elegantly with the logic below this.
     // -Geenz 2025-03-21
-    F32 budget = max_vram_budget == 0 ? llmax(1024, (F32)gGLManager.mVRAM / tex_vram_divisor) : (F32)max_vram_budget;
+    U32 divisor = llmax(1u, (U32)tex_vram_divisor);
+    F32 budget = max_vram_budget == 0 ? llmax(1024, (F32)gGLManager.mVRAM / divisor) : (F32)max_vram_budget;
 
     // Try to leave at least half a GB for everyone else and for bias,
     // but keep at least 768MB for ourselves
@@ -527,8 +542,16 @@ void LLViewerTexture::updateClass()
         }
 
         if (is_sys_low || over_pct > 2.f)
-        { // if we're low on system memory, emergency purge off screen textures to avoid a death spiral
-            LL_WARNS() << "Low system memory detected, emergency downrezzing off screen textures" << LL_ENDL;
+        { // if we're low on system memory or significantly over VRAM budget, emergency purge off screen textures to avoid a death spiral
+            if (is_sys_low)
+            {
+                LL_WARNS() << "Low system memory (RAM) detected, emergency downrezzing off screen textures" << LL_ENDL;
+            }
+            else
+            {
+                LL_WARNS() << "Excessive texture VRAM usage detected (" << ll_round(over_pct * 100.f)
+                           << "% over target budget), emergency downrezzing off screen textures" << LL_ENDL;
+            }
             for (auto& image : gTextureList)
             {
                 gTextureList.updateImageDecodePriority(image, false /*will modify gTextureList otherwise!*/);

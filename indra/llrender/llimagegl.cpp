@@ -2958,9 +2958,6 @@ bool LLImageGL::scaleDown(S32 desired_discard)
 
     if (mTarget != GL_TEXTURE_2D
         || mFormatInternal == -1 // not initialized
-        || isCompressed()        // neither path can work on block-compressed data:
-                                 // the FBO path cannot render into it and the PBO path
-                                 // cannot re-upload it as loose pixels
         )
     {
         return false;
@@ -2977,6 +2974,75 @@ bool LLImageGL::scaleDown(S32 desired_discard)
 
     S32 desired_width = getWidth(desired_discard);
     S32 desired_height = getHeight(desired_discard);
+
+    if (isCompressed())
+    {
+        // Block-compressed textures cannot use the FBO path (cannot render into BC formats)
+        // or the uncompressed PBO path. However, all lower mips are already compressed
+        // and resident in the live OpenGL texture! We allocate immutable storage for the
+        // smaller texture and blit the resident mip levels directly on the GPU using
+        // glCopyImageSubData, or fall back to glGetCompressedTexImage / glCompressedTexSubImage2D.
+        const LLGLuint old_texname = mTexName;
+        LLGLuint new_texname = 0;
+        generateTextures(1, &new_texname);
+        mStorageAllocated = false;
+        if (new_texname == 0)
+        {
+            LL_WARNS_ONCE("LLImageGL") << "Failed to allocate a texture name for BC downscaling." << LL_ENDL;
+            return false;
+        }
+
+        gGL.getTextureSlot(0)->bindManual(mBindTarget, new_texname);
+        allocateTextureStorage(desired_width, desired_height, mHasMipMaps);
+
+        if (glCopyImageSubData != nullptr)
+        {
+            for (S32 dst_level = 0; dst_level < mMipLevels; ++dst_level)
+            {
+                S32 src_level = mip + dst_level;
+                S32 w = getWidth(desired_discard + dst_level);
+                S32 h = getHeight(desired_discard + dst_level);
+                glCopyImageSubData(old_texname, mTarget, src_level, 0, 0, 0,
+                                   new_texname, mTarget, dst_level, 0, 0, 0,
+                                   w, h, 1);
+            }
+            stop_glerror();
+        }
+        else
+        {
+            // Compatibility fallback for systems without glCopyImageSubData (OpenGL < 4.3)
+            std::vector<U8> mip_buf;
+            for (S32 dst_level = 0; dst_level < mMipLevels; ++dst_level)
+            {
+                S32 src_level = mip + dst_level;
+                S32 w = getWidth(desired_discard + dst_level);
+                S32 h = getHeight(desired_discard + dst_level);
+                GLsizei level_bytes = (GLsizei)dataFormatBytes(mFormatPrimary, w, h);
+                if (mip_buf.size() < (size_t)level_bytes)
+                {
+                    mip_buf.resize(level_bytes);
+                }
+                gGL.getTextureSlot(0)->bindManual(mBindTarget, old_texname);
+                glGetCompressedTexImage(mTarget, src_level, mip_buf.data());
+                gGL.getTextureSlot(0)->bindManual(mBindTarget, new_texname);
+                glCompressedTexSubImage2D(mTarget, dst_level, 0, 0, w, h, mFormatPrimary, level_bytes, mip_buf.data());
+            }
+            stop_glerror();
+        }
+
+        gGL.getTextureSlot(0)->unbind();
+
+        // Retire the old texture and publish the new one. Accounting for the new allocation
+        // is done by allocateTextureStorage.
+        free_tex_image(old_texname);
+        deleteTextures(1, &old_texname);
+        mTexName = new_texname;
+
+        mCurrentDiscardLevel = desired_discard;
+        mTextureMemory = (S64Bytes)getMipBytes(mCurrentDiscardLevel);
+
+        return true;
+    }
 
     // Downscale into a NEW texture object rather than reallocating this one in place.
     // glTexImage2D on the live name is illegal once the texture has immutable storage
