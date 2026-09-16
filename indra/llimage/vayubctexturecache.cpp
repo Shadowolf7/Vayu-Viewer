@@ -77,6 +77,30 @@ std::string VayuBCTextureCache::getFilePath(const LLUUID& id, S32 discard_level)
     return ((mCacheDir + filename[0]) + LL_DIR_DELIM_STR) + filename;
 }
 
+bool VayuBCTextureCache::ensureDirectoriesExist()
+{
+    if (mCacheDir.empty())
+    {
+        return false;
+    }
+
+    bool ok = (LLFile::mkdir(mCacheDir) == 0);
+    if (ok)
+    {
+        for (U32 i = 0; i < 16; ++i)
+        {
+            ok &= (LLFile::mkdir(mCacheDir + sDigits[i]) == 0);
+        }
+    }
+
+    mCacheValid = ok;
+    if (!ok)
+    {
+        LL_WARNS("Texture") << "VayuBCTextureCache: failed to ensure cache directory: " << mCacheDir << LL_ENDL;
+    }
+    return ok;
+}
+
 void VayuBCTextureCache::initCache(const std::filesystem::path& cache_dir, S64 max_size_bytes,
                                    S64 max_pending_bytes, bool second_instance)
 {
@@ -96,9 +120,21 @@ void VayuBCTextureCache::initCache(const std::filesystem::path& cache_dir, S64 m
         cache_dir_str += LL_DIR_DELIM_CHR;
     }
 
-    if (mCacheValid && mCacheDir == cache_dir_str)
+    if (mCacheValid && mCacheDir == cache_dir_str && LLFile::isdir(mCacheDir))
     {
-        return;
+        bool subdirs_exist = true;
+        for (U32 i = 0; i < 16; ++i)
+        {
+            if (!LLFile::isdir(mCacheDir + sDigits[i]))
+            {
+                subdirs_exist = false;
+                break;
+            }
+        }
+        if (subdirs_exist)
+        {
+            return;
+        }
     }
 
     mCacheDir = cache_dir_str;
@@ -108,18 +144,8 @@ void VayuBCTextureCache::initCache(const std::filesystem::path& cache_dir, S64 m
     mCurrentSizeBytes = 0;
     mEntryCount = 0;
 
-    mCacheValid = (LLFile::mkdir(mCacheDir) == 0);
-    if (mCacheValid)
+    if (!ensureDirectoriesExist())
     {
-        for (U32 i = 0; i < 16; ++i)
-        {
-            mCacheValid &= (LLFile::mkdir(mCacheDir + sDigits[i]) == 0);
-        }
-    }
-
-    if (!mCacheValid)
-    {
-        LL_WARNS("Texture") << "VayuBCTextureCache: failed to create cache directory: " << mCacheDir << LL_ENDL;
         return;
     }
 
@@ -203,6 +229,8 @@ void VayuBCTextureCache::clear()
         mFlushing.clear();
         mPendingBytes = 0;
     }
+
+    ensureDirectoriesExist();
 
     if (LLFile::isdir(mCacheDir))
     {
@@ -505,7 +533,10 @@ void VayuBCTextureCache::writeEntry(const LLUUID& id, S32 discard_level,
                                     const VayuBCCacheEntryHeader& header,
                                     std::shared_ptr<const std::vector<U8>> buffer)
 {
-    if (!buffer || !mCacheValid)
+    if (!buffer)
+        return;
+
+    if (!mCacheValid && !ensureDirectoriesExist())
         return;
 
     const S64 new_size = (S64)(sizeof(FileHeader) + buffer->size());
@@ -644,6 +675,13 @@ void VayuBCTextureCache::drainPendingWrites()
         }
 
         std::ofstream out(pending.mPath, std::ios::binary | std::ios::trunc);
+        if (!out.good())
+        {
+            ensureDirectoriesExist();
+            out.clear();
+            out.open(pending.mPath, std::ios::binary | std::ios::trunc);
+        }
+
         if (out.good())
         {
             FileHeader file_header;
@@ -661,6 +699,11 @@ void VayuBCTextureCache::drainPendingWrites()
             {
                 ++mEntryCount;
             }
+        }
+        else
+        {
+            LL_WARNS_ONCE("Texture") << "VayuBCTextureCache: failed to write cache entry to \""
+                                     << pending.mPath << "\"" << LL_ENDL;
         }
 
         {

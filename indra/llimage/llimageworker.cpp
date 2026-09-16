@@ -202,16 +202,62 @@ bool ImageRequest::processRequest()
             {
                 mFormattedImage->setDiscardLevel(mDiscardLevel);
             }
-            mDecodedImageRaw = new LLImageRaw(mFormattedImage->getWidth(),
-                                              mFormattedImage->getHeight(),
-                                              mFormattedImage->getComponents());
         }
-        done = mFormattedImage->decode(mDecodedImageRaw, decode_time_slice);
-        // some decoders are removing data when task is complete and there were errors
-        mDecodedRaw = done && mDecodedImageRaw->getData();
 
-        // Pick up errors from decoding
-        mErrorString = LLImage::getLastThreadError();
+        const S32 discard = (mDiscardLevel >= 0) ? mDiscardLevel : (S32)mFormattedImage->getDiscardLevel();
+        const bool cacheable = !mNeedsAux && mID.notNull() && discard >= 0 && mAllowCompression;
+        bool cache_hit = false;
+
+        // Check VayuBCTextureCache *before* running expensive CPU OpenJPEG decode.
+        // On a hit, we attach the cached compressed blocks and bypass software decode entirely.
+        if (cacheable)
+        {
+            VayuBCCacheEntryHeader cache_header;
+            std::vector<U8> cache_buffer;
+            const U8 min_preset = (U8)VayuImageBlockCompressor::getEffectivePreset();
+            if (VayuBCTextureCache::instance().readEntry(mID, discard, min_preset, cache_header, cache_buffer))
+            {
+                auto comp_res = std::make_shared<VayuBlockCompressionResult>();
+                comp_res->mFormat = (EVayuBlockCompressionFormat)cache_header.mFormat;
+                comp_res->mPreset = (EVayuBlockCompressionPreset)cache_header.mPreset;
+                comp_res->mIsMask = (cache_header.mIsMask != 0);
+                comp_res->mGLInternalFormat = cache_header.mGLInternalFormat;
+                comp_res->mGLPrimaryFormat = cache_header.mGLPrimaryFormat;
+                comp_res->mWidth = cache_header.mWidth;
+                comp_res->mHeight = cache_header.mHeight;
+                comp_res->mMipLevels = cache_header.mMipLevels;
+                comp_res->mComponents = cache_header.mComponents;
+                comp_res->mBuffer = std::move(cache_buffer);
+
+                if (mDecodedImageRaw.isNull())
+                {
+                    mDecodedImageRaw = new LLImageRaw(cache_header.mWidth,
+                                                      cache_header.mHeight,
+                                                      cache_header.mComponents);
+                }
+                mDecodedImageRaw->setBlockCompressionResult(comp_res);
+                mFormattedImage->setDiscardLevel(discard);
+                mDecodedRaw = true;
+                done = true;
+                cache_hit = true;
+            }
+        }
+
+        if (!cache_hit)
+        {
+            if (mDecodedImageRaw.isNull())
+            {
+                mDecodedImageRaw = new LLImageRaw(mFormattedImage->getWidth(),
+                                                  mFormattedImage->getHeight(),
+                                                  mFormattedImage->getComponents());
+            }
+            done = mFormattedImage->decode(mDecodedImageRaw, decode_time_slice);
+            // some decoders are removing data when task is complete and there were errors
+            mDecodedRaw = done && mDecodedImageRaw->getData();
+
+            // Pick up errors from decoding
+            mErrorString = LLImage::getLastThreadError();
+        }
     }
     if (done && mNeedsAux && !mDecodedAux && mFormattedImage.notNull())
     {
@@ -229,86 +275,45 @@ bool ImageRequest::processRequest()
         mErrorString = LLImage::getLastThreadError();
     }
 
-    if (done && mDecodedRaw && mDecodedImageRaw.notNull())
+    if (done && mDecodedRaw && mDecodedImageRaw.notNull() && !mDecodedImageRaw->getBlockCompressionResult())
     {
         if (mAllowCompression &&
             VayuImageBlockCompressor::isEligible(mDecodedImageRaw->getWidth(),
                                                mDecodedImageRaw->getHeight(),
                                                mDecodedImageRaw->getComponents()))
         {
-            // Only mFormattedImage->getDiscardLevel() (read *after* decode, above)
-            // reflects what was actually decoded - the pre-decode desired/loaded
-            // discard can legitimately differ. Cache lookups keyed on the wrong
-            // value would silently never hit.
             const S32 discard = mFormattedImage->getDiscardLevel();
-            // A texture streaming in progressively writes one cache entry per
-            // discard level it passes through (they're distinct keys, not
-            // overwrites) - accepted churn, not a bug: each entry is still
-            // independently useful for a future load that only wants that
-            // discard, e.g. a texture that stays small/distant on screen.
-            //
-            // mNeedsAux requests decode a channel the BC cache never stores;
-            // leave them on the always-live-encode path entirely.
             const bool cacheable = !mNeedsAux && mID.notNull() && discard >= 0;
-            bool cache_hit = false;
 
-            if (cacheable)
+            auto comp_res = std::make_shared<VayuBlockCompressionResult>();
+            if (VayuImageBlockCompressor::encode(mDecodedImageRaw, *comp_res))
             {
-                VayuBCCacheEntryHeader cache_header;
-                std::vector<U8> cache_buffer;
-                const U8 min_preset = (U8)VayuImageBlockCompressor::getEffectivePreset();
-                if (VayuBCTextureCache::instance().readEntry(mID, discard, min_preset, cache_header, cache_buffer))
-                {
-                    auto comp_res = std::make_shared<VayuBlockCompressionResult>();
-                    comp_res->mFormat = (EVayuBlockCompressionFormat)cache_header.mFormat;
-                    comp_res->mPreset = (EVayuBlockCompressionPreset)cache_header.mPreset;
-                    comp_res->mIsMask = (cache_header.mIsMask != 0);
-                    comp_res->mGLInternalFormat = cache_header.mGLInternalFormat;
-                    comp_res->mGLPrimaryFormat = cache_header.mGLPrimaryFormat;
-                    comp_res->mWidth = cache_header.mWidth;
-                    comp_res->mHeight = cache_header.mHeight;
-                    comp_res->mMipLevels = cache_header.mMipLevels;
-                    comp_res->mComponents = cache_header.mComponents;
-                    comp_res->mBuffer = std::move(cache_buffer);
-                    mDecodedImageRaw->setBlockCompressionResult(comp_res);
-                    cache_hit = true;
-                }
-            }
+                mDecodedImageRaw->setBlockCompressionResult(comp_res);
 
-            if (!cache_hit)
-            {
-                auto comp_res = std::make_shared<VayuBlockCompressionResult>();
-                if (VayuImageBlockCompressor::encode(mDecodedImageRaw, *comp_res))
+                if (cacheable)
                 {
-                    mDecodedImageRaw->setBlockCompressionResult(comp_res);
-
-                    if (cacheable)
-                    {
-                        VayuBCCacheEntryHeader cache_header;
-                        cache_header.mFormat = (U8)comp_res->mFormat;
-                        cache_header.mPreset = (U8)comp_res->mPreset;
-                        cache_header.mIsMask = comp_res->mIsMask ? 1 : 0;
-                        cache_header.mMipLevels = comp_res->mMipLevels;
-                        cache_header.mWidth = comp_res->mWidth;
-                        cache_header.mHeight = comp_res->mHeight;
-                        cache_header.mComponents = comp_res->mComponents;
-                        cache_header.mGLInternalFormat = comp_res->mGLInternalFormat;
-                        cache_header.mGLPrimaryFormat = comp_res->mGLPrimaryFormat;
-                        // Aliasing shared_ptr: shares comp_res's refcount but
-                        // points at its buffer member, so the cache can hold
-                        // the encoded bytes alive for its background flush
-                        // without copying them. comp_res is already owned by
-                        // mDecodedImageRaw above; writeEntry() requires the
-                        // buffer stay unmodified from here on, which holds -
-                        // encode() has already finished filling it, and the
-                        // only later reader is LLImageGL::createGLTexture(),
-                        // which just reads empty()/data() off it. The
-                        // mBuffer = std::move(...) above is the cache-hit
-                        // path, which never reaches this branch.
-                        VayuBCTextureCache::instance().writeEntry(
-                            mID, discard, cache_header,
-                            std::shared_ptr<const std::vector<U8>>(comp_res, &comp_res->mBuffer));
-                    }
+                    VayuBCCacheEntryHeader cache_header;
+                    cache_header.mFormat = (U8)comp_res->mFormat;
+                    cache_header.mPreset = (U8)comp_res->mPreset;
+                    cache_header.mIsMask = comp_res->mIsMask ? 1 : 0;
+                    cache_header.mMipLevels = comp_res->mMipLevels;
+                    cache_header.mWidth = comp_res->mWidth;
+                    cache_header.mHeight = comp_res->mHeight;
+                    cache_header.mComponents = comp_res->mComponents;
+                    cache_header.mGLInternalFormat = comp_res->mGLInternalFormat;
+                    cache_header.mGLPrimaryFormat = comp_res->mGLPrimaryFormat;
+                    // Aliasing shared_ptr: shares comp_res's refcount but
+                    // points at its buffer member, so the cache can hold
+                    // the encoded bytes alive for its background flush
+                    // without copying them. comp_res is already owned by
+                    // mDecodedImageRaw above; writeEntry() requires the
+                    // buffer stay unmodified from here on, which holds -
+                    // encode() has already finished filling it, and the
+                    // only later reader is LLImageGL::createGLTexture(),
+                    // which just reads empty()/data() off it.
+                    VayuBCTextureCache::instance().writeEntry(
+                        mID, discard, cache_header,
+                        std::shared_ptr<const std::vector<U8>>(comp_res, &comp_res->mBuffer));
                 }
             }
         }

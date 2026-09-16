@@ -5113,18 +5113,13 @@ void LLAppViewer::purgeCache()
     LLVOCache::getInstance()->removeCache(LL_PATH_CACHE);
     LLViewerShaderMgr::instance()->clearShaderCache();
     purgeCefStaleCaches();
-    // deleteFilesInDir() below skips subdirectories, so the BC texture cache
-    // (a subdirectory of LL_PATH_CACHE) needs its own explicit removal.  Use
-    // a raw directory delete rather than VayuBCTextureCache::clear() here
-    // because this function is also called from the cache-location-change path
-    // (before applyBCTextureCacheBudgets()), where mCacheDir may not yet be
-    // initialized.  When called from the mPurgeCache branch of initCache(),
-    // VayuBCTextureCache::clear() is called immediately afterward to reset
-    // in-memory state; this raw delete is a safe no-op if the dir is already
-    // gone.
+    // Align with CoolVL: clear the BC texture cache via VayuBCTextureCache::clear()
+    // rather than destroying the directory tree with deleteDirAndContents().
+    // This removes cached files in subdirectories 0-f while preserving the
+    // directory structure so worker threads can continue writing.
     const std::string bc_cache_dir = gDirUtilp->getExpandedFilename(LL_PATH_CACHE, "bccache");
-    LL_INFOS("AppCache") << "Removing BC texture cache at " << bc_cache_dir << LL_ENDL;
-    gDirUtilp->deleteDirAndContents(bc_cache_dir);
+    LL_INFOS("AppCache") << "Clearing BC texture cache at " << bc_cache_dir << LL_ENDL;
+    VayuBCTextureCache::instance().clear();
     gDirUtilp->deleteFilesInDir(gDirUtilp->getExpandedFilename(LL_PATH_CACHE, ""), "*");
 }
 

@@ -64,6 +64,10 @@ public:
                    S64 max_pending_bytes = kDefaultMaxPendingBytes,
                    bool second_instance = false);
 
+    // Ensures cache_dir and all 16 hex subdirectories ('0'-'f') exist on disk.
+    // Recreates missing directories if they were deleted externally.
+    bool ensureDirectoriesExist();
+
     // Clears the cache by removing all cached files in all subdirectories.
     void clear();
 

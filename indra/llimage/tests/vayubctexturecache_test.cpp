@@ -355,4 +355,83 @@ namespace tut
         VayuBCTextureCache::instance().clear();
         VayuBCTextureCache::instance().shutdown();
     }
+
+    // Test 10: Directory self-healing on write if subdirectories were deleted externally
+    template<> template<>
+    void bc_texture_cache_object::test<10>()
+    {
+        auto dir = test_dir("self_healing_write");
+        std::filesystem::remove_all(dir);
+        VayuBCTextureCache::instance().initCache(dir, 1024 * 1024);
+
+        // Simulate external deletion of all hex subdirectories
+        for (char ch : std::string("0123456789abcdef"))
+        {
+            std::filesystem::remove_all(dir / std::string(1, ch));
+            ensure("Subdirectory deleted", !std::filesystem::exists(dir / std::string(1, ch)));
+        }
+
+        LLUUID id;
+        id.generate();
+        VayuBCCacheEntryHeader header = make_header(3, 2, 1);
+        std::vector<U8> buffer = { 10, 20, 30, 40 };
+
+        // writeEntry should self-heal the missing directory structure
+        VayuBCTextureCache::instance().writeEntry(id, 0, header, make_buffer(buffer));
+
+        // Let the write flush
+        VayuBCTextureCache::instance().shutdown();
+
+        // Hex subdirectory must have been recreated
+        std::string expected_subdir(1, id.asString()[0]);
+        ensure("Subdirectory was self-healed", std::filesystem::is_directory(dir / expected_subdir));
+
+        // Cache entry must be readable
+        VayuBCCacheEntryHeader read_header;
+        std::vector<U8> read_buffer;
+        bool ok = VayuBCTextureCache::instance().readEntry(id, 0, 0, read_header, read_buffer);
+        ensure("Read entry succeeds after self-healing write", ok);
+        ensure("Buffer matches", read_buffer == buffer);
+
+        VayuBCTextureCache::instance().clear();
+    }
+
+    // Test 11: Directory self-healing on clear if root cache dir was deleted externally
+    template<> template<>
+    void bc_texture_cache_object::test<11>()
+    {
+        auto dir = test_dir("self_healing_clear");
+        std::filesystem::remove_all(dir);
+        VayuBCTextureCache::instance().initCache(dir, 1024 * 1024);
+
+        // Simulate external purge destroying the entire cache directory
+        std::filesystem::remove_all(dir);
+        ensure("Cache directory deleted", !std::filesystem::exists(dir));
+
+        // clear() should restore the cache directory and 16 hex subdirectories
+        VayuBCTextureCache::instance().clear();
+
+        ensure("Root cache directory restored", std::filesystem::is_directory(dir));
+        for (char ch : std::string("0123456789abcdef"))
+        {
+            ensure("Subdirectory restored", std::filesystem::is_directory(dir / std::string(1, ch)));
+        }
+
+        // Writes should succeed in the restored hierarchy
+        LLUUID id;
+        id.generate();
+        VayuBCCacheEntryHeader header = make_header(3, 2, 1);
+        std::vector<U8> buffer = { 99, 88, 77 };
+
+        VayuBCTextureCache::instance().writeEntry(id, 0, header, make_buffer(buffer));
+        VayuBCTextureCache::instance().shutdown();
+
+        VayuBCCacheEntryHeader read_header;
+        std::vector<U8> read_buffer;
+        bool ok = VayuBCTextureCache::instance().readEntry(id, 0, 0, read_header, read_buffer);
+        ensure("Read entry succeeds in restored cache", ok);
+        ensure("Buffer matches", read_buffer == buffer);
+
+        VayuBCTextureCache::instance().clear();
+    }
 }
