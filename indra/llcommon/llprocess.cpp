@@ -61,6 +61,9 @@
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#if LL_LINUX
+#include <sys/prctl.h>
+#endif
 #endif
 
 #if LL_WINDOWS
@@ -146,6 +149,34 @@ namespace {
 
 namespace bp = boost::process::v2;
 namespace asio = boost::asio;
+
+#if LL_LINUX
+namespace {
+    // Initializer for boost::process::v2 launcher on Linux:
+    // calls prctl(PR_SET_PDEATHSIG, SIGTERM) in the child process
+    // right after fork() and before execve(). The flag is preserved
+    // across execve(), ensuring the kernel terminates the child if the
+    // viewer crashes or exits unexpectedly.
+    struct LinuxChildPDeathSig
+    {
+        bool mEnabled{true};
+        explicit LinuxChildPDeathSig(bool enabled = true) : mEnabled(enabled) {}
+
+        template<typename Launcher>
+        bp::error_code on_exec_setup(Launcher&, const bp::filesystem::path&, const char * const *)
+        {
+            if (mEnabled)
+            {
+                if (::prctl(PR_SET_PDEATHSIG, SIGTERM) == -1)
+                {
+                    return bp::error_code(errno, bp::system_category());
+                }
+            }
+            return bp::error_code();
+        }
+    };
+}
+#endif
 
 /*****************************************************************************
 *   Helpers
@@ -592,6 +623,21 @@ void LLProcess::launch(const LLSDOrParams& params)
         throw std::runtime_error("not launched: failed parameter validation\n");
     }
 
+#if LL_LINUX
+    // Ensure the viewer process is registered as a subreaper so that any
+    // daemon/grandchild processes (e.g. CEF subprocesses) are reparented
+    // to Vayu rather than lingering under systemd --user / PID 1.
+    static bool sSubreaperSet = false;
+    if (!sSubreaperSet)
+    {
+        sSubreaperSet = true;
+        if (::prctl(PR_SET_CHILD_SUBREAPER, 1) == 0)
+        {
+            LL_INFOS("LLProcess") << "Registered process as child subreaper" << LL_ENDL;
+        }
+    }
+#endif
+
     // Validate FileParam types before attempting to launch
     int file_idx = 0;
     for (const auto& fparam : params.files)
@@ -734,6 +780,30 @@ void LLProcess::launch(const LLSDOrParams& params)
         // Use the throwing overload and catch the exception instead.
         try
         {
+#if LL_LINUX
+            LinuxChildPDeathSig pdeathsig(mAutokill);
+            if (params.cwd.isProvided())
+            {
+                mChild = std::make_unique<bp::process>(
+                    mIOContext,
+                    executable_path,
+                    args,
+                    bp::process_start_dir(params.cwd()),
+                    stdio,
+                    pdeathsig
+                );
+            }
+            else
+            {
+                mChild = std::make_unique<bp::process>(
+                    mIOContext,
+                    executable_path,
+                    args,
+                    stdio,
+                    pdeathsig
+                );
+            }
+#else
             if (params.cwd.isProvided())
             {
                 mChild = std::make_unique<bp::process>(
@@ -753,6 +823,7 @@ void LLProcess::launch(const LLSDOrParams& params)
                     stdio
                 );
             }
+#endif
         }
         catch (const boost::system::system_error& ex)
         {

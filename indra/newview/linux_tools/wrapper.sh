@@ -8,6 +8,10 @@
 ## GL Driver Options
 export mesa_glthread=true
 
+## Raise the open file descriptor limit to avoid running out of sockets/handles
+## during high-throughput texture, mesh, and audio streaming.
+ulimit -n 524288 2>/dev/null || ulimit -n 4096 2>/dev/null
+
 ## --- AMD PERFORMANCE TUNING (carried over from the Firestorm High
 ##     Performance launcher) ---
 ## AMD_DEBUG=lowprecision trades a small amount of rendering precision

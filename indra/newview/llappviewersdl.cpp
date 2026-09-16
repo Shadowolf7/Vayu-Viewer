@@ -55,7 +55,10 @@
 #if LL_VELOPACK
 #include "llvelopack.h"
 #endif
+#elif LL_LINUX
+#include <sys/resource.h>
 #endif
+
 
 #if LL_DARWIN
 #include <sys/types.h>
@@ -695,6 +698,26 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
     // macOS injects via DYLD_INSERT_LIBRARIES, not LD_PRELOAD, so this is a
     // Linux-only scrub (clearing LD_PRELOAD on Darwin did nothing).
     unsetenv( "LD_PRELOAD" ); // <FS:ND/> Get rid of any preloading, we do not want this to happen during startup of plugins.
+
+    // Raise the soft open-file-descriptor limit (RLIMIT_NOFILE) to the hard limit
+    // to prevent socket/file exhaustion during heavy asset and texture streaming.
+    struct rlimit rlim;
+    if (getrlimit(RLIMIT_NOFILE, &rlim) == 0)
+    {
+        rlim_t old_cur = rlim.rlim_cur;
+        if (rlim.rlim_cur < rlim.rlim_max)
+        {
+            rlim.rlim_cur = (rlim.rlim_max == RLIM_INFINITY) ? 1048576 : rlim.rlim_max;
+            if (setrlimit(RLIMIT_NOFILE, &rlim) == 0)
+            {
+                LL_INFOS("System") << "Raised open file descriptor limit from " << old_cur << " to " << rlim.rlim_cur << LL_ENDL;
+            }
+            else
+            {
+                LL_WARNS("System") << "Failed to raise open file descriptor limit to " << rlim.rlim_cur << ": " << errno << LL_ENDL;
+            }
+        }
+    }
 #endif
 
     // This needs to be set as early as possible

@@ -1831,6 +1831,50 @@ bool LLGLManager::initGL()
     }
 #endif
 
+#if LL_LINUX
+    if (mVRAM == 0)
+    {
+        // On Linux under native Wayland/EGL or drivers lacking vendor memory extensions,
+        // query kernel DRM sysfs nodes directly for dedicated video memory.
+        U32 max_sysfs_vram_mb = 0;
+        char path[128];
+        for (int i = 0; i < 8; ++i)
+        {
+            snprintf(path, sizeof(path), "/sys/class/drm/card%d/device/mem_info_vram_total", i);
+            FILE* fp = fopen(path, "r");
+            if (fp)
+            {
+                unsigned long long vram_bytes = 0;
+                if (fscanf(fp, "%llu", &vram_bytes) == 1)
+                {
+                    U32 vram_mb = static_cast<U32>(vram_bytes / (1024 * 1024));
+                    // Check if close to a standard VRAM tier (firmware/VBIOS often reserves a small slice)
+                    static const U32 standard_tiers[] = { 512, 1024, 2048, 3072, 4096, 6144, 8192, 12288, 16384, 24576, 32768 };
+                    for (U32 tier : standard_tiers)
+                    {
+                        if (vram_mb >= (tier - 128) && vram_mb <= tier)
+                        {
+                            vram_mb = tier;
+                            break;
+                        }
+                    }
+                    if (vram_mb > max_sysfs_vram_mb)
+                    {
+                        max_sysfs_vram_mb = vram_mb;
+                    }
+                }
+                fclose(fp);
+            }
+        }
+
+        if (max_sysfs_vram_mb > 0)
+        {
+            mVRAM = max_sysfs_vram_mb;
+            LL_INFOS("RenderInit") << "VRAM Detected (Linux DRM sysfs):" << mVRAM << LL_ENDL;
+        }
+    }
+#endif
+
     if (mVRAM < 256 && old_vram > 0)
     {
         // fall back to old method
