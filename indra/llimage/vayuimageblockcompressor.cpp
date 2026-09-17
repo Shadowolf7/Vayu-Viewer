@@ -772,20 +772,6 @@ bool VayuImageBlockCompressor::encode(const U8* src_data, U32 width, U32 height,
         }
     }
 #endif
-#else
-    bc7enc_compress_block_params bc7_params_slow;
-    bc7enc_compress_block_params bc7_params_fast;
-    if (resolved == EVayuBlockCompressionFormat::BC7)
-    {
-        bc7enc_compress_block_params_init(&bc7_params_slow);
-        apply_bc7_preset(bc7_params_slow, EVayuBlockCompressionPreset::Slow);
-        if (hybrid)
-        {
-            bc7enc_compress_block_params_init(&bc7_params_fast);
-            apply_bc7_preset(bc7_params_fast, EVayuBlockCompressionPreset::Fast);
-        }
-    }
-#endif
 
     // 4. Encode mips into reverse order (smallest mip at offset 0, largest mip at end)
     // Calculate mip offsets in reverse order:
