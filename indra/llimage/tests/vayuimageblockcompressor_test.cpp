@@ -161,7 +161,7 @@ namespace tut
         ensure("Binary cutout RGBA resolves to translucent format", result.mFormat == kExpectedTranslucentFormat);
     }
 
-    // Test 8: All presets encode successfully and don't affect the chosen format
+    // Test 8: Standardized Slow preset model produces valid compression results
     template<> template<>
     void block_compressor_object::test<8>()
     {
@@ -175,59 +175,42 @@ namespace tut
             rgba[i * 4 + 3] = (i % 3 == 0) ? 128 : 255; // partial alpha -> BC7 (or BC3 on macOS)
         }
 
-        const EVayuBlockCompressionPreset saved_preset = VayuImageBlockCompressor::getPreset();
+        ensure("getPreset returns Slow", VayuImageBlockCompressor::getPreset() == EVayuBlockCompressionPreset::Slow);
+        ensure("Default hybrid mips is true", VayuImageBlockCompressor::getHybridMips());
 
-        const EVayuBlockCompressionPreset presets[] = {
-            EVayuBlockCompressionPreset::Ultrafast,
-            EVayuBlockCompressionPreset::Fast,
-            EVayuBlockCompressionPreset::Basic,
-            EVayuBlockCompressionPreset::Slow,
-        };
+        VayuBlockCompressionResult result;
+        bool ok = VayuImageBlockCompressor::encode(rgba.data(), width, height, 4, result, EVayuBlockCompressionFormat::Auto);
+        ensure("Encoding succeeds", ok);
+        ensure("Result preset is Slow", result.mPreset == EVayuBlockCompressionPreset::Slow);
+        ensure("Format resolves to translucent format", result.mFormat == kExpectedTranslucentFormat);
+        ensure("Result produces mipchain buffer", result.mBuffer.size() > 0);
+        ensure("Result has multiple mip levels", result.mMipLevels > 1);
 
-        for (EVayuBlockCompressionPreset preset : presets)
-        {
-            VayuImageBlockCompressor::setPreset(preset);
-            ensure("getPreset reflects setPreset", VayuImageBlockCompressor::getPreset() == preset);
-
-            VayuBlockCompressionResult result;
-            bool ok = VayuImageBlockCompressor::encode(rgba.data(), width, height, 4, result, EVayuBlockCompressionFormat::Auto);
-            ensure("Encoding succeeds at every preset", ok);
-            ensure("Preset doesn't change the resolved format", result.mFormat == kExpectedTranslucentFormat);
-            ensure("Preset run still produces mip data", result.mBuffer.size() > 0);
-        }
-
-        VayuImageBlockCompressor::setPreset(saved_preset);
+        // Test toggle to pure slow mode
+        VayuImageBlockCompressor::setHybridMips(false);
+        ensure("setHybridMips(false) enables pure slow mode", !VayuImageBlockCompressor::getHybridMips());
+        VayuBlockCompressionResult slow_res;
+        bool slow_ok = VayuImageBlockCompressor::encode(rgba.data(), width, height, 4, slow_res, EVayuBlockCompressionFormat::Auto);
+        ensure("Pure slow mode encoding succeeds", slow_ok);
+        ensure("Pure slow mode produces valid buffer", slow_res.mBuffer.size() > 0);
+        VayuImageBlockCompressor::setHybridMips(true);
+        ensure("Reset hybrid mips to true", VayuImageBlockCompressor::getHybridMips());
     }
 
-    // Test 9: Queue backlog downgrades the effective preset but never
-    // raises it above what the user configured.
+    // Test 9: Progressive mip staging encoding produces valid sub-mips and reverse buffer order
     template<> template<>
     void block_compressor_object::test<9>()
     {
-        const EVayuBlockCompressionPreset saved_preset = VayuImageBlockCompressor::getPreset();
+        const U32 width = 32, height = 32;
+        std::vector<U8> rgb(width * height * 3, 128);
 
-        VayuImageBlockCompressor::setPreset(EVayuBlockCompressionPreset::Slow);
-
-        VayuImageBlockCompressor::setQueueBacklog(0);
-        ensure("No backlog uses the configured preset unmodified",
-               VayuImageBlockCompressor::getEffectivePreset() == EVayuBlockCompressionPreset::Slow);
-
-        VayuImageBlockCompressor::setQueueBacklog(20);
-        ensure("Moderate backlog caps effort at Fast",
-               VayuImageBlockCompressor::getEffectivePreset() == EVayuBlockCompressionPreset::Fast);
-
-        VayuImageBlockCompressor::setQueueBacklog(100);
-        ensure("Heavy backlog forces Ultrafast",
-               VayuImageBlockCompressor::getEffectivePreset() == EVayuBlockCompressionPreset::Ultrafast);
-
-        // A configured preset already below the moderate cap is left alone, not raised.
-        VayuImageBlockCompressor::setPreset(EVayuBlockCompressionPreset::Ultrafast);
-        VayuImageBlockCompressor::setQueueBacklog(20);
-        ensure("Moderate backlog never raises effort above the configured preset",
-               VayuImageBlockCompressor::getEffectivePreset() == EVayuBlockCompressionPreset::Ultrafast);
-
-        VayuImageBlockCompressor::setQueueBacklog(0);
-        VayuImageBlockCompressor::setPreset(saved_preset);
+        VayuBlockCompressionResult result;
+        bool ok = VayuImageBlockCompressor::encode(rgb.data(), width, height, 3, result, EVayuBlockCompressionFormat::BC1);
+        ensure("RGB BC1 encoding succeeds", ok);
+        ensure("Result preset is Slow", result.mPreset == EVayuBlockCompressionPreset::Slow);
+        ensure("BC1 produces correct mip count", result.mMipLevels == 6); // 32, 16, 8, 4, 2, 1
+        ensure("Largest mip offset matches reverse layout", result.getLargestMipOffset() > 0);
+        ensure("Discard 0 bytes matches 32x32 BC1 size", result.getMipBytes(0) == (8 * 8 * 8)); // 8x8 blocks * 8 bytes = 512
     }
 
     // Test 10: Non-power-of-two (NPOT) dimensions exercise both interior fast path and boundary clamping
@@ -460,22 +443,12 @@ namespace tut
             VayuImageBlockCompressor::encode(rg_normal.data(), width, height, 2, res, EVayuBlockCompressionFormat::Auto);
         });
 
-        // 3. BC7 Ultrafast (1024x1024 full mipchain)
+        // 3. BC7 (1024x1024 full mipchain)
         {
-            const auto saved = VayuImageBlockCompressor::getPreset();
-            VayuImageBlockCompressor::setPreset(EVayuBlockCompressionPreset::Ultrafast);
-            benchmark("1024x1024 BC7 [Ultrafast]", [&]() {
+            benchmark("1024x1024 BC7 [Standard Slow Mip 0, Fast sub-mips]", [&]() {
                 VayuBlockCompressionResult res;
                 VayuImageBlockCompressor::encode(rgba_trans.data(), width, height, 4, res, EVayuBlockCompressionFormat::BC7);
             });
-
-            VayuImageBlockCompressor::setPreset(EVayuBlockCompressionPreset::Fast);
-            benchmark("1024x1024 BC7 [Fast]", [&]() {
-                VayuBlockCompressionResult res;
-                VayuImageBlockCompressor::encode(rgba_trans.data(), width, height, 4, res, EVayuBlockCompressionFormat::BC7);
-            });
-
-            VayuImageBlockCompressor::setPreset(saved);
         }
     }
 

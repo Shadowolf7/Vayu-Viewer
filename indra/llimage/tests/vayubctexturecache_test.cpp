@@ -43,7 +43,7 @@ namespace tut
         h.mFormat = format;
         h.mPreset = preset;
         h.mIsMask = is_mask;
-        h.mReserved = 0;
+        h.mDiscardLevel = 0;
         h.mMipLevels = 3;
         h.mWidth = 16;
         h.mHeight = 16;
@@ -70,7 +70,7 @@ namespace tut
 
         VayuBCCacheEntryHeader read_header;
         std::vector<U8> read_buffer;
-        bool ok = VayuBCTextureCache::instance().readEntry(id, 0, 0, read_header, read_buffer);
+        bool ok = VayuBCTextureCache::instance().readEntry(id, 0, read_header, read_buffer);
 
         ensure("Write-then-read succeeds", ok);
         ensure_equals("Format round-trips", read_header.mFormat, header.mFormat);
@@ -94,18 +94,17 @@ namespace tut
         id.generate();
         VayuBCCacheEntryHeader header;
         std::vector<U8> buffer;
-        bool ok = VayuBCTextureCache::instance().readEntry(id, 0, 0, header, buffer);
+        bool ok = VayuBCTextureCache::instance().readEntry(id, 0, header, buffer);
         ensure("Unknown entry is a miss", !ok);
 
         VayuBCTextureCache::instance().clear();
     }
 
-    // Test 3: a cached entry below the requested preset is treated as a miss,
-    // but the same entry still satisfies a request at or below its own preset
+    // Test 3: a cached entry hits immediately regardless of encode preset (zero penalty)
     template<> template<>
     void bc_texture_cache_object::test<3>()
     {
-        auto dir = test_dir("preset_gate");
+        auto dir = test_dir("immediate_hit");
         std::filesystem::remove_all(dir);
         VayuBCTextureCache::instance().initCache(dir, 1024 * 1024);
 
@@ -118,11 +117,9 @@ namespace tut
         VayuBCCacheEntryHeader out_header;
         std::vector<U8> out_buffer;
 
-        bool below = VayuBCTextureCache::instance().readEntry(id, 0, /*min_preset*/ 3, out_header, out_buffer);
-        ensure("Cached-below-configured preset is a miss", !below);
-
-        bool at_or_below = VayuBCTextureCache::instance().readEntry(id, 0, /*min_preset*/ 1, out_header, out_buffer);
-        ensure("Cached-at-configured preset is a hit", at_or_below);
+        bool hit = VayuBCTextureCache::instance().readEntry(id, 0, out_header, out_buffer);
+        ensure("Cached entry hits immediately without preset penalty", hit);
+        ensure_equals("Read buffer matches", out_buffer, buffer);
 
         VayuBCTextureCache::instance().clear();
     }
@@ -154,9 +151,9 @@ namespace tut
         VayuBCTextureCache::instance().shutdown();
 
         // Adjust timestamps so id_a is oldest, id_c is newest
-        std::string path_a = VayuBCTextureCache::instance().getFilePath(id_a, 0);
-        std::string path_b = VayuBCTextureCache::instance().getFilePath(id_b, 0);
-        std::string path_c = VayuBCTextureCache::instance().getFilePath(id_c, 0);
+        std::string path_a = VayuBCTextureCache::instance().getFilePath(id_a);
+        std::string path_b = VayuBCTextureCache::instance().getFilePath(id_b);
+        std::string path_c = VayuBCTextureCache::instance().getFilePath(id_c);
 
         time_t now = time(NULL);
         boost::system::error_code ec;
@@ -171,8 +168,8 @@ namespace tut
 
         VayuBCCacheEntryHeader out_header;
         std::vector<U8> out_buffer;
-        bool a_survived = VayuBCTextureCache::instance().readEntry(id_a, 0, 0, out_header, out_buffer);
-        bool c_survived = VayuBCTextureCache::instance().readEntry(id_c, 0, 0, out_header, out_buffer);
+        bool a_survived = VayuBCTextureCache::instance().readEntry(id_a, 0, out_header, out_buffer);
+        bool c_survived = VayuBCTextureCache::instance().readEntry(id_c, 0, out_header, out_buffer);
         ensure("Most recently written entry survives purge", c_survived);
         ensure("Oldest entry was purged to make room", !a_survived);
 
@@ -214,7 +211,7 @@ namespace tut
         VayuBCCacheEntryHeader out_header;
         std::vector<U8> out_buffer;
         ensure("The most recently queued write is never the one dropped",
-               VayuBCTextureCache::instance().readEntry(newest_id, 0, 0, out_header, out_buffer));
+               VayuBCTextureCache::instance().readEntry(newest_id, 0, out_header, out_buffer));
         ensure_equals("Surviving entry's payload is intact", out_buffer.size(), kPayloadSize);
 
         VayuBCTextureCache::instance().clear();
@@ -253,7 +250,7 @@ namespace tut
         {
             VayuBCCacheEntryHeader out_header;
             std::vector<U8> out_buffer;
-            bool ok = VayuBCTextureCache::instance().readEntry(ids[i], 0, 0, out_header, out_buffer);
+            bool ok = VayuBCTextureCache::instance().readEntry(ids[i], 0, out_header, out_buffer);
             if (!ok)
                 continue;
             size_t stamped = 0;
@@ -296,7 +293,7 @@ namespace tut
         LLUUID id;
         id.generate();
         std::string expected_subdir(1, id.asString()[0]);
-        std::string filepath = VayuBCTextureCache::instance().getFilePath(id, 0);
+        std::string filepath = VayuBCTextureCache::instance().getFilePath(id);
 
         ensure("File path contains correct hex subdir",
                filepath.find((dir / expected_subdir).string()) != std::string::npos);
@@ -389,7 +386,7 @@ namespace tut
         // Cache entry must be readable
         VayuBCCacheEntryHeader read_header;
         std::vector<U8> read_buffer;
-        bool ok = VayuBCTextureCache::instance().readEntry(id, 0, 0, read_header, read_buffer);
+        bool ok = VayuBCTextureCache::instance().readEntry(id, 0, read_header, read_buffer);
         ensure("Read entry succeeds after self-healing write", ok);
         ensure("Buffer matches", read_buffer == buffer);
 
@@ -428,9 +425,290 @@ namespace tut
 
         VayuBCCacheEntryHeader read_header;
         std::vector<U8> read_buffer;
-        bool ok = VayuBCTextureCache::instance().readEntry(id, 0, 0, read_header, read_buffer);
+        bool ok = VayuBCTextureCache::instance().readEntry(id, 0, read_header, read_buffer);
         ensure("Read entry succeeds in restored cache", ok);
         ensure("Buffer matches", read_buffer == buffer);
+
+        VayuBCTextureCache::instance().clear();
+    }
+
+    // Test 12: Dynamic sub-mip prefix slicing: Full-resolution cache entry (discard = 0)
+    // satisfies coarser requests (discard = 1, discard = 2) with correctly truncated buffer
+    // and adjusted header dimensions and mip counts.
+    template<> template<>
+    void bc_texture_cache_object::test<12>()
+    {
+        auto dir = test_dir("sub_mip_slicing");
+        std::filesystem::remove_all(dir);
+        VayuBCTextureCache::instance().initCache(dir, 1024 * 1024);
+
+        LLUUID id;
+        id.generate();
+
+        // 16x16 texture, format 1 (BC1, 8 bytes per block), 3 mips:
+        // mip 0: 16x16 -> 4x4 blocks = 16 blocks * 8 = 128 bytes
+        // mip 1: 8x8   -> 2x2 blocks =  4 blocks * 8 =  32 bytes
+        // mip 2: 4x4   -> 1x1 block  =  1 block  * 8 =   8 bytes
+        // Reverse layout in mBuffer:
+        // [0..8):   mip 2 (4x4, 8 bytes)
+        // [8..40):  mip 1 (8x8, 32 bytes)
+        // [40..168): mip 0 (16x16, 128 bytes)
+        VayuBCCacheEntryHeader header = make_header(1 /* BC1 */, 2);
+        header.mWidth = 16;
+        header.mHeight = 16;
+        header.mMipLevels = 3;
+        header.mDiscardLevel = 0;
+
+        std::vector<U8> payload(168);
+        std::fill_n(payload.data(), 8, 0xAA);
+        std::fill_n(payload.data() + 8, 32, 0xBB);
+        std::fill_n(payload.data() + 40, 128, 0xCC);
+
+        VayuBCTextureCache::instance().writeEntry(id, 0, header, make_buffer(payload));
+        VayuBCTextureCache::instance().shutdown();
+
+        // Read at discard 0 (full res)
+        {
+            VayuBCCacheEntryHeader out_h;
+            std::vector<U8> out_b;
+            bool ok = VayuBCTextureCache::instance().readEntry(id, 0, out_h, out_b);
+            ensure("Read at discard 0 succeeds", ok);
+            ensure_equals("Discard 0 width", out_h.mWidth, 16u);
+            ensure_equals("Discard 0 height", out_h.mHeight, 16u);
+            ensure_equals("Discard 0 mips", out_h.mMipLevels, 3);
+            ensure_equals("Discard 0 discard level", (int)out_h.mDiscardLevel, 0);
+            ensure_equals("Discard 0 buffer size", out_b.size(), 168u);
+            ensure("Discard 0 buffer matches payload", out_b == payload);
+        }
+
+        // Read at discard 1 (half res: 8x8, 2 mips, prefix size 40)
+        {
+            VayuBCCacheEntryHeader out_h;
+            std::vector<U8> out_b;
+            bool ok = VayuBCTextureCache::instance().readEntry(id, 1, out_h, out_b);
+            ensure("Read at discard 1 succeeds via slicing", ok);
+            ensure_equals("Discard 1 width", out_h.mWidth, 8u);
+            ensure_equals("Discard 1 height", out_h.mHeight, 8u);
+            ensure_equals("Discard 1 mips", out_h.mMipLevels, 2);
+            ensure_equals("Discard 1 discard level", (int)out_h.mDiscardLevel, 1);
+            ensure_equals("Discard 1 buffer size", out_b.size(), 40u);
+            std::vector<U8> expected(payload.begin(), payload.begin() + 40);
+            ensure("Discard 1 buffer prefix matches", out_b == expected);
+        }
+
+        // Read at discard 2 (quarter res: 4x4, 1 mip, prefix size 8)
+        {
+            VayuBCCacheEntryHeader out_h;
+            std::vector<U8> out_b;
+            bool ok = VayuBCTextureCache::instance().readEntry(id, 2, out_h, out_b);
+            ensure("Read at discard 2 succeeds via slicing", ok);
+            ensure_equals("Discard 2 width", out_h.mWidth, 4u);
+            ensure_equals("Discard 2 height", out_h.mHeight, 4u);
+            ensure_equals("Discard 2 mips", out_h.mMipLevels, 1);
+            ensure_equals("Discard 2 discard level", (int)out_h.mDiscardLevel, 2);
+            ensure_equals("Discard 2 buffer size", out_b.size(), 8u);
+            std::vector<U8> expected(payload.begin(), payload.begin() + 8);
+            ensure("Discard 2 buffer prefix matches", out_b == expected);
+        }
+
+        VayuBCTextureCache::instance().clear();
+    }
+
+    // Test 13: Overwrite prevention rule: Higher resolution (lower discard) overwrites
+    // lower resolution, but coarser resolution (higher discard) never overwrites higher resolution.
+    template<> template<>
+    void bc_texture_cache_object::test<13>()
+    {
+        auto dir = test_dir("overwrite_rule");
+        std::filesystem::remove_all(dir);
+        VayuBCTextureCache::instance().initCache(dir, 1024 * 1024);
+
+        LLUUID id;
+        id.generate();
+
+        VayuBCCacheEntryHeader header0 = make_header(1, 2);
+        header0.mDiscardLevel = 0;
+        std::vector<U8> payload0 = { 0x11, 0x22, 0x33, 0x44 };
+
+        // Write full resolution (discard 0)
+        VayuBCTextureCache::instance().writeEntry(id, 0, header0, make_buffer(payload0));
+        VayuBCTextureCache::instance().shutdown();
+
+        // Attempt to overwrite with coarser slice (discard 2)
+        VayuBCCacheEntryHeader header2 = make_header(1, 2);
+        header2.mDiscardLevel = 2;
+        std::vector<U8> payload2 = { 0xFF, 0xFF };
+        VayuBCTextureCache::instance().writeEntry(id, 2, header2, make_buffer(payload2));
+        VayuBCTextureCache::instance().shutdown();
+
+        // Verify that discard 0 was NOT overwritten by discard 2
+        VayuBCCacheEntryHeader read_h;
+        std::vector<U8> read_b;
+        bool ok = VayuBCTextureCache::instance().readEntry(id, 0, read_h, read_b);
+        ensure("Entry still readable at discard 0", ok);
+        ensure_equals("Discard level is still 0", (int)read_h.mDiscardLevel, 0);
+        ensure("Payload was preserved", read_b == payload0);
+
+        // Now test the opposite: start with discard 2, then write discard 0
+        LLUUID id2;
+        id2.generate();
+
+        VayuBCTextureCache::instance().writeEntry(id2, 2, header2, make_buffer(payload2));
+        VayuBCTextureCache::instance().shutdown();
+
+        // Overwrite with higher resolution (discard 0)
+        VayuBCTextureCache::instance().writeEntry(id2, 0, header0, make_buffer(payload0));
+        VayuBCTextureCache::instance().shutdown();
+
+        read_b.clear();
+        ok = VayuBCTextureCache::instance().readEntry(id2, 0, read_h, read_b);
+        ensure("Higher-resolution write overwrote lower-resolution entry", ok);
+        ensure_equals("Discard level upgraded to 0", (int)read_h.mDiscardLevel, 0);
+        ensure("Payload upgraded to full-res", read_b == payload0);
+
+        VayuBCTextureCache::instance().clear();
+    }
+
+    // Test 14: Legacy fallback: Reading <uuid> when <uuid>.bc does not exist
+    // falls back to legacy <uuid>_0.bc on disk and properly slices it.
+    template<> template<>
+    void bc_texture_cache_object::test<14>()
+    {
+        auto dir = test_dir("legacy_fallback");
+        std::filesystem::remove_all(dir);
+        VayuBCTextureCache::instance().initCache(dir, 1024 * 1024);
+
+        LLUUID id;
+        id.generate();
+
+        // Write a legacy file <uuid>_0.bc directly to disk
+        std::string expected_subdir(1, id.asString()[0]);
+        std::string legacy_path = (dir / expected_subdir / (id.asString() + "_0.bc")).string();
+
+        VayuBCCacheEntryHeader header = make_header(1 /* BC1 */, 2);
+        header.mWidth = 16;
+        header.mHeight = 16;
+        header.mMipLevels = 3;
+        header.mDiscardLevel = 0;
+
+        std::vector<U8> payload(168, 0x77);
+
+        // Struct layout must match FileHeader in vayubctexturecache.cpp
+        struct TestFileHeader
+        {
+            U32 mMagic = VayuBCTextureCache::kMagic;
+            U32 mVersion = VayuBCTextureCache::kFormatVersion;
+            VayuBCCacheEntryHeader mMeta;
+            U64 mBufferSize = 168;
+        } fh;
+        fh.mMeta = header;
+
+        {
+            std::ofstream out(legacy_path, std::ios::binary);
+            out.write(reinterpret_cast<const char*>(&fh), sizeof(fh));
+            out.write(reinterpret_cast<const char*>(payload.data()), payload.size());
+        }
+        ensure("Legacy _0.bc file exists on disk", std::filesystem::exists(legacy_path));
+
+        // Read using standard readEntry(id, 0) - should hit legacy file
+        VayuBCCacheEntryHeader out_h;
+        std::vector<U8> out_b;
+        bool ok = VayuBCTextureCache::instance().readEntry(id, 0, out_h, out_b);
+        ensure("Legacy fallback succeeds for discard 0", ok);
+        ensure("Buffer matches legacy payload", out_b == payload);
+
+        // Read using readEntry(id, 1) - should slice legacy file
+        out_b.clear();
+        ok = VayuBCTextureCache::instance().readEntry(id, 1, out_h, out_b);
+        ensure("Legacy fallback slices to discard 1", ok);
+        ensure_equals("Sliced width", out_h.mWidth, 8u);
+        ensure_equals("Sliced height", out_h.mHeight, 8u);
+        ensure_equals("Sliced buffer size", out_b.size(), 40u);
+
+        // Verify that an outdated format version file (version < kFormatVersion) is rejected and removed
+        LLUUID stale_id;
+        stale_id.generate();
+        std::string stale_subdir(1, stale_id.asString()[0]);
+        std::filesystem::path stale_path = dir / stale_subdir / (stale_id.asString() + ".bc");
+        TestFileHeader stale_fh = fh;
+        stale_fh.mVersion = VayuBCTextureCache::kFormatVersion - 1;
+        {
+            std::ofstream out(stale_path, std::ios::binary);
+            out.write(reinterpret_cast<const char*>(&stale_fh), sizeof(stale_fh));
+            out.write(reinterpret_cast<const char*>(payload.data()), payload.size());
+        }
+        ensure("Stale version file exists before read", std::filesystem::exists(stale_path));
+        bool stale_ok = VayuBCTextureCache::instance().readEntry(stale_id, 0, out_h, out_b);
+        ensure("Stale version file rejected", !stale_ok);
+        ensure("Stale version file removed from disk", !std::filesystem::exists(stale_path));
+
+        VayuBCTextureCache::instance().clear();
+    }
+
+    // Test 15: Single-file naming: written files have naming <uuid>.bc without discard suffix
+    template<> template<>
+    void bc_texture_cache_object::test<15>()
+    {
+        auto dir = test_dir("single_file_naming");
+        std::filesystem::remove_all(dir);
+        VayuBCTextureCache::instance().initCache(dir, 1024 * 1024);
+
+        LLUUID id;
+        id.generate();
+        VayuBCCacheEntryHeader header = make_header(1, 2);
+        std::vector<U8> buffer = { 1, 2, 3, 4 };
+
+        VayuBCTextureCache::instance().writeEntry(id, 0, header, make_buffer(buffer));
+        VayuBCTextureCache::instance().shutdown();
+
+        std::string expected_subdir(1, id.asString()[0]);
+        std::filesystem::path new_path = dir / expected_subdir / (id.asString() + ".bc");
+        std::filesystem::path old_path = dir / expected_subdir / (id.asString() + "_0.bc");
+
+        ensure("File exists as <uuid>.bc", std::filesystem::exists(new_path));
+        ensure("File does NOT exist as <uuid>_0.bc", !std::filesystem::exists(old_path));
+
+        VayuBCTextureCache::instance().clear();
+    }
+
+    // Test 16: Asynchronous / rapid queue overwrite protection:
+    // When a high-resolution entry (discard 0) is queued or flushing, a subsequent
+    // lower-resolution entry (discard 2) queued before disk flush completes does not
+    // overwrite or replace the high-resolution entry in mPendingIndex or mFlushing.
+    template<> template<>
+    void bc_texture_cache_object::test<16>()
+    {
+        auto dir = test_dir("async_overwrite_protection");
+        std::filesystem::remove_all(dir);
+        VayuBCTextureCache::instance().initCache(dir, 1024 * 1024);
+
+        LLUUID id;
+        id.generate();
+
+        VayuBCCacheEntryHeader header0 = make_header(1, 2);
+        header0.mDiscardLevel = 0;
+        std::vector<U8> payload0 = { 0xAA, 0xBB, 0xCC, 0xDD };
+
+        VayuBCCacheEntryHeader header2 = make_header(1, 2);
+        header2.mDiscardLevel = 2;
+        std::vector<U8> payload2 = { 0x11, 0x22 };
+
+        // Queue high resolution write
+        VayuBCTextureCache::instance().writeEntry(id, 0, header0, make_buffer(payload0));
+
+        // Immediately queue low resolution write without calling shutdown() in between
+        VayuBCTextureCache::instance().writeEntry(id, 2, header2, make_buffer(payload2));
+
+        // Now drain everything cleanly to disk
+        VayuBCTextureCache::instance().shutdown();
+
+        // High resolution entry must have survived and not been overwritten
+        VayuBCCacheEntryHeader read_h;
+        std::vector<U8> read_b;
+        bool ok = VayuBCTextureCache::instance().readEntry(id, 0, read_h, read_b);
+        ensure("High resolution entry survived concurrent queue attempt", ok);
+        ensure_equals("Discard level is 0", (int)read_h.mDiscardLevel, 0);
+        ensure("Payload matches high-res payload", read_b == payload0);
 
         VayuBCTextureCache::instance().clear();
     }

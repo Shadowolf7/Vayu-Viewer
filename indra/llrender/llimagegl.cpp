@@ -794,6 +794,7 @@ void LLImageGL::init(bool usemipmaps)
     mFormatSwapBytes = false;
 
     mDeprecatedSourceFormat = 0;
+    mTextureJob = EVayuTextureJob::Default;
 
 #ifdef DEBUG_MISS
     mMissed = false;
@@ -1900,7 +1901,8 @@ bool LLImageGL::createGLTexture(S32 discard_level, const LLImageRaw* imageraw, S
 
         // 2. Fallback path: encode synchronously if not pre-compressed in background
         VayuBlockCompressionResult comp_res;
-        if (VayuImageBlockCompressor::encode(imageraw, comp_res))
+        const EVayuTextureJob job = (imageraw->getTextureJob() != EVayuTextureJob::Default) ? imageraw->getTextureJob() : mTextureJob;
+        if (VayuImageBlockCompressor::encode(imageraw, comp_res, EVayuBlockCompressionFormat::Auto, job))
         {
             mIsMask = comp_res.mIsMask;
             mFormatInternal = comp_res.mGLInternalFormat;

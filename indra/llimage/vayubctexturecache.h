@@ -32,7 +32,7 @@ struct VayuBCCacheEntryHeader
     U8  mFormat = 0;           // EVayuBlockCompressionFormat, as encoded by the caller
     U8  mPreset = 0;           // EVayuBlockCompressionPreset the buffer was encoded at
     U8  mIsMask = 0;           // 1 if alpha mask, 0 if alpha blend / no mask
-    U8  mReserved = 0;         // Reserved padding
+    U8  mDiscardLevel = 0;     // Discard level at which this entry was encoded (0 = full resolution)
     S32 mMipLevels = 0;
     U32 mWidth = 0;
     U32 mHeight = 0;
@@ -52,6 +52,9 @@ public:
     // Not copyable - single process-wide cache.
     VayuBCTextureCache(const VayuBCTextureCache&) = delete;
     VayuBCTextureCache& operator=(const VayuBCTextureCache&) = delete;
+
+    static constexpr U32 kMagic = 0x31434256; // "VBC1"
+    static constexpr U32 kFormatVersion = 3;
 
     // Default ceiling on how many bytes of not-yet-flushed writes may sit in
     // RAM at once. See mMaxPendingBytes for why this bound exists at all.
@@ -81,9 +84,9 @@ public:
     // Joins the writer pool's thread and purge thread at a controlled point in app shutdown.
     void shutdown();
 
-    // Looks up (id, discard_level). Only counts as a hit if the cached entry's
-    // preset is >= min_preset. Updates the file's access time with rate-limiting.
-    bool readEntry(const LLUUID& id, S32 discard_level, U8 min_preset,
+    // Looks up (id, discard_level). Slices sub-buffer if discard_level > entry.mDiscardLevel.
+    // Updates the file's access time with rate-limiting.
+    bool readEntry(const LLUUID& id, S32 discard_level,
                    VayuBCCacheEntryHeader& header, std::vector<U8>& buffer);
 
     // Writes (or overwrites) the entry for (id, discard_level) asynchronously via
@@ -92,9 +95,15 @@ public:
                     const VayuBCCacheEntryHeader& header,
                     std::shared_ptr<const std::vector<U8>> buffer);
 
-    // Constructs a file path based on the asset UUID and discard level:
-    // cache_dir / hex_subdir / <id>_<discard>.bc
+    // Constructs a file path based on the asset UUID:
+    // cache_dir / hex_subdir / <id>.bc
+    std::string getFilePath(const LLUUID& id) const;
+
+    // Backward-compatible overload for legacy <id>_<discard>.bc paths
     std::string getFilePath(const LLUUID& id, S32 discard_level) const;
+
+    // Slices sub-buffer byte count for coarser discard levels
+    static size_t calcSubBufferBytes(U8 format, U32 width, U32 height, S32 num_mips, S32 diff);
 
     // Rate-limited touch of the file's last access time to maintain LRU order on disk.
     void updateFileAccessTime(const std::string& file_path);
@@ -128,6 +137,7 @@ private:
     };
     using PendingList = std::list<PendingWrite>;
 
+    std::string entryKey(const LLUUID& id) const;
     std::string entryKey(const LLUUID& id, S32 discard_level) const;
 
     U64 cacheDirSize();
@@ -155,7 +165,7 @@ private:
     // Writes not yet flushed to disk
     PendingList mPendingWrites;
     std::unordered_map<std::string, PendingList::iterator> mPendingIndex;
-    std::unordered_set<std::string> mFlushing;
+    std::unordered_map<std::string, VayuBCCacheEntryHeader> mFlushing;
 
     S64 mPendingBytes = 0;
     S64 mMaxPendingBytes = kDefaultMaxPendingBytes;

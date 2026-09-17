@@ -35,6 +35,7 @@
 #include <memory>
 
 struct VayuBlockCompressionResult;
+enum class EVayuTextureJob : U8;
 
 constexpr S32 MIN_IMAGE_MIP =  2; // 4x4, only used for expand/contract power of 2
 constexpr S32 MAX_IMAGE_MIP = 12; // 4096x4096
@@ -294,6 +295,9 @@ public:
     std::shared_ptr<VayuBlockCompressionResult> getBlockCompressionResult() const { return mBlockCompressionResult; }
     bool hasBlockCompressionResult() const { return mBlockCompressionResult != nullptr; }
 
+    void setTextureJob(EVayuTextureJob job);
+    EVayuTextureJob getTextureJob() const;
+
     // Emissive operations used by minimap
     // Roughly emulates GLTF emissive texture, but is not GLTF-compliant
     // *TODO: Remove in favor of shader
@@ -324,6 +328,7 @@ protected:
     void setDataAndSize(U8 *data, S32 width, S32 height, S8 components) ;
 
     std::shared_ptr<VayuBlockCompressionResult> mBlockCompressionResult;
+    EVayuTextureJob mTextureJob;
 
 public:
     static S32 sRawImageCount;

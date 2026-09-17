@@ -42,6 +42,7 @@
 #include "llimageavif.h"
 #include "llimagedxt.h"
 #include "llmemory.h"
+#include "vayuimageblockcompressor.h"
 
 #include <boost/preprocessor.hpp>
 
@@ -811,13 +812,15 @@ U8* LLImageBase::allocateDataSize(S32 width, S32 height, S32 ncomponents, S32 si
 S32 LLImageRaw::sRawImageCount = 0;
 
 LLImageRaw::LLImageRaw()
-    : LLImageBase()
+    : LLImageBase(),
+      mTextureJob(EVayuTextureJob::Default)
 {
     ++sRawImageCount;
 }
 
 LLImageRaw::LLImageRaw(U16 width, U16 height, S8 components)
-    : LLImageBase()
+    : LLImageBase(),
+      mTextureJob(EVayuTextureJob::Default)
 {
     //llassert( S32(width) * S32(height) * S32(components) <= MAX_IMAGE_DATA_SIZE );
     allocateDataSize(width, height, components);
@@ -825,7 +828,8 @@ LLImageRaw::LLImageRaw(U16 width, U16 height, S8 components)
 }
 
 LLImageRaw::LLImageRaw(const U8* data, U16 width, U16 height, S8 components)
-    : LLImageBase()
+    : LLImageBase(),
+      mTextureJob(EVayuTextureJob::Default)
 {
     if (allocateDataSize(width, height, components))
     {
@@ -834,7 +838,8 @@ LLImageRaw::LLImageRaw(const U8* data, U16 width, U16 height, S8 components)
 }
 
 LLImageRaw::LLImageRaw(U8 *data, U16 width, U16 height, S8 components, bool no_copy)
-    : LLImageBase()
+    : LLImageBase(),
+      mTextureJob(EVayuTextureJob::Default)
 {
     if(no_copy)
     {
@@ -859,6 +864,16 @@ LLImageRaw::~LLImageRaw()
     //        NOT LLImageRaw::deleteData()
     deleteData();
     --sRawImageCount;
+}
+
+void LLImageRaw::setTextureJob(EVayuTextureJob job)
+{
+    mTextureJob = job;
+}
+
+EVayuTextureJob LLImageRaw::getTextureJob() const
+{
+    return mTextureJob;
 }
 
 // virtual

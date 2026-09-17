@@ -13,12 +13,22 @@
 
 enum class EVayuBlockCompressionFormat : U8
 {
-    Auto = 0,    // Auto-select: BC7 (or BC3 on macOS) if image has non-trivial alpha (< 255), else BC1 (saving 50% VRAM)
+    Auto = 0,    // Auto-select based on job role, components, and alpha analysis
     BC1,         // Opaque albedo / punchthrough alpha: DXT1 (4 bpp, sRGB)
     BC3,         // Translucent RGBA / DXT5 fallback for platforms without BPTC (8 bpp, sRGB)
     BC4,         // Single-channel mask / roughness: RGTC1 (4 bpp, linear)
     BC5,         // Two-channel normal map: RGTC2 (8 bpp, linear X/Y)
-    BC7,         // Translucent / high-fidelity RGBA / PBR: BPTC (8 bpp, sRGB)
+    BC7,         // Translucent / high-fidelity RGBA / PBR: BPTC (8 bpp, sRGB or linear UNORM)
+};
+
+enum class EVayuTextureJob : U8
+{
+    Default = 0,            // General / unknown usage (Auto: BC1 if opaque, BC7 if alpha)
+    Albedo,                 // Base color / diffuse (sRGB: BC1 if opaque, BC7 if alpha)
+    Normal,                 // Tangent-space normal map (linear: BC7 or BC5)
+    MetallicRoughness,      // glTF PBR ORM / Metallic-Roughness (linear: BC7, or BC5/BC4)
+    Emissive,               // Emissive color map (sRGB: BC1 if opaque, BC7 if alpha)
+    SingleChannelMask,      // Scalar mask / roughness / height / AO (linear: BC4)
 };
 
 // Trades encode latency for compressed-image quality. Applies to both the
@@ -34,7 +44,7 @@ enum class EVayuBlockCompressionPreset : U8
 struct VayuBlockCompressionResult
 {
     EVayuBlockCompressionFormat mFormat = EVayuBlockCompressionFormat::Auto;
-    EVayuBlockCompressionPreset mPreset = EVayuBlockCompressionPreset::Basic; // preset actually used to produce mBuffer
+    EVayuBlockCompressionPreset mPreset = EVayuBlockCompressionPreset::Slow; // preset used for Mip 0
     U32 mGLInternalFormat = 0;
     U32 mGLPrimaryFormat = 0;
     U32 mWidth = 0;
@@ -56,19 +66,14 @@ class VayuImageBlockCompressor
 public:
     static void init();
 
-    // Current encode preset, read by worker threads on every encode() call.
-    static void setPreset(EVayuBlockCompressionPreset preset);
-    static EVayuBlockCompressionPreset getPreset();
+    // Standardized target encode preset for Mip 0.
+    static constexpr EVayuBlockCompressionPreset getPreset() { return EVayuBlockCompressionPreset::Slow; }
 
-    // Reported by LLImageDecodeThread once per frame (its queue backlog / pending
-    // request count). encode() uses this to downgrade below the configured
-    // preset when the decode queue is falling behind, trading fidelity for
-    // throughput; it never raises effort above the user's configured preset.
-    static void setQueueBacklog(size_t pending);
-
-    // Resolves the preset actually used for the next encode() call: the
-    // configured preset, clamped down by the current queue backlog.
-    static EVayuBlockCompressionPreset getEffectivePreset();
+    // Debug setting toggle:
+    // When false (default), all mips are encoded at Slow for maximal visual fidelity.
+    // When true (hybrid mode), Mip 0 is encoded at Slow while sub-mips (i >= 1) are encoded at Fast for benchmarking.
+    static void setHybridMips(bool enable);
+    static bool getHybridMips();
 
     // Textures at or below this size skip compression and stay on direct raw upload
     static constexpr U32 kMinEncodeDim = 4;
@@ -83,10 +88,12 @@ public:
     // Compress raw pixel buffer into a mipped block-compressed payload
     static bool encode(const U8* src_data, U32 width, U32 height, S32 components,
                        VayuBlockCompressionResult& result,
-                       EVayuBlockCompressionFormat format = EVayuBlockCompressionFormat::Auto);
+                       EVayuBlockCompressionFormat format = EVayuBlockCompressionFormat::Auto,
+                       EVayuTextureJob job = EVayuTextureJob::Default);
 
     // Convenience overload to encode from an LLImageRaw
     static bool encode(const LLImageRaw* raw_image,
                        VayuBlockCompressionResult& result,
-                       EVayuBlockCompressionFormat format = EVayuBlockCompressionFormat::Auto);
+                       EVayuBlockCompressionFormat format = EVayuBlockCompressionFormat::Auto,
+                       EVayuTextureJob job = EVayuTextureJob::Default);
 };

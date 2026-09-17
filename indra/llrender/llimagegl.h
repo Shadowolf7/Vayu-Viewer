@@ -241,6 +241,8 @@ public:
 
     void setExplicitFormat(LLGLint internal_format, LLGLenum primary_format, LLGLenum type_format = 0, bool swap_bytes = false);
     void setComponents(S8 ncomponents) { mComponents = ncomponents; }
+    void setTextureJob(EVayuTextureJob job) { mTextureJob = job; }
+    EVayuTextureJob getTextureJob() const { return mTextureJob; }
 
     // While an off-thread upload is in flight the members below describe the texture
     // being built, not the one mTexName still names. Consumers pair these getters with
@@ -439,6 +441,8 @@ protected:
     // to apply the corresponding GL_TEXTURE_SWIZZLE_RGBA mask via
     // applySwizzleForDeprecatedFormat. 0 = no rewrite happened.
     LLGLenum mDeprecatedSourceFormat;
+
+    EVayuTextureJob mTextureJob;
 
     bool mExternalTexture;
 

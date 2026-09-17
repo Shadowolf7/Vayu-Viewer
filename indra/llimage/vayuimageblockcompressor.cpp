@@ -60,12 +60,7 @@ static float g_srgb_to_linear[256];
 static uint8_t g_linear_to_srgb[4096];
 static bool g_tables_ready = false;
 static std::once_flag g_init_once;
-static std::atomic<U8> g_preset{ (U8)EVayuBlockCompressionPreset::Basic };
-static std::atomic<size_t> g_queue_backlog{ 0 };
-
-// Backlog thresholds relative to the 8-thread "ImageDecode" pool (llimageworker.cpp)
-constexpr size_t kModerateBacklogThreshold = 12; // ~1.5x pool width: cap effort at Fast
-constexpr size_t kHeavyBacklogThreshold = 32;     // ~4x pool width: force Ultrafast
+static std::atomic<bool> g_hybrid_mips{ true };
 
 // BC1 rgbcx encode level per preset (see rgbcx.h: MIN_LEVEL=0, MAX_LEVEL=18)
 static uint32_t bc1_level_for_preset(EVayuBlockCompressionPreset preset)
@@ -319,32 +314,16 @@ void VayuImageBlockCompressor::init()
     init_compression_tables();
 }
 
-void VayuImageBlockCompressor::setPreset(EVayuBlockCompressionPreset preset)
+void VayuImageBlockCompressor::setHybridMips(bool enable)
 {
-    g_preset.store((U8)preset, std::memory_order_relaxed);
+    g_hybrid_mips.store(enable, std::memory_order_relaxed);
 }
 
-EVayuBlockCompressionPreset VayuImageBlockCompressor::getPreset()
+bool VayuImageBlockCompressor::getHybridMips()
 {
-    return (EVayuBlockCompressionPreset)g_preset.load(std::memory_order_relaxed);
+    return g_hybrid_mips.load(std::memory_order_relaxed);
 }
 
-void VayuImageBlockCompressor::setQueueBacklog(size_t pending)
-{
-    g_queue_backlog.store(pending, std::memory_order_relaxed);
-}
-
-EVayuBlockCompressionPreset VayuImageBlockCompressor::getEffectivePreset()
-{
-    const EVayuBlockCompressionPreset configured = getPreset();
-    const size_t backlog = g_queue_backlog.load(std::memory_order_relaxed);
-
-    if (backlog > kHeavyBacklogThreshold)
-        return EVayuBlockCompressionPreset::Ultrafast;
-    if (backlog > kModerateBacklogThreshold)
-        return std::min(configured, EVayuBlockCompressionPreset::Fast);
-    return configured;
-}
 
 bool VayuImageBlockCompressor::isEligible(U32 width, U32 height, S32 components)
 {
@@ -357,12 +336,14 @@ bool VayuImageBlockCompressor::isEligible(U32 width, U32 height, S32 components)
 
 bool VayuImageBlockCompressor::encode(const LLImageRaw* raw_image,
                                     VayuBlockCompressionResult& result,
-                                    EVayuBlockCompressionFormat format)
+                                    EVayuBlockCompressionFormat format,
+                                    EVayuTextureJob job)
 {
     if (!raw_image || raw_image->isBufferInvalid())
         return false;
+    const EVayuTextureJob resolved_job = (job != EVayuTextureJob::Default) ? job : raw_image->getTextureJob();
     return encode(raw_image->getData(), raw_image->getWidth(), raw_image->getHeight(),
-                  raw_image->getComponents(), result, format);
+                  raw_image->getComponents(), result, format, resolved_job);
 }
 
 bool VayuImageBlockCompressor::analyzeAlphaMask(
@@ -473,16 +454,18 @@ bool VayuImageBlockCompressor::analyzeAlphaMask(
 
 bool VayuImageBlockCompressor::encode(const U8* src_data, U32 width, U32 height, S32 components,
                                     VayuBlockCompressionResult& result,
-                                    EVayuBlockCompressionFormat format)
+                                    EVayuBlockCompressionFormat format,
+                                    EVayuTextureJob job)
 {
     if (!src_data || !isEligible(width, height, components))
         return false;
 
     init();
 
-    // 1. Resolve format
+    // 1. Resolve format and color space
     EVayuBlockCompressionFormat resolved = format;
     bool is_mask = true;
+    bool is_srgb = true;
 
 #if LL_DARWIN
     // macOS OpenGL 4.1 Core Profile does not support BC7 (GL_ARB_texture_compression_bptc).
@@ -493,8 +476,189 @@ bool VayuImageBlockCompressor::encode(const U8* src_data, U32 width, U32 height,
     }
 #endif
 
-    if (resolved != EVayuBlockCompressionFormat::Auto)
+    if (resolved == EVayuBlockCompressionFormat::Auto)
     {
+        switch (job)
+        {
+        case EVayuTextureJob::MetallicRoughness:
+            if (components == 1)
+            {
+                resolved = EVayuBlockCompressionFormat::BC4;
+                is_srgb = false;
+            }
+            else if (components == 2)
+            {
+                resolved = EVayuBlockCompressionFormat::BC5;
+                is_srgb = false;
+            }
+            else
+            {
+#if LL_DARWIN
+                resolved = EVayuBlockCompressionFormat::BC3;
+#else
+                resolved = EVayuBlockCompressionFormat::BC7;
+#endif
+                is_srgb = false;
+            }
+            is_mask = false;
+            break;
+
+        case EVayuTextureJob::Normal:
+            if (components == 1)
+            {
+                resolved = EVayuBlockCompressionFormat::BC4;
+                is_srgb = false;
+            }
+            else if (components == 2)
+            {
+                resolved = EVayuBlockCompressionFormat::BC5;
+                is_srgb = false;
+            }
+            else
+            {
+#if LL_DARWIN
+                resolved = EVayuBlockCompressionFormat::BC3;
+#else
+                resolved = EVayuBlockCompressionFormat::BC7;
+#endif
+                is_srgb = false;
+            }
+            is_mask = false;
+            break;
+
+        case EVayuTextureJob::SingleChannelMask:
+            resolved = EVayuBlockCompressionFormat::BC4;
+            is_srgb = false;
+            is_mask = true;
+            break;
+
+        case EVayuTextureJob::Emissive:
+        case EVayuTextureJob::Albedo:
+        case EVayuTextureJob::Default:
+        default:
+            if (components == 1)
+            {
+                resolved = EVayuBlockCompressionFormat::BC4;
+                is_srgb = false;
+                is_mask = true;
+            }
+            else if (components == 2)
+            {
+                resolved = EVayuBlockCompressionFormat::BC5;
+                is_srgb = false;
+                is_mask = analyzeAlphaMask(src_data, width, height, 1, 2);
+            }
+            else if (components == 3)
+            {
+                resolved = EVayuBlockCompressionFormat::BC1;
+                is_srgb = true;
+                is_mask = true;
+            }
+            else if (components == 4)
+            {
+                // Scan alpha channel across the entire image to distinguish:
+                // 1. Fully opaque (all pixels have a == 255) -> BC1 (saves 50% VRAM)
+                // 2. Genuine cutout / transparency / transparent layers -> BC3 on macOS, BC7 elsewhere
+                const size_t total_px = (size_t)width * height;
+                uint8_t min_a = 255;
+                size_t vec_px = 0;
+
+#if defined(__AVX2__)
+                const __m256i alpha_mask = _mm256_set1_epi32((int)0xFF000000);
+                vec_px = (total_px / 32) * 32;
+                for (size_t i = 0; i < vec_px; i += 32)
+                {
+                    __m256i p0 = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(src_data + (i + 0) * 4));
+                    __m256i p1 = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(src_data + (i + 8) * 4));
+                    __m256i p2 = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(src_data + (i + 16) * 4));
+                    __m256i p3 = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(src_data + (i + 24) * 4));
+
+                    __m256i a01 = _mm256_and_si256(p0, p1);
+                    __m256i a23 = _mm256_and_si256(p2, p3);
+                    __m256i a = _mm256_and_si256(a01, a23);
+
+                    __m256i alphas = _mm256_and_si256(a, alpha_mask);
+                    __m256i cmp = _mm256_cmpeq_epi32(alphas, alpha_mask);
+                    if ((uint32_t)_mm256_movemask_epi8(cmp) != 0xFFFFFFFF)
+                    {
+                        min_a = 0;
+                        break;
+                    }
+                }
+#elif defined(__SSE2__) || defined(_M_X64) || (defined(_M_IX86_FP) && _M_IX86_FP >= 2)
+                const __m128i alpha_mask = _mm_set1_epi32((int)0xFF000000);
+                vec_px = (total_px / 16) * 16;
+                for (size_t i = 0; i < vec_px; i += 16)
+                {
+                    __m128i p0 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(src_data + (i + 0) * 4));
+                    __m128i p1 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(src_data + (i + 4) * 4));
+                    __m128i p2 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(src_data + (i + 8) * 4));
+                    __m128i p3 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(src_data + (i + 12) * 4));
+
+                    __m128i a01 = _mm_and_si128(p0, p1);
+                    __m128i a23 = _mm_and_si128(p2, p3);
+                    __m128i a = _mm_and_si128(a01, a23);
+
+                    __m128i alphas = _mm_and_si128(a, alpha_mask);
+                    __m128i cmp = _mm_cmpeq_epi32(alphas, alpha_mask);
+                    if (_mm_movemask_epi8(cmp) != 0xFFFF)
+                    {
+                        min_a = 0;
+                        break;
+                    }
+                }
+#endif
+
+                if (min_a == 255)
+                {
+                    for (size_t i = vec_px; i < total_px; i++)
+                    {
+                        uint8_t a = src_data[i * 4 + 3];
+                        if (a < 255)
+                        {
+                            min_a = a;
+                            break;
+                        }
+                    }
+                }
+
+                if (min_a == 255)
+                {
+                    // Fully opaque already -> BC1
+                    resolved = EVayuBlockCompressionFormat::BC1;
+                    is_srgb = true;
+                    is_mask = true;
+                }
+                else
+                {
+                    // Transparency present: BC3 on macOS (no BPTC support), BC7 elsewhere
+#if LL_DARWIN
+                    resolved = EVayuBlockCompressionFormat::BC3;
+#else
+                    resolved = EVayuBlockCompressionFormat::BC7;
+#endif
+                    is_srgb = true;
+                    is_mask = analyzeAlphaMask(src_data, width, height, 3, 4);
+                }
+            }
+            break;
+        }
+    }
+    else
+    {
+        if (resolved == EVayuBlockCompressionFormat::BC4 || resolved == EVayuBlockCompressionFormat::BC5)
+        {
+            is_srgb = false;
+        }
+        else if (job == EVayuTextureJob::MetallicRoughness || job == EVayuTextureJob::Normal)
+        {
+            is_srgb = false;
+        }
+        else
+        {
+            is_srgb = true;
+        }
+
         if (components == 4)
         {
             is_mask = analyzeAlphaMask(src_data, width, height, 3, 4);
@@ -504,111 +668,7 @@ bool VayuImageBlockCompressor::encode(const U8* src_data, U32 width, U32 height,
             is_mask = analyzeAlphaMask(src_data, width, height, 1, 2);
         }
     }
-    else
-    {
-        if (components == 1)
-        {
-            resolved = EVayuBlockCompressionFormat::BC4;
-            is_mask = true;
-        }
-        else if (components == 2)
-        {
-            resolved = EVayuBlockCompressionFormat::BC5;
-            is_mask = analyzeAlphaMask(src_data, width, height, 1, 2);
-        }
-        else if (components == 3)
-        {
-            resolved = EVayuBlockCompressionFormat::BC1;
-            is_mask = true;
-        }
-        else if (components == 4)
-        {
-            // Scan alpha channel across the entire image to distinguish:
-            // 1. Fully opaque (all pixels have a == 255) -> BC1 (saves 50% VRAM)
-            // 2. Genuine cutout / transparency / transparent layers -> BC3 on macOS, BC7 elsewhere
-            const size_t total_px = (size_t)width * height;
-            uint8_t min_a = 255;
-            size_t vec_px = 0;
 
-#if defined(__AVX2__)
-            const __m256i alpha_mask = _mm256_set1_epi32((int)0xFF000000);
-            vec_px = (total_px / 32) * 32;
-            for (size_t i = 0; i < vec_px; i += 32)
-            {
-                __m256i p0 = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(src_data + (i + 0) * 4));
-                __m256i p1 = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(src_data + (i + 8) * 4));
-                __m256i p2 = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(src_data + (i + 16) * 4));
-                __m256i p3 = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(src_data + (i + 24) * 4));
-
-                __m256i a01 = _mm256_and_si256(p0, p1);
-                __m256i a23 = _mm256_and_si256(p2, p3);
-                __m256i a = _mm256_and_si256(a01, a23);
-
-                __m256i alphas = _mm256_and_si256(a, alpha_mask);
-                __m256i cmp = _mm256_cmpeq_epi32(alphas, alpha_mask);
-                if ((uint32_t)_mm256_movemask_epi8(cmp) != 0xFFFFFFFF)
-                {
-                    min_a = 0;
-                    break;
-                }
-            }
-#elif defined(__SSE2__) || defined(_M_X64) || (defined(_M_IX86_FP) && _M_IX86_FP >= 2)
-            const __m128i alpha_mask = _mm_set1_epi32((int)0xFF000000);
-            vec_px = (total_px / 16) * 16;
-            for (size_t i = 0; i < vec_px; i += 16)
-            {
-                __m128i p0 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(src_data + (i + 0) * 4));
-                __m128i p1 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(src_data + (i + 4) * 4));
-                __m128i p2 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(src_data + (i + 8) * 4));
-                __m128i p3 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(src_data + (i + 12) * 4));
-
-                __m128i a01 = _mm_and_si128(p0, p1);
-                __m128i a23 = _mm_and_si128(p2, p3);
-                __m128i a = _mm_and_si128(a01, a23);
-
-                __m128i alphas = _mm_and_si128(a, alpha_mask);
-                __m128i cmp = _mm_cmpeq_epi32(alphas, alpha_mask);
-                if (_mm_movemask_epi8(cmp) != 0xFFFF)
-                {
-                    min_a = 0;
-                    break;
-                }
-            }
-#endif
-
-            if (min_a == 255)
-            {
-                for (size_t i = vec_px; i < total_px; i++)
-                {
-                    uint8_t a = src_data[i * 4 + 3];
-                    if (a < 255)
-                    {
-                        min_a = a;
-                        break;
-                    }
-                }
-            }
-
-            if (min_a == 255)
-            {
-                // Fully opaque already -> BC1
-                resolved = EVayuBlockCompressionFormat::BC1;
-                is_mask = true;
-            }
-            else
-            {
-                // Transparency present: BC3 on macOS (no BPTC support), BC7 elsewhere
-#if LL_DARWIN
-                resolved = EVayuBlockCompressionFormat::BC3;
-#else
-                resolved = EVayuBlockCompressionFormat::BC7;
-#endif
-                is_mask = analyzeAlphaMask(src_data, width, height, 3, 4);
-            }
-        }
-    }
-
-    const bool is_srgb = (resolved == EVayuBlockCompressionFormat::BC1 || resolved == EVayuBlockCompressionFormat::BC3 || resolved == EVayuBlockCompressionFormat::BC7);
     const uint32_t block_bytes = (resolved == EVayuBlockCompressionFormat::BC1 || resolved == EVayuBlockCompressionFormat::BC4) ? 8 : 16;
 
     // 2. Generate uncompressed mip pyramid
@@ -662,12 +722,12 @@ bool VayuImageBlockCompressor::encode(const U8* src_data, U32 width, U32 height,
     switch (resolved)
     {
     case EVayuBlockCompressionFormat::BC1:
-        result.mGLInternalFormat = GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT1_EXT;
-        result.mGLPrimaryFormat = GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT1_EXT;
+        result.mGLInternalFormat = is_srgb ? GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT1_EXT : GL_COMPRESSED_RGBA_S3TC_DXT1_EXT;
+        result.mGLPrimaryFormat = result.mGLInternalFormat;
         break;
     case EVayuBlockCompressionFormat::BC3:
-        result.mGLInternalFormat = GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT;
-        result.mGLPrimaryFormat = GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT;
+        result.mGLInternalFormat = is_srgb ? GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT : GL_COMPRESSED_RGBA_S3TC_DXT5_EXT;
+        result.mGLPrimaryFormat = result.mGLInternalFormat;
         break;
     case EVayuBlockCompressionFormat::BC4:
         result.mGLInternalFormat = GL_COMPRESSED_RED_RGTC1;
@@ -679,26 +739,51 @@ bool VayuImageBlockCompressor::encode(const U8* src_data, U32 width, U32 height,
         break;
     case EVayuBlockCompressionFormat::BC7:
     default:
-        result.mGLInternalFormat = GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM;
-        result.mGLPrimaryFormat = GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM;
+        result.mGLInternalFormat = is_srgb ? GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM : GL_COMPRESSED_RGBA_BPTC_UNORM;
+        result.mGLPrimaryFormat = result.mGLInternalFormat;
         break;
     }
 
-    const EVayuBlockCompressionPreset preset = getEffectivePreset();
-    result.mPreset = preset;
+    result.mPreset = EVayuBlockCompressionPreset::Slow;
+    const bool hybrid = getHybridMips();
 
 #if defined(HAVE_BC7E_ISPC)
-    ispc::bc7e_compress_block_params bc7e_params;
+    ispc::bc7e_compress_block_params bc7e_params_slow;
+    ispc::bc7e_compress_block_params bc7e_params_fast;
     if (resolved == EVayuBlockCompressionFormat::BC7)
     {
-        apply_bc7_preset(bc7e_params, preset, true);
+        apply_bc7_preset(bc7e_params_slow, EVayuBlockCompressionPreset::Slow, is_srgb);
+        if (hybrid)
+        {
+            apply_bc7_preset(bc7e_params_fast, EVayuBlockCompressionPreset::Fast, is_srgb);
+        }
     }
 #else
-    bc7enc_compress_block_params bc7_params;
+    bc7enc_compress_block_params bc7_params_slow;
+    bc7enc_compress_block_params bc7_params_fast;
     if (resolved == EVayuBlockCompressionFormat::BC7)
     {
-        bc7enc_compress_block_params_init(&bc7_params);
-        apply_bc7_preset(bc7_params, preset);
+        bc7enc_compress_block_params_init(&bc7_params_slow);
+        apply_bc7_preset(bc7_params_slow, EVayuBlockCompressionPreset::Slow);
+        if (hybrid)
+        {
+            bc7enc_compress_block_params_init(&bc7_params_fast);
+            apply_bc7_preset(bc7_params_fast, EVayuBlockCompressionPreset::Fast);
+        }
+    }
+#endif
+#else
+    bc7enc_compress_block_params bc7_params_slow;
+    bc7enc_compress_block_params bc7_params_fast;
+    if (resolved == EVayuBlockCompressionFormat::BC7)
+    {
+        bc7enc_compress_block_params_init(&bc7_params_slow);
+        apply_bc7_preset(bc7_params_slow, EVayuBlockCompressionPreset::Slow);
+        if (hybrid)
+        {
+            bc7enc_compress_block_params_init(&bc7_params_fast);
+            apply_bc7_preset(bc7_params_fast, EVayuBlockCompressionPreset::Fast);
+        }
     }
 #endif
 
@@ -717,6 +802,13 @@ bool VayuImageBlockCompressor::encode(const U8* src_data, U32 width, U32 height,
     // Encode each mip level
     for (size_t i = 0; i < num_mips; i++)
     {
+        const EVayuBlockCompressionPreset mip_preset = (hybrid && i > 0) ? EVayuBlockCompressionPreset::Fast : EVayuBlockCompressionPreset::Slow;
+#if defined(HAVE_BC7E_ISPC)
+        const ispc::bc7e_compress_block_params* bc7e_params = (hybrid && i > 0) ? &bc7e_params_fast : &bc7e_params_slow;
+#else
+        const bc7enc_compress_block_params* bc7_params = (hybrid && i > 0) ? &bc7_params_fast : &bc7_params_slow;
+#endif
+
         const uint8_t* src = uncompressed_mips[i].data();
         uint32_t mw = llmax(1u, width >> i);
         uint32_t mh = llmax(1u, height >> i);
@@ -886,11 +978,11 @@ bool VayuImageBlockCompressor::encode(const U8* src_data, U32 width, U32 height,
                 switch (resolved)
                 {
                 case EVayuBlockCompressionFormat::BC1:
-                    rgbcx::encode_bc1(bc1_level_for_preset(preset), out, block_rgba, false, false);
+                    rgbcx::encode_bc1(bc1_level_for_preset(mip_preset), out, block_rgba, false, false);
                     out += 8;
                     break;
                 case EVayuBlockCompressionFormat::BC3:
-                    rgbcx::encode_bc3(bc1_level_for_preset(preset), out, block_rgba);
+                    rgbcx::encode_bc3(bc1_level_for_preset(mip_preset), out, block_rgba);
                     out += 16;
                     break;
                 case EVayuBlockCompressionFormat::BC4:
@@ -911,12 +1003,12 @@ bool VayuImageBlockCompressor::encode(const U8* src_data, U32 width, U32 height,
                         ispc::bc7e_compress_blocks((uint32_t)bc7_batch_count,
                                                    reinterpret_cast<uint64_t*>(bc7_batch_out),
                                                    bc7_batch_rgba,
-                                                   &bc7e_params);
+                                                   bc7e_params);
                         bc7_batch_out += bc7_batch_count * 16;
                         bc7_batch_count = 0;
                     }
 #else
-                    bc7enc_compress_block(out, block_rgba, &bc7_params);
+                    bc7enc_compress_block(out, block_rgba, bc7_params);
                     out += 16;
 #endif
                     break;
@@ -930,7 +1022,7 @@ bool VayuImageBlockCompressor::encode(const U8* src_data, U32 width, U32 height,
             ispc::bc7e_compress_blocks((uint32_t)bc7_batch_count,
                                        reinterpret_cast<uint64_t*>(bc7_batch_out),
                                        bc7_batch_rgba,
-                                       &bc7e_params);
+                                       bc7e_params);
             bc7_batch_out += bc7_batch_count * 16;
             bc7_batch_count = 0;
         }

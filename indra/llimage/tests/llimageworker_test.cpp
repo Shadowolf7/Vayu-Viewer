@@ -29,12 +29,15 @@
 #include "linden_common.h"
 // Class to test
 #include "../llimageworker.h"
+#include "../vayubctexturecache.h"
+#include "../vayuimageblockcompressor.h"
 // For timer class
 #include "../llcommon/lltimer.h"
 // for lltrace class
 #include "../llcommon/lltrace.h"
 // Tut header
 #include "../test/lltut.h"
+#include <filesystem>
 
 // -------------------------------------------------------------------------------------------
 // Stubbing: Declarations required to link and run the class being tested
@@ -54,12 +57,41 @@ mBadBufferAllocation(false),
 mAllowOverSize(false)
 {
 }
-LLImageBase::~LLImageBase() {}
+LLImageBase::~LLImageBase()
+{
+    deleteData();
+}
 void LLImageBase::dump() { }
 void LLImageBase::sanityCheck() { }
-void LLImageBase::deleteData() { }
-U8* LLImageBase::allocateData(S32 size) { return NULL; }
-U8* LLImageBase::reallocateData(S32 size) { return NULL; }
+void LLImageBase::deleteData()
+{
+    delete[] mData;
+    mData = NULL;
+    mDataSize = 0;
+}
+U8* LLImageBase::allocateData(S32 size)
+{
+    delete[] mData;
+    if (size > 0)
+    {
+        mData = new U8[size];
+        mDataSize = size;
+        memset(mData, 0, size);
+    }
+    else
+    {
+        mData = NULL;
+        mDataSize = 0;
+    }
+    return mData;
+}
+U8* LLImageBase::reallocateData(S32 size) { return allocateData(size); }
+void LLImageBase::setSize(S32 width, S32 height, S32 ncomponents)
+{
+    mWidth = width;
+    mHeight = height;
+    mComponents = ncomponents;
+}
 
 LLImageFormatted::LLImageFormatted(S8 codec)
     : LLImageBase(),
@@ -81,14 +113,27 @@ void LLImageFormatted::setLastError(const std::string&, const std::string&) { }
 S32 LLImageFormatted::calcDataSize(S32 discard_level) { return 0; }
 S32 LLImageFormatted::calcDiscardLevelBytes(S32 bytes) { return 0; }
 bool LLImageFormatted::decodeChannels(LLImageRaw* raw_image,F32  decode_time, S32 first_channel, S32 max_channel) { return false; }
+S8 LLImageFormatted::getCodec() const { return mCodec; }
 
-LLImageRaw::LLImageRaw(U16 width, U16 height, S8 components) { }
+LLImageRaw::LLImageRaw()
+    : LLImageBase()
+{
+}
+LLImageRaw::LLImageRaw(U16 width, U16 height, S8 components)
+    : LLImageBase()
+{
+    setSize(width, height, components);
+    if (width > 0 && height > 0 && components > 0)
+    {
+        allocateData(width * height * components);
+    }
+}
 LLImageRaw::~LLImageRaw() { }
-void LLImageRaw::deleteData() { }
-U8* LLImageRaw::allocateData(S32 size) { return NULL; }
-U8* LLImageRaw::reallocateData(S32 size) { return NULL; }
-const U8* LLImageBase::getData() const { return NULL; }
-U8* LLImageBase::getData() { return NULL; }
+void LLImageRaw::deleteData() { LLImageBase::deleteData(); }
+U8* LLImageRaw::allocateData(S32 size) { return LLImageBase::allocateData(size); }
+U8* LLImageRaw::reallocateData(S32 size) { return LLImageBase::reallocateData(size); }
+const U8* LLImageBase::getData() const { return mData; }
+U8* LLImageBase::getData() { return mData; }
 bool LLImageBase::isBufferInvalid() const { return false; }
 const std::string& LLImage::getLastThreadError() { static std::string msg; return msg; }
 
@@ -116,20 +161,68 @@ namespace tut
     class responder_test : public LLImageDecodeThread::Responder
     {
         public:
-            responder_test(bool* res)
+            responder_test(bool* res, bool* success_out = nullptr, LLPointer<LLImageRaw>* raw_out = nullptr)
             {
                 done = res;
                 *done = false;
+                mSuccessOut = success_out;
+                mRawOut = raw_out;
+                if (mSuccessOut) *mSuccessOut = false;
             }
             virtual void completed(bool success, const std::string& error_message, LLImageRaw* raw, LLImageRaw* aux, U32 request_id)
             {
+                if (mSuccessOut) *mSuccessOut = success;
+                if (mRawOut && raw) *mRawOut = raw;
                 *done = true;
             }
         private:
-            // This is what can be thought of as the minimal implementation of a responder
-            // Done will be switched to true when completed() is called and can be tested
-            // outside the responder. A better way of doing this is to store a callback here.
             bool* done;
+            bool* mSuccessOut;
+            LLPointer<LLImageRaw>* mRawOut;
+    };
+
+    class LLImageFormattedMock : public LLImageFormatted
+    {
+    public:
+        LLImageFormattedMock(U16 width = 16, U16 height = 16, S8 components = 4)
+            : LLImageFormatted(IMG_CODEC_J2C)
+        {
+            setSize(width, height, components);
+            mLevels = 4;
+        }
+
+        std::string getExtension() override { return "j2c"; }
+
+        bool updateData() override
+        {
+            return true;
+        }
+
+        bool decode(LLImageRaw* raw_image, F32 decode_time) override
+        {
+            if (!raw_image) return false;
+            if (!raw_image->getData())
+            {
+                raw_image->allocateData(getWidth() * getHeight() * getComponents());
+            }
+            U8* data = raw_image->getData();
+            if (data)
+            {
+                for (size_t i = 0; i < (size_t)(getWidth() * getHeight()); ++i)
+                {
+                    data[i * 4 + 0] = 200;
+                    data[i * 4 + 1] = 100;
+                    data[i * 4 + 2] = 50;
+                    data[i * 4 + 3] = 255;
+                }
+            }
+            return true;
+        }
+
+        bool encode(const LLImageRaw* raw_image, F32 encode_time) override
+        {
+            return true;
+        }
     };
 
     // Test wrapper declaration : decode thread
@@ -187,5 +280,62 @@ namespace tut
         }
         // Verifies that the responder has now been called
         ensure("LLImageDecodeThread: threaded work unit not processed", done == true);
+    }
+
+    template<> template<>
+    void imagedecodethread_object_t::test<2>()
+    {
+        // Test coarse decode (discard > 0) attaches compressed blocks in RAM and writes entry to cache
+        auto test_dir = std::filesystem::temp_directory_path() / "vayu_llimageworker_test_coarse";
+        std::error_code ec;
+        std::filesystem::remove_all(test_dir, ec);
+        std::filesystem::create_directories(test_dir, ec);
+
+        VayuImageBlockCompressor::init();
+        VayuBCTextureCache::instance().initCache(test_dir, 1024 * 1024);
+
+        mThread = new LLImageDecodeThread(true);
+        ensure("LLImageDecodeThread: constructor succeeded", mThread != NULL);
+
+        LLUUID test_id;
+        test_id.generate();
+
+        LLPointer<LLImageFormattedMock> mock_image = new LLImageFormattedMock(16, 16, 4);
+        bool done = false;
+        bool success = false;
+        LLPointer<LLImageRaw> decoded_raw;
+
+        // Discard level 2, allow compression = true, pass test_id
+        LLImageDecodeThread::handle_t handle = mThread->decodeImage(
+            mock_image, 2, false, true, new responder_test(&done, &success, &decoded_raw), test_id);
+        ensure("Valid handle for coarse decode", handle != 0);
+
+        const U32 INCREMENT_TIME = 50;
+        const U32 MAX_TIME = 100 * INCREMENT_TIME;
+        U32 total_time = 0;
+        while (!done && total_time < MAX_TIME)
+        {
+            ms_sleep(INCREMENT_TIME);
+            total_time += INCREMENT_TIME;
+        }
+
+        ensure("Coarse decode work unit completed", done == true);
+        ensure("Decode succeeded", success == true);
+        ensure("Raw image returned to responder", decoded_raw.notNull());
+        ensure("Coarse decode attaches compressed blocks in RAM", decoded_raw->getBlockCompressionResult() != nullptr);
+        ensure_equals("Discard level in RAM block width matches", decoded_raw->getBlockCompressionResult()->mWidth, 16u);
+
+        // Allow cache writer thread to flush pending write
+        VayuBCTextureCache::instance().shutdown();
+
+        // Verify that valid discard level was passed to cache write
+        VayuBCCacheEntryHeader cache_header;
+        std::vector<U8> cache_buffer;
+        bool cache_hit = VayuBCTextureCache::instance().readEntry(test_id, 2, cache_header, cache_buffer);
+        ensure("Cache entry recorded with valid discard level", cache_hit);
+        ensure_equals("Cache entry header discard matches", (int)cache_header.mDiscardLevel, 2);
+
+        VayuBCTextureCache::instance().clear();
+        std::filesystem::remove_all(test_dir, ec);
     }
 }

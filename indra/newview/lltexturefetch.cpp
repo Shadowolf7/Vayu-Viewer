@@ -38,6 +38,8 @@
 #include "llimage.h"
 #include "llimagej2c.h"
 #include "llimageworker.h"
+#include "vayubctexturecache.h"
+#include "vayuimageblockcompressor.h"
 #include "llworkerthread.h"
 #include "message.h"
 
@@ -566,6 +568,7 @@ private:
     bool mWritten;
     bool mNeedsAux;
     bool mAllowCompression;
+    EVayuTextureJob mTextureJob;
     bool mHaveAllData;
     bool mInLocalCache;
     bool mInCache;
@@ -893,6 +896,7 @@ LLTextureFetchWorker::LLTextureFetchWorker(LLTextureFetch* fetcher,
       mWritten(false),
       mNeedsAux(false),
       mAllowCompression(true),
+      mTextureJob(EVayuTextureJob::Default),
       mHaveAllData(false),
       mInLocalCache(false),
       mInCache(false),
@@ -1143,6 +1147,50 @@ bool LLTextureFetchWorker::doWork(S32 param)
     if (mState == LOAD_FROM_TEXTURE_CACHE)
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_THREAD("tfwdw - LOAD_FROM_TEXTURE_CACHE");
+
+        // Early check: if the texture is already compressed in VayuBCTextureCache,
+        // we can fulfill the request directly without network fetching or decode thread queuing.
+        if (!mNeedsAux && mAllowCompression && mID.notNull() && mDesiredDiscard >= 0)
+        {
+            VayuBCCacheEntryHeader cache_header;
+            std::vector<U8> cache_buffer;
+            if (VayuBCTextureCache::instance().readEntry(mID, mDesiredDiscard, cache_header, cache_buffer))
+            {
+                auto comp_res = std::make_shared<VayuBlockCompressionResult>();
+                comp_res->mFormat = (EVayuBlockCompressionFormat)cache_header.mFormat;
+                comp_res->mPreset = (EVayuBlockCompressionPreset)cache_header.mPreset;
+                comp_res->mIsMask = (cache_header.mIsMask != 0);
+                comp_res->mGLInternalFormat = cache_header.mGLInternalFormat;
+                comp_res->mGLPrimaryFormat = cache_header.mGLPrimaryFormat;
+                comp_res->mWidth = cache_header.mWidth;
+                comp_res->mHeight = cache_header.mHeight;
+                comp_res->mMipLevels = cache_header.mMipLevels;
+                comp_res->mComponents = cache_header.mComponents;
+                comp_res->mBuffer = std::move(cache_buffer);
+
+                mRawImage = new LLImageRaw(cache_header.mWidth,
+                                          cache_header.mHeight,
+                                          cache_header.mComponents);
+                mRawImage->setBlockCompressionResult(comp_res);
+
+                mLoadedDiscard = mDesiredDiscard;
+                mDecodedDiscard = mDesiredDiscard;
+                mHaveAllData = (cache_header.mDiscardLevel == 0);
+                mFileSize = (S32)comp_res->mBuffer.size();
+                mCachedSize = mFileSize;
+                mLoaded = true;
+                mDecoded = true;
+                mInCache = true;
+                mWriteToCacheState = NOT_WRITE;
+                setState(DONE);
+                add(LLTextureFetch::sCacheHit, 1.0);
+                record(LLTextureFetch::sCacheHitRate, LLUnits::Ratio::fromValue(1));
+                LL_DEBUGS(LOG_TXT) << mID << ": VayuBCTextureCache early hit! Discard: " << mDecodedDiscard
+                                   << " Size: " << cache_header.mWidth << "x" << cache_header.mHeight << LL_ENDL;
+                return doWork(param);
+            }
+        }
+
         if (mCacheReadHandle == LLTextureCache::nullHandle())
         {
             S32 offset = mFormattedImage.notNull() ? mFormattedImage->getDataSize() : 0;
@@ -1810,6 +1858,22 @@ bool LLTextureFetchWorker::doWork(S32 param)
             setState(DONE);
             LL_DEBUGS(LOG_TXT) << mID << " DECODE_IMAGE abort: mLoadedDiscard > MAX_DISCARD_LEVEL" << LL_ENDL;
             return true;
+        }
+
+        // If the fetch was cancelled or the object went out of range (priority dropped to 0)
+        // while waiting for Mip 0, abort the decode cleanly without queueing work.
+        if (getFlags(LLWorkerClass::WCF_DELETE_REQUESTED) || (mDecodedDiscard >= 0 && mImagePriority < F_ALMOST_ZERO))
+        {
+            setState(DONE);
+            return true;
+        }
+
+        // Resolution staging deferral: if this is a heavy full-resolution (Discard 0) decode
+        // and a coarse preview has already been decoded in RAM (mDecodedDiscard >= 0),
+        // defer scheduling if the ImageDecode worker queue is saturated (> 16 pending).
+        if (discard == 0 && mDecodedDiscard >= 0 && LLAppViewer::getImageDecodeThread()->getPending() > 16)
+        {
+            return false;
         }
 
         mDecodeTimer.reset();

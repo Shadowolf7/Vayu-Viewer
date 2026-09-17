@@ -1627,6 +1627,17 @@
       <key>Value</key>
       <integer>256</integer>
     </map>
+    <key>VayuBCTextureCacheVersion</key>
+    <map>
+      <key>Comment</key>
+      <string>Format version of the Vayu BC texture cache (aligned with VayuBCTextureCache::kFormatVersion). Mismatch triggers a one-time purge of bccache on upgrade.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>U32</string>
+      <key>Value</key>
+      <integer>0</integer>
+    </map>
     <key>VayuPerfFrameLog</key>
     <map>
       <key>Comment</key>
@@ -7845,16 +7856,16 @@
       <key>Value</key>
       <integer>1</integer>
     </map>
-    <key>RenderCompressTexturesPreset</key>
+    <key>RenderCompressTexturesHybridMips</key>
     <map>
       <key>Comment</key>
-      <string>0 - ultrafast, 1 - fast, 2 - basic, 3 - slow (default). Trades block texture compression encode latency for VRAM-image quality.</string>
+      <string>When true (default), encode texture sub-mips (i &gt;= 1) with the Fast preset while keeping Mip 0 at Slow for optimal streaming responsiveness. When false, encode all mips at Slow for pure maximal fidelity.</string>
       <key>Persist</key>
       <integer>1</integer>
       <key>Type</key>
-      <string>S32</string>
+      <string>Boolean</string>
       <key>Value</key>
-      <integer>3</integer>
+      <integer>1</integer>
     </map>
     <key>RenderAnisotropic</key>
     <map>

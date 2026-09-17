@@ -579,7 +579,7 @@ static void settings_to_globals()
     LLRender::sNsightDebugSupport = gSavedSettings.getBOOL("RenderNsightDebugSupport");
     LLRender::sAnisotropicFilteringLevel = static_cast<F32>(gSavedSettings.getU32("RenderAnisotropicLevel"));
     LLImageGL::sCompressTextures        = gSavedSettings.getBOOL("RenderCompressTextures");
-    VayuImageBlockCompressor::setPreset(static_cast<EVayuBlockCompressionPreset>(gSavedSettings.getS32("RenderCompressTexturesPreset")));
+    VayuImageBlockCompressor::setHybridMips(gSavedSettings.getBOOL("RenderCompressTexturesHybridMips"));
     LLVOVolume::sLODFactor              = llclamp(gSavedSettings.getF32("RenderVolumeLODFactor"), 0.01f, MAX_LOD_FACTOR);
     LLVOVolume::sDistanceFactor         = 1.f-LLVOVolume::sLODFactor * 0.1f;
     LLVolumeImplFlexible::sUpdateFactor = gSavedSettings.getF32("RenderFlexTimeFactor");
@@ -4975,6 +4975,16 @@ bool LLAppViewer::initCache()
 
     if (!read_only)
     {
+        if (gSavedSettings.getU32("VayuBCTextureCacheVersion") != VayuBCTextureCache::kFormatVersion)
+        {
+            LL_INFOS("Texture") << "Vayu BC cache version mismatch ("
+                                << gSavedSettings.getU32("VayuBCTextureCacheVersion")
+                                << " != " << VayuBCTextureCache::kFormatVersion
+                                << "): invalidating legacy cache on upgrade" << LL_ENDL;
+            VayuBCTextureCache::instance().clear();
+            gSavedSettings.setU32("VayuBCTextureCacheVersion", VayuBCTextureCache::kFormatVersion);
+        }
+
         if (gSavedSettings.getS32("DiskCacheVersion") != LLAppViewer::getDiskCacheVersion())
         {
             LLDiskCache::clear();

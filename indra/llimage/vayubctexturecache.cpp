@@ -30,8 +30,8 @@ constexpr time_t TIME_THRESHOLD_PURGE = 60;
 
 namespace
 {
-    constexpr U32 kMagic = 0x31434256; // "VBC1"
-    constexpr U32 kFormatVersion = 2;
+    constexpr U32 kMagic = VayuBCTextureCache::kMagic;
+    constexpr U32 kFormatVersion = VayuBCTextureCache::kFormatVersion;
     constexpr F64 kDropLogIntervalSeconds = 10.0;
 
     struct FileHeader
@@ -66,9 +66,20 @@ VayuBCTextureCache& VayuBCTextureCache::instance()
 
 VayuBCTextureCache::~VayuBCTextureCache() = default;
 
+std::string VayuBCTextureCache::entryKey(const LLUUID& id) const
+{
+    return id.asString();
+}
+
 std::string VayuBCTextureCache::entryKey(const LLUUID& id, S32 discard_level) const
 {
     return id.asString() + "_" + std::to_string(discard_level);
+}
+
+std::string VayuBCTextureCache::getFilePath(const LLUUID& id) const
+{
+    std::string filename = id.asString() + ".bc";
+    return ((mCacheDir + filename[0]) + LL_DIR_DELIM_STR) + filename;
 }
 
 std::string VayuBCTextureCache::getFilePath(const LLUUID& id, S32 discard_level) const
@@ -76,6 +87,36 @@ std::string VayuBCTextureCache::getFilePath(const LLUUID& id, S32 discard_level)
     std::string filename = entryKey(id, discard_level) + ".bc";
     return ((mCacheDir + filename[0]) + LL_DIR_DELIM_STR) + filename;
 }
+
+size_t VayuBCTextureCache::calcSubBufferBytes(U8 format, U32 width, U32 height, S32 num_mips, S32 diff)
+{
+    if (diff <= 0)
+    {
+        diff = 0;
+    }
+    if (diff >= num_mips || num_mips <= 0)
+    {
+        return 0;
+    }
+
+    // Format values mirror EVayuBlockCompressionFormat:
+    // BC1 = 1, BC3 = 2, BC4 = 3, BC5 = 4, BC7 = 5
+    const U32 block_bytes = (format == 1 /* BC1 */ || format == 3 /* BC4 */) ? 8 : 16;
+
+    size_t total_bytes = 0;
+    for (S32 m = diff; m < num_mips; ++m)
+    {
+        U32 mw = std::max(1u, width >> m);
+        U32 mh = std::max(1u, height >> m);
+        U32 bw = (mw + 3) / 4;
+        U32 bh = (mh + 3) / 4;
+        if (bw < 1) bw = 1;
+        if (bh < 1) bh = 1;
+        total_bytes += static_cast<size_t>(bw) * bh * block_bytes;
+    }
+    return total_bytes;
+}
+
 
 bool VayuBCTextureCache::ensureDirectoriesExist()
 {
@@ -463,35 +504,77 @@ void VayuBCTextureCache::addBytesWritten(S64 bytes)
     }
 }
 
-bool VayuBCTextureCache::readEntry(const LLUUID& id, S32 discard_level, U8 min_preset,
+bool VayuBCTextureCache::readEntry(const LLUUID& id, S32 discard_level,
                                    VayuBCCacheEntryHeader& header, std::vector<U8>& buffer)
 {
-    const std::string key = entryKey(id, discard_level);
+    const std::string key = entryKey(id);
+    const std::string legacy_key = entryKey(id, 0);
 
     {
         std::lock_guard<std::mutex> lock(mMutex);
         auto pending_it = mPendingIndex.find(key);
+        if (pending_it == mPendingIndex.end())
+        {
+            pending_it = mPendingIndex.find(legacy_key);
+        }
+
         if (pending_it != mPendingIndex.end())
         {
             const PendingWrite& pending = *pending_it->second;
-            if (pending.mMeta.mPreset < min_preset)
-                return false;
 
-            buffer = *pending.mBuffer;
-            header = pending.mMeta;
-            return true;
+            if (pending.mMeta.mDiscardLevel == discard_level)
+            {
+                buffer = *pending.mBuffer;
+                header = pending.mMeta;
+                return true;
+            }
+            else if (pending.mMeta.mDiscardLevel < discard_level)
+            {
+                S32 diff = discard_level - pending.mMeta.mDiscardLevel;
+                if (diff < pending.mMeta.mMipLevels)
+                {
+                    size_t sub_bytes = calcSubBufferBytes(pending.mMeta.mFormat, pending.mMeta.mWidth,
+                                                          pending.mMeta.mHeight, pending.mMeta.mMipLevels, diff);
+                    if (sub_bytes <= pending.mBuffer->size())
+                    {
+                        buffer.assign(pending.mBuffer->begin(), pending.mBuffer->begin() + sub_bytes);
+                        header = pending.mMeta;
+                        header.mWidth = std::max(1u, header.mWidth >> diff);
+                        header.mHeight = std::max(1u, header.mHeight >> diff);
+                        header.mMipLevels -= diff;
+                        header.mDiscardLevel = static_cast<U8>(discard_level);
+                        return true;
+                    }
+                }
+            }
+            return false;
         }
 
-        if (mFlushing.count(key))
+        if (mFlushing.count(key) || mFlushing.count(legacy_key))
         {
             return false;
         }
     }
 
-    std::string file_path = getFilePath(id, discard_level);
+    std::string file_path = getFilePath(id);
     if (!LLFile::isfile(file_path))
     {
-        return false;
+        file_path = getFilePath(id, 0);
+        if (!LLFile::isfile(file_path))
+        {
+            if (discard_level > 0)
+            {
+                file_path = getFilePath(id, discard_level);
+                if (!LLFile::isfile(file_path))
+                {
+                    return false;
+                }
+            }
+            else
+            {
+                return false;
+            }
+        }
     }
 
     std::ifstream in(file_path, std::ios::binary);
@@ -513,20 +596,48 @@ bool VayuBCTextureCache::readEntry(const LLUUID& id, S32 discard_level, U8 min_p
         return false;
     }
 
-    if (file_header.mMeta.mPreset < min_preset)
+    if (file_header.mMeta.mDiscardLevel == discard_level)
     {
-        return false;
+        buffer.resize((size_t)file_header.mBufferSize);
+        in.read(reinterpret_cast<char*>(buffer.data()), (std::streamsize)file_header.mBufferSize);
+        if (!in.good() && !in.eof())
+            return false;
+
+        header = file_header.mMeta;
+        updateFileAccessTime(file_path);
+        return true;
+    }
+    else if (file_header.mMeta.mDiscardLevel < discard_level)
+    {
+        S32 diff = discard_level - file_header.mMeta.mDiscardLevel;
+        if (diff >= file_header.mMeta.mMipLevels)
+        {
+            return false;
+        }
+
+        size_t sub_bytes = calcSubBufferBytes(file_header.mMeta.mFormat, file_header.mMeta.mWidth,
+                                              file_header.mMeta.mHeight, file_header.mMeta.mMipLevels, diff);
+        if (sub_bytes > (size_t)file_header.mBufferSize)
+        {
+            return false;
+        }
+
+        buffer.resize(sub_bytes);
+        in.read(reinterpret_cast<char*>(buffer.data()), (std::streamsize)sub_bytes);
+        if (!in.good() && !in.eof())
+            return false;
+
+        header = file_header.mMeta;
+        header.mWidth = std::max(1u, header.mWidth >> diff);
+        header.mHeight = std::max(1u, header.mHeight >> diff);
+        header.mMipLevels -= diff;
+        header.mDiscardLevel = static_cast<U8>(discard_level);
+
+        updateFileAccessTime(file_path);
+        return true;
     }
 
-    buffer.resize((size_t)file_header.mBufferSize);
-    in.read(reinterpret_cast<char*>(buffer.data()), (std::streamsize)file_header.mBufferSize);
-    if (!in.good() && !in.eof())
-        return false;
-
-    header = file_header.mMeta;
-    updateFileAccessTime(file_path);
-
-    return true;
+    return false;
 }
 
 void VayuBCTextureCache::writeEntry(const LLUUID& id, S32 discard_level,
@@ -539,9 +650,13 @@ void VayuBCTextureCache::writeEntry(const LLUUID& id, S32 discard_level,
     if (!mCacheValid && !ensureDirectoriesExist())
         return;
 
+    VayuBCCacheEntryHeader local_header = header;
+    local_header.mDiscardLevel = static_cast<U8>(std::clamp(discard_level, 0, 255));
+
+    const std::string key = entryKey(id);
+    const std::string path = getFilePath(id);
+
     const S64 new_size = (S64)(sizeof(FileHeader) + buffer->size());
-    const std::string key = entryKey(id, discard_level);
-    const std::string path = getFilePath(id, discard_level);
 
     bool needs_post = false;
     bool log_drops = false;
@@ -552,7 +667,63 @@ void VayuBCTextureCache::writeEntry(const LLUUID& id, S32 discard_level,
     {
         std::lock_guard<std::mutex> lock(mMutex);
 
-        needs_post = queuePendingWrite(key, path, header, std::move(buffer), new_size);
+        auto it = mPendingIndex.find(key);
+        if (it != mPendingIndex.end())
+        {
+            if (it->second->mMeta.mDiscardLevel <= local_header.mDiscardLevel)
+            {
+                return;
+            }
+        }
+
+        auto flush_it = mFlushing.find(key);
+        if (flush_it != mFlushing.end())
+        {
+            if (flush_it->second.mDiscardLevel <= local_header.mDiscardLevel)
+            {
+                return;
+            }
+        }
+
+        // Overwrite prevention: check if existing file has equal or higher resolution (lower or equal discard)
+        if (LLFile::isfile(path))
+        {
+            std::ifstream in(path, std::ios::binary);
+            if (in.good())
+            {
+                FileHeader existing_fh;
+                in.read(reinterpret_cast<char*>(&existing_fh), sizeof(existing_fh));
+                if (in.good() && existing_fh.mMagic == kMagic && existing_fh.mVersion == kFormatVersion)
+                {
+                    if (existing_fh.mMeta.mDiscardLevel <= local_header.mDiscardLevel)
+                    {
+                        return;
+                    }
+                }
+            }
+        }
+        else if (discard_level > 0)
+        {
+            std::string legacy_path = getFilePath(id, 0);
+            if (LLFile::isfile(legacy_path))
+            {
+                std::ifstream in(legacy_path, std::ios::binary);
+                if (in.good())
+                {
+                    FileHeader existing_fh;
+                    in.read(reinterpret_cast<char*>(&existing_fh), sizeof(existing_fh));
+                    if (in.good() && existing_fh.mMagic == kMagic && existing_fh.mVersion == kFormatVersion)
+                    {
+                        if (existing_fh.mMeta.mDiscardLevel <= local_header.mDiscardLevel)
+                        {
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+
+        needs_post = queuePendingWrite(key, path, local_header, std::move(buffer), new_size);
         trimPendingBacklog(&log_drops);
 
         if (log_drops)
@@ -587,6 +758,7 @@ bool VayuBCTextureCache::queuePendingWrite(const std::string& key, const std::st
     if (it != mPendingIndex.end())
     {
         mPendingBytes -= it->second->mFileSize;
+        it->second->mPath = path;
         it->second->mMeta = header;
         it->second->mBuffer = std::move(buffer);
         it->second->mFileSize = file_size;
@@ -663,7 +835,7 @@ void VayuBCTextureCache::drainPendingWrites()
             key = local.front().mKey;
             mPendingIndex.erase(key);
             mPendingBytes -= local.front().mFileSize;
-            mFlushing.insert(key);
+            mFlushing[key] = local.front().mMeta;
         }
 
         const PendingWrite& pending = local.front();

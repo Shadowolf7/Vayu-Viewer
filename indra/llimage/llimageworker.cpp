@@ -42,7 +42,8 @@ public:
                  bool allow_compression,
                  const LLPointer<LLImageDecodeThread::Responder>& responder,
                  U32 request_id,
-                 const LLUUID& id);
+                 const LLUUID& id,
+                 EVayuTextureJob job = EVayuTextureJob::Default);
     virtual ~ImageRequest();
 
     /*virtual*/ bool processRequest();
@@ -58,6 +59,7 @@ private:
     bool mNeedsAux;
     bool mAllowCompression;
     LLUUID mID; // for the BC disk cache; may be null if the caller didn't pass one
+    EVayuTextureJob mTextureJob;
     // output
     LLPointer<LLImageRaw> mDecodedImageRaw;
     LLPointer<LLImageRaw> mDecodedImageAux;
@@ -100,7 +102,8 @@ LLImageDecodeThread::handle_t LLImageDecodeThread::decodeImage(
     bool needs_aux,
     bool allow_compression,
     const LLPointer<LLImageDecodeThread::Responder>& responder,
-    const LLUUID& id)
+    const LLUUID& id,
+    EVayuTextureJob job)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
 
@@ -108,13 +111,9 @@ LLImageDecodeThread::handle_t LLImageDecodeThread::decodeImage(
     if (decode_id == 0)
         decode_id = ++mDecodeCount;
 
-    // Report backlog here (called on the main thread for every decode request) since
-    // LLImageDecodeThread::update() is dead code - nothing in the viewer calls it.
-    VayuImageBlockCompressor::setQueueBacklog(mThreadPool->getQueue().size());
-
     // Instantiate the ImageRequest right in the lambda, why not?
     bool posted = mThreadPool->getQueue().post(
-        [req = ImageRequest(image, discard, needs_aux, allow_compression, responder, decode_id, id)]
+        [req = ImageRequest(image, discard, needs_aux, allow_compression, responder, decode_id, id, job)]
         () mutable
         {
             auto done = req.processRequest();
@@ -146,7 +145,8 @@ ImageRequest::ImageRequest(const LLPointer<LLImageFormatted>& image,
                            bool allow_compression,
                            const LLPointer<LLImageDecodeThread::Responder>& responder,
                            U32 request_id,
-                           const LLUUID& id)
+                           const LLUUID& id,
+                           EVayuTextureJob job)
     : mFormattedImage(image),
       mDiscardLevel(discard),
       mNeedsAux(needs_aux),
@@ -155,7 +155,8 @@ ImageRequest::ImageRequest(const LLPointer<LLImageFormatted>& image,
       mDecodedAux(false),
       mResponder(responder),
       mRequestId(request_id),
-      mID(id)
+      mID(id),
+      mTextureJob(job)
 {
 }
 
@@ -214,32 +215,41 @@ bool ImageRequest::processRequest()
         {
             VayuBCCacheEntryHeader cache_header;
             std::vector<U8> cache_buffer;
-            const U8 min_preset = (U8)VayuImageBlockCompressor::getEffectivePreset();
-            if (VayuBCTextureCache::instance().readEntry(mID, discard, min_preset, cache_header, cache_buffer))
+            if (VayuBCTextureCache::instance().readEntry(mID, discard, cache_header, cache_buffer))
             {
-                auto comp_res = std::make_shared<VayuBlockCompressionResult>();
-                comp_res->mFormat = (EVayuBlockCompressionFormat)cache_header.mFormat;
-                comp_res->mPreset = (EVayuBlockCompressionPreset)cache_header.mPreset;
-                comp_res->mIsMask = (cache_header.mIsMask != 0);
-                comp_res->mGLInternalFormat = cache_header.mGLInternalFormat;
-                comp_res->mGLPrimaryFormat = cache_header.mGLPrimaryFormat;
-                comp_res->mWidth = cache_header.mWidth;
-                comp_res->mHeight = cache_header.mHeight;
-                comp_res->mMipLevels = cache_header.mMipLevels;
-                comp_res->mComponents = cache_header.mComponents;
-                comp_res->mBuffer = std::move(cache_buffer);
-
-                if (mDecodedImageRaw.isNull())
+                // Stale cache guard: if this job expects linear BC7/BC5/BC4 but the on-disk cache
+                // entry was recorded under legacy BC1, treat as a cache miss to re-encode properly.
+                const bool stale_bc1 = (cache_header.mFormat == (U8)EVayuBlockCompressionFormat::BC1) &&
+                                       (mTextureJob == EVayuTextureJob::MetallicRoughness ||
+                                        mTextureJob == EVayuTextureJob::Normal ||
+                                        mTextureJob == EVayuTextureJob::SingleChannelMask);
+                if (!stale_bc1)
                 {
-                    mDecodedImageRaw = new LLImageRaw(cache_header.mWidth,
-                                                      cache_header.mHeight,
-                                                      cache_header.mComponents);
+                    auto comp_res = std::make_shared<VayuBlockCompressionResult>();
+                    comp_res->mFormat = (EVayuBlockCompressionFormat)cache_header.mFormat;
+                    comp_res->mPreset = (EVayuBlockCompressionPreset)cache_header.mPreset;
+                    comp_res->mIsMask = (cache_header.mIsMask != 0);
+                    comp_res->mGLInternalFormat = cache_header.mGLInternalFormat;
+                    comp_res->mGLPrimaryFormat = cache_header.mGLPrimaryFormat;
+                    comp_res->mWidth = cache_header.mWidth;
+                    comp_res->mHeight = cache_header.mHeight;
+                    comp_res->mMipLevels = cache_header.mMipLevels;
+                    comp_res->mComponents = cache_header.mComponents;
+                    comp_res->mBuffer = std::move(cache_buffer);
+
+                    if (mDecodedImageRaw.isNull())
+                    {
+                        mDecodedImageRaw = new LLImageRaw(cache_header.mWidth,
+                                                          cache_header.mHeight,
+                                                          cache_header.mComponents);
+                    }
+                    mDecodedImageRaw->setTextureJob(mTextureJob);
+                    mDecodedImageRaw->setBlockCompressionResult(comp_res);
+                    mFormattedImage->setDiscardLevel(discard);
+                    mDecodedRaw = true;
+                    done = true;
+                    cache_hit = true;
                 }
-                mDecodedImageRaw->setBlockCompressionResult(comp_res);
-                mFormattedImage->setDiscardLevel(discard);
-                mDecodedRaw = true;
-                done = true;
-                cache_hit = true;
             }
         }
 
@@ -251,6 +261,7 @@ bool ImageRequest::processRequest()
                                                   mFormattedImage->getHeight(),
                                                   mFormattedImage->getComponents());
             }
+            mDecodedImageRaw->setTextureJob(mTextureJob);
             done = mFormattedImage->decode(mDecodedImageRaw, decode_time_slice);
             // some decoders are removing data when task is complete and there were errors
             mDecodedRaw = done && mDecodedImageRaw->getData();
@@ -282,11 +293,11 @@ bool ImageRequest::processRequest()
                                                mDecodedImageRaw->getHeight(),
                                                mDecodedImageRaw->getComponents()))
         {
-            const S32 discard = mFormattedImage->getDiscardLevel();
+            const S32 discard = (mDiscardLevel >= 0) ? mDiscardLevel : (S32)mFormattedImage->getDiscardLevel();
             const bool cacheable = !mNeedsAux && mID.notNull() && discard >= 0;
 
             auto comp_res = std::make_shared<VayuBlockCompressionResult>();
-            if (VayuImageBlockCompressor::encode(mDecodedImageRaw, *comp_res))
+            if (VayuImageBlockCompressor::encode(mDecodedImageRaw, *comp_res, EVayuBlockCompressionFormat::Auto, mTextureJob))
             {
                 mDecodedImageRaw->setBlockCompressionResult(comp_res);
 
@@ -296,6 +307,7 @@ bool ImageRequest::processRequest()
                     cache_header.mFormat = (U8)comp_res->mFormat;
                     cache_header.mPreset = (U8)comp_res->mPreset;
                     cache_header.mIsMask = comp_res->mIsMask ? 1 : 0;
+                    cache_header.mDiscardLevel = (U8)discard;
                     cache_header.mMipLevels = comp_res->mMipLevels;
                     cache_header.mWidth = comp_res->mWidth;
                     cache_header.mHeight = comp_res->mHeight;
