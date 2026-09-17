@@ -1156,38 +1156,48 @@ bool LLTextureFetchWorker::doWork(S32 param)
             std::vector<U8> cache_buffer;
             if (VayuBCTextureCache::instance().readEntry(mID, mDesiredDiscard, cache_header, cache_buffer))
             {
-                auto comp_res = std::make_shared<VayuBlockCompressionResult>();
-                comp_res->mFormat = (EVayuBlockCompressionFormat)cache_header.mFormat;
-                comp_res->mPreset = (EVayuBlockCompressionPreset)cache_header.mPreset;
-                comp_res->mIsMask = (cache_header.mIsMask != 0);
-                comp_res->mGLInternalFormat = cache_header.mGLInternalFormat;
-                comp_res->mGLPrimaryFormat = cache_header.mGLPrimaryFormat;
-                comp_res->mWidth = cache_header.mWidth;
-                comp_res->mHeight = cache_header.mHeight;
-                comp_res->mMipLevels = cache_header.mMipLevels;
-                comp_res->mComponents = cache_header.mComponents;
-                comp_res->mBuffer = std::move(cache_buffer);
+                // Stale cache guard: if this job expects linear BC7/BC5/BC4 but the on-disk cache
+                // entry was recorded under legacy BC1, treat as a cache miss to re-encode properly.
+                const bool stale_bc1 = (cache_header.mFormat == (U8)EVayuBlockCompressionFormat::BC1) &&
+                                       (mTextureJob == EVayuTextureJob::MetallicRoughness ||
+                                        mTextureJob == EVayuTextureJob::Normal ||
+                                        mTextureJob == EVayuTextureJob::SingleChannelMask);
+                if (!stale_bc1)
+                {
+                    auto comp_res = std::make_shared<VayuBlockCompressionResult>();
+                    comp_res->mFormat = (EVayuBlockCompressionFormat)cache_header.mFormat;
+                    comp_res->mPreset = (EVayuBlockCompressionPreset)cache_header.mPreset;
+                    comp_res->mIsMask = (cache_header.mIsMask != 0);
+                    comp_res->mGLInternalFormat = cache_header.mGLInternalFormat;
+                    comp_res->mGLPrimaryFormat = cache_header.mGLPrimaryFormat;
+                    comp_res->mWidth = cache_header.mWidth;
+                    comp_res->mHeight = cache_header.mHeight;
+                    comp_res->mMipLevels = cache_header.mMipLevels;
+                    comp_res->mComponents = cache_header.mComponents;
+                    comp_res->mBuffer = std::move(cache_buffer);
 
-                mRawImage = new LLImageRaw(cache_header.mWidth,
-                                          cache_header.mHeight,
-                                          cache_header.mComponents);
-                mRawImage->setBlockCompressionResult(comp_res);
+                    mRawImage = new LLImageRaw(cache_header.mWidth,
+                                              cache_header.mHeight,
+                                              cache_header.mComponents);
+                    mRawImage->setTextureJob(mTextureJob);
+                    mRawImage->setBlockCompressionResult(comp_res);
 
-                mLoadedDiscard = mDesiredDiscard;
-                mDecodedDiscard = mDesiredDiscard;
-                mHaveAllData = (cache_header.mDiscardLevel == 0);
-                mFileSize = (S32)comp_res->mBuffer.size();
-                mCachedSize = mFileSize;
-                mLoaded = true;
-                mDecoded = true;
-                mInCache = true;
-                mWriteToCacheState = NOT_WRITE;
-                setState(DONE);
-                add(LLTextureFetch::sCacheHit, 1.0);
-                record(LLTextureFetch::sCacheHitRate, LLUnits::Ratio::fromValue(1));
-                LL_DEBUGS(LOG_TXT) << mID << ": VayuBCTextureCache early hit! Discard: " << mDecodedDiscard
-                                   << " Size: " << cache_header.mWidth << "x" << cache_header.mHeight << LL_ENDL;
-                return doWork(param);
+                    mLoadedDiscard = mDesiredDiscard;
+                    mDecodedDiscard = mDesiredDiscard;
+                    mHaveAllData = (cache_header.mDiscardLevel == 0);
+                    mFileSize = (S32)comp_res->mBuffer.size();
+                    mCachedSize = mFileSize;
+                    mLoaded = true;
+                    mDecoded = true;
+                    mInCache = true;
+                    mWriteToCacheState = NOT_WRITE;
+                    setState(DONE);
+                    add(LLTextureFetch::sCacheHit, 1.0);
+                    record(LLTextureFetch::sCacheHitRate, LLUnits::Ratio::fromValue(1));
+                    LL_DEBUGS(LOG_TXT) << mID << ": VayuBCTextureCache early hit! Discard: " << mDecodedDiscard
+                                       << " Size: " << cache_header.mWidth << "x" << cache_header.mHeight << LL_ENDL;
+                    return doWork(param);
+                }
             }
         }
 
@@ -1895,7 +1905,8 @@ bool LLTextureFetchWorker::doWork(S32 param)
                                                                        mNeedsAux,
                                                                        mAllowCompression,
                                                                        new DecodeResponder(mFetcher, mID, this),
-                                                                       mID);
+                                                                       mID,
+                                                                       mTextureJob);
         if (mDecodeHandle == 0)
         {
             // Abort, failed to put into queue.
@@ -2591,7 +2602,8 @@ LLTextureFetch::~LLTextureFetch()
 }
 
 S32 LLTextureFetch::createRequest(FTType f_type, const std::string& url, const LLUUID& id, const LLHost& host, F32 priority,
-    S32 w, S32 h, S32 c, S32 desired_discard, bool needs_aux, bool can_use_http, bool allow_compression)
+    S32 w, S32 h, S32 c, S32 desired_discard, bool needs_aux, bool can_use_http, bool allow_compression,
+    EVayuTextureJob job)
 {
     LL_PROFILE_ZONE_SCOPED;
     if (mDebugPause)
@@ -2684,6 +2696,12 @@ S32 LLTextureFetch::createRequest(FTType f_type, const std::string& url, const L
         worker->mActiveCount++;
         worker->mNeedsAux = needs_aux;
         worker->mAllowCompression = allow_compression;
+        if (worker->mTextureJob == EVayuTextureJob::Default ||
+            job == EVayuTextureJob::MetallicRoughness ||
+            job == EVayuTextureJob::Normal)
+        {
+            worker->mTextureJob = job;
+        }
         worker->setImagePriority(priority);
         worker->setDesiredDiscard(desired_discard, desired_size);
         worker->setCanUseHTTP(can_use_http);
@@ -2713,6 +2731,7 @@ S32 LLTextureFetch::createRequest(FTType f_type, const std::string& url, const L
         worker->mActiveCount++;
         worker->mNeedsAux = needs_aux;
         worker->mAllowCompression = allow_compression;
+        worker->mTextureJob = job;
         worker->setCanUseHTTP(can_use_http);
         worker->unlockWorkMutex();                                      // -Mw
     }
