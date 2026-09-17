@@ -95,6 +95,9 @@ function install_to_prefix()
 function backup_previous_installation()
 {
     local backup_dir="$1".backup-$(date -I)
+    if [ -e "$backup_dir" ]; then
+        backup_dir="$1".backup-$(date +%Y-%m-%d-%H%M%S)
+    fi
     echo " - Backing up previous installation to $backup_dir"
 
     mv "$1" "$backup_dir" || die "Failed to create backup of existing installation!"
