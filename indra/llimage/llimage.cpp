@@ -866,15 +866,6 @@ LLImageRaw::~LLImageRaw()
     --sRawImageCount;
 }
 
-void LLImageRaw::setTextureJob(EVayuTextureJob job)
-{
-    mTextureJob = job;
-}
-
-EVayuTextureJob LLImageRaw::getTextureJob() const
-{
-    return mTextureJob;
-}
 
 // virtual
 U8* LLImageRaw::allocateData(S32 size)

@@ -295,8 +295,8 @@ public:
     std::shared_ptr<VayuBlockCompressionResult> getBlockCompressionResult() const { return mBlockCompressionResult; }
     bool hasBlockCompressionResult() const { return mBlockCompressionResult != nullptr; }
 
-    void setTextureJob(EVayuTextureJob job);
-    EVayuTextureJob getTextureJob() const;
+    void setTextureJob(EVayuTextureJob job) { mTextureJob = job; }
+    EVayuTextureJob getTextureJob() const { return mTextureJob; }
 
     // Emissive operations used by minimap
     // Roughly emulates GLTF emissive texture, but is not GLTF-compliant
