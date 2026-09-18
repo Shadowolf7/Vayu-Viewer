@@ -4883,14 +4883,11 @@ void LLAppViewer::applyBCTextureCacheBudgets()
     static const S64 MB = 1024 * 1024;
 
     const S64 bc_texture_cache_size = S64(gSavedSettings.getU32("VayuBCTextureCacheMaxSize")) * MB;
-    const S64 bc_texture_cache_pending_size =
-        S64(gSavedSettings.getU32("VayuBCTextureCacheMaxPendingSize")) * MB;
-
     const bool read_only = LLAppViewer::instance() ? LLAppViewer::instance()->isSecondInstance() : false;
 
     VayuBCTextureCache::instance().initCache(
         std::filesystem::path(gDirUtilp->getExpandedFilename(LL_PATH_CACHE, "bccache")),
-        bc_texture_cache_size, bc_texture_cache_pending_size, read_only);
+        bc_texture_cache_size, read_only);
 }
 
 bool LLAppViewer::initCache()

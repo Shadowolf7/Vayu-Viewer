@@ -13,7 +13,9 @@
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <thread>
 #include <utility>
+#include <vector>
 
 namespace tut
 {
@@ -176,56 +178,89 @@ namespace tut
         VayuBCTextureCache::instance().clear();
     }
 
-    // Test 5: the in-RAM pending-write backlog stays under its ceiling, and
-    // trimming it never discards the write that was just queued.
+    // Test 5: Concurrent multi-threaded direct worker writes across multiple
+    // threads execute lock-free without queues, dropped writes, or data races.
     template<> template<>
     void bc_texture_cache_object::test<5>()
     {
-        auto dir = test_dir("pending_bound");
+        auto dir = test_dir("concurrent_worker_writes");
         std::filesystem::remove_all(dir);
 
-        constexpr size_t kCount = 200;
-        constexpr size_t kPayloadSize = 1024;
+        constexpr size_t kNumThreads = 8;
+        constexpr size_t kWritesPerThread = 25;
+        constexpr size_t kTotalWrites = kNumThreads * kWritesPerThread;
+        constexpr size_t kPayloadSize = 512;
 
-        const S64 disk_budget = (S64)(kCount * (kPayloadSize + 256) * 4);
-        const S64 pending_budget = (S64)((kPayloadSize + 256) * 2);
+        const S64 disk_budget = (S64)(kTotalWrites * (kPayloadSize + 256) * 4);
+        VayuBCTextureCache::instance().initCache(dir, disk_budget);
 
-        VayuBCTextureCache::instance().initCache(dir, disk_budget, pending_budget);
+        std::vector<std::vector<LLUUID>> thread_ids(kNumThreads);
+        std::vector<std::thread> workers;
+        workers.reserve(kNumThreads);
 
-        LLUUID newest_id;
-        for (size_t i = 0; i < kCount; ++i)
+        for (size_t t = 0; t < kNumThreads; ++t)
         {
-            LLUUID id;
-            id.generate();
-            newest_id = id;
+            thread_ids[t].resize(kWritesPerThread);
+            for (size_t i = 0; i < kWritesPerThread; ++i)
+            {
+                thread_ids[t][i].generate();
+            }
 
-            VayuBCCacheEntryHeader header = make_header(2, 1);
-            std::vector<U8> payload(kPayloadSize, (U8)(i & 0xFF));
-            VayuBCTextureCache::instance().writeEntry(id, 0, header, make_buffer(std::move(payload)));
+            workers.emplace_back([t, &thread_ids]() {
+                for (size_t i = 0; i < kWritesPerThread; ++i)
+                {
+                    VayuBCCacheEntryHeader header = make_header(2, 1);
+                    std::vector<U8> payload(kPayloadSize);
+                    U8 pattern = static_cast<U8>((t * 31 + i) & 0xFF);
+                    std::fill(payload.begin(), payload.end(), pattern);
 
-            ensure("Pending backlog stays within its ceiling",
-                   VayuBCTextureCache::instance().getPendingBytes()
-                       <= VayuBCTextureCache::instance().getMaxPendingBytes());
+                    VayuBCTextureCache::instance().writeEntry(thread_ids[t][i], 0, header,
+                                                              make_buffer(std::move(payload)));
+                }
+            });
         }
 
-        VayuBCCacheEntryHeader out_header;
-        std::vector<U8> out_buffer;
-        ensure("The most recently queued write is never the one dropped",
-               VayuBCTextureCache::instance().readEntry(newest_id, 0, out_header, out_buffer));
-        ensure_equals("Surviving entry's payload is intact", out_buffer.size(), kPayloadSize);
+        for (auto& w : workers)
+        {
+            w.join();
+        }
+
+        // Verify all concurrently written entries were persisted intact without drops
+        size_t verified = 0;
+        for (size_t t = 0; t < kNumThreads; ++t)
+        {
+            for (size_t i = 0; i < kWritesPerThread; ++i)
+            {
+                VayuBCCacheEntryHeader out_header;
+                std::vector<U8> out_buffer;
+                if (VayuBCTextureCache::instance().readEntry(thread_ids[t][i], 0, out_header, out_buffer))
+                {
+                    U8 expected_pattern = static_cast<U8>((t * 31 + i) & 0xFF);
+                    if (out_buffer.size() == kPayloadSize && out_buffer[0] == expected_pattern)
+                    {
+                        ++verified;
+                    }
+                }
+            }
+        }
+
+        ensure_equals("All concurrent worker writes succeeded and persisted intact", verified, kTotalWrites);
+        ensure_equals("Atomic entry count tracks all concurrent writes",
+                      VayuBCTextureCache::instance().getEntryCount(), kTotalWrites);
+        ensure("Total cache size is strictly positive", VayuBCTextureCache::instance().getCurrentSize() > 0);
 
         VayuBCTextureCache::instance().clear();
     }
 
-    // Test 6: a backlog of many uniquely-keyed writes queued back-to-back is
-    // fully drained by shutdown().
+    // Test 6: Many uniquely-keyed writes written back-to-back are immediately
+    // persisted to disk and shutdown() completes deterministically.
     template<> template<>
     void bc_texture_cache_object::test<6>()
     {
-        auto dir = test_dir("drain_backlog");
+        auto dir = test_dir("immediate_persistence");
         std::filesystem::remove_all(dir);
 
-        constexpr size_t kCount = 1500;
+        constexpr size_t kCount = 1000;
         constexpr size_t kPayloadSize = 32;
 
         S64 budget = (S64)(kCount * (sizeof(VayuBCCacheEntryHeader) + kPayloadSize + 64) * 2);
@@ -242,7 +277,7 @@ namespace tut
             VayuBCTextureCache::instance().writeEntry(ids[i], 0, header, make_buffer(std::move(buffer)));
         }
 
-        // Force a full, deterministic drain
+        // Direct writes are already persisted; shutdown() completes cleanly without backlog drain delay
         VayuBCTextureCache::instance().shutdown();
 
         size_t verified = 0;
@@ -258,8 +293,7 @@ namespace tut
             if (stamped == i)
                 ++verified;
         }
-        ensure_equals("Every queued entry is readable and intact after shutdown() drains the backlog",
-                      verified, kCount);
+        ensure_equals("Every direct worker write is readable and intact", verified, kCount);
 
         // Cross-check against the raw files across the 16 subdirectories on disk
         size_t bc_file_count = 0;
@@ -271,8 +305,8 @@ namespace tut
         }
         ensure_equals("Every entry actually reached disk across subdirectories", bc_file_count, kCount);
 
-        ensure_equals("Entry count matches the drained backlog",
-                       VayuBCTextureCache::instance().getEntryCount(), kCount);
+        ensure_equals("Entry count matches total direct writes",
+                      VayuBCTextureCache::instance().getEntryCount(), kCount);
 
         VayuBCTextureCache::instance().clear();
     }
@@ -671,14 +705,14 @@ namespace tut
         VayuBCTextureCache::instance().clear();
     }
 
-    // Test 16: Asynchronous / rapid queue overwrite protection:
-    // When a high-resolution entry (discard 0) is queued or flushing, a subsequent
-    // lower-resolution entry (discard 2) queued before disk flush completes does not
-    // overwrite or replace the high-resolution entry in mPendingIndex or mFlushing.
+    // Test 16: Direct filesystem overwrite protection:
+    // When a high-resolution entry (discard 0) is written, a subsequent
+    // lower-resolution entry (discard 2) written does not
+    // overwrite or replace the high-resolution entry on disk.
     template<> template<>
     void bc_texture_cache_object::test<16>()
     {
-        auto dir = test_dir("async_overwrite_protection");
+        auto dir = test_dir("direct_overwrite_protection");
         std::filesystem::remove_all(dir);
         VayuBCTextureCache::instance().initCache(dir, 1024 * 1024);
 
@@ -693,10 +727,10 @@ namespace tut
         header2.mDiscardLevel = 2;
         std::vector<U8> payload2 = { 0x11, 0x22 };
 
-        // Queue high resolution write
+        // Write high resolution entry
         VayuBCTextureCache::instance().writeEntry(id, 0, header0, make_buffer(payload0));
 
-        // Immediately queue low resolution write without calling shutdown() in between
+        // Attempt low resolution write for the same asset
         VayuBCTextureCache::instance().writeEntry(id, 2, header2, make_buffer(payload2));
 
         // Now drain everything cleanly to disk

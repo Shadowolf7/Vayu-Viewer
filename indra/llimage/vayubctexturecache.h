@@ -13,16 +13,13 @@
 #pragma once
 
 #include "lluuid.h"
-#include "threadpool_fwd.h"
 
+#include <atomic>
 #include <cstdint>
 #include <filesystem>
-#include <list>
 #include <memory>
 #include <mutex>
 #include <string>
-#include <unordered_map>
-#include <unordered_set>
 #include <vector>
 
 // Mirrors the fields callers need to reconstruct a GL upload without
@@ -56,15 +53,10 @@ public:
     static constexpr U32 kMagic = 0x31434256; // "VBC1"
     static constexpr U32 kFormatVersion = 3;
 
-    // Default ceiling on how many bytes of not-yet-flushed writes may sit in
-    // RAM at once. See mMaxPendingBytes for why this bound exists at all.
-    static constexpr S64 kDefaultMaxPendingBytes = 256 * 1024 * 1024;
-
     // Creates cache_dir and 16 hex subdirectories ('0'-'f') if needed. Safe to
     // call again to change the size budget; does not re-scan if already initialized
     // with the same directory.
     void initCache(const std::filesystem::path& cache_dir, S64 max_size_bytes,
-                   S64 max_pending_bytes = kDefaultMaxPendingBytes,
                    bool second_instance = false);
 
     // Ensures cache_dir and all 16 hex subdirectories ('0'-'f') exist on disk.
@@ -78,10 +70,10 @@ public:
     // files is no bigger than mNominalSizeBytes. May be internally threaded.
     void purge();
 
-    // Threaded cache purging. Can be called from the main thread or background writer thread.
+    // Threaded cache purging. Must be called only from the main thread.
     void threadedPurge();
 
-    // Joins the writer pool's thread and purge thread at a controlled point in app shutdown.
+    // Shuts down the cache and joins the purge thread cleanly.
     void shutdown();
 
     // Looks up (id, discard_level). Slices sub-buffer if discard_level > entry.mDiscardLevel.
@@ -89,8 +81,9 @@ public:
     bool readEntry(const LLUUID& id, S32 discard_level,
                    VayuBCCacheEntryHeader& header, std::vector<U8>& buffer);
 
-    // Writes (or overwrites) the entry for (id, discard_level) asynchronously via
-    // the writer pool. Triggers threadedPurge() if budget is exceeded after flushing.
+    // Writes (or overwrites) the entry for (id, discard_level) directly to disk from
+    // whichever worker thread produces the compressed texture, with zero mutex locks
+    // held during file I/O.
     void writeEntry(const LLUUID& id, S32 discard_level,
                     const VayuBCCacheEntryHeader& header,
                     std::shared_ptr<const std::vector<U8>> buffer);
@@ -108,7 +101,7 @@ public:
     // Rate-limited touch of the file's last access time to maintain LRU order on disk.
     void updateFileAccessTime(const std::string& file_path);
 
-    // Real-time byte tracking (atomic)
+    // Real-time byte tracking (atomic). Bails out immediately when called on worker threads.
     void addBytesWritten(S64 bytes);
 
     S64 getCurrentSize() const { return (S64)mCurrentSizeBytes.load(); }
@@ -118,38 +111,12 @@ public:
 
     bool isInitialized() const { return mCacheValid; }
 
-    S64 getPendingBytes() const;
-    S64 getMaxPendingBytes() const { return mMaxPendingBytes; }
-
     const std::string getCacheInfo() const;
 
 private:
     VayuBCTextureCache() = default;
 
-    // A write queued for the background writer pool.
-    struct PendingWrite
-    {
-        std::string mKey;
-        std::string mPath;
-        VayuBCCacheEntryHeader mMeta;
-        std::shared_ptr<const std::vector<U8>> mBuffer;
-        S64 mFileSize = 0;
-    };
-    using PendingList = std::list<PendingWrite>;
-
-    std::string entryKey(const LLUUID& id) const;
-    std::string entryKey(const LLUUID& id, S32 discard_level) const;
-
     U64 cacheDirSize();
-
-    void trimPendingBacklog(bool* should_log_drops);
-
-    bool queuePendingWrite(const std::string& key, const std::string& path,
-                           const VayuBCCacheEntryHeader& header,
-                           std::shared_ptr<const std::vector<U8>>&& buffer,
-                           S64 file_size);
-
-    void drainPendingWrites();
 
     mutable std::mutex mMutex;
     std::string mCacheDir;
@@ -161,21 +128,4 @@ private:
     bool mCacheValid = false;
 
     VayuBCCachePurgeThread* mPurgeThread = nullptr;
-
-    // Writes not yet flushed to disk
-    PendingList mPendingWrites;
-    std::unordered_map<std::string, PendingList::iterator> mPendingIndex;
-    std::unordered_map<std::string, VayuBCCacheEntryHeader> mFlushing;
-
-    S64 mPendingBytes = 0;
-    S64 mMaxPendingBytes = kDefaultMaxPendingBytes;
-
-    S64 mDroppedWrites = 0;
-    S64 mDroppedBytes = 0;
-    S64 mDroppedWritesReported = 0;
-    F64 mLastDropLogTime = 0.0;
-
-    bool mDraining = false;
-
-    std::unique_ptr<LL::ThreadPool> mWriterPool;
 };

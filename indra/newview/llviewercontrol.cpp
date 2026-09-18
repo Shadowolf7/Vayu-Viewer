@@ -1024,7 +1024,6 @@ void settings_setup_listeners()
 {
     LL_PROFILE_ZONE_SCOPED;
     setting_setup_signal_listener(gSavedSettings, "VayuBCTextureCacheMaxSize", handleBCTextureCacheBudgetChanged);
-    setting_setup_signal_listener(gSavedSettings, "VayuBCTextureCacheMaxPendingSize", handleBCTextureCacheBudgetChanged);
     setting_setup_signal_listener(gSavedSettings, "FirstPersonAvatarVisible", handleRenderAvatarMouselookChanged);
     setting_setup_signal_listener(gSavedSettings, "NumpadControl", handleNumpadControlChanged);
     setting_setup_signal_listener(gSavedSettings, "RenderFarClip", handleRenderFarClipChanged);
