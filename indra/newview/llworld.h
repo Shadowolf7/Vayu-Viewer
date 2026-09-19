@@ -32,7 +32,6 @@
 #ifndef LL_LLWORLD_H
 #define LL_LLWORLD_H
 
-#include "llpatchvertexarray.h"
 
 #include "llmath.h"
 #include "v3math.h"
@@ -103,7 +102,10 @@ public:
     // All of these should be in the agent coordinate frame
     LLViewerRegion*         resolveRegionGlobal(LLVector3 &localpos, const LLVector3d &position);
     LLViewerRegion*         resolveRegionAgent(LLVector3 &localpos, const LLVector3 &position);
-    F32                     resolveLandHeightGlobal(const LLVector3d &position);
+    // regionp, when given, is where the caller expects the position to be -- usually the region of
+    // the object asking. It is checked first, so the region list is only searched when it misses;
+    // the answer is the same either way.
+    F32                     resolveLandHeightGlobal(const LLVector3d &position, LLViewerRegion* regionp = nullptr);
     F32                     resolveLandHeightAgent(const LLVector3 &position);
 
     // Return the lowest allowed Z point to prevent objects from being moved
@@ -158,6 +160,9 @@ public:
 
     LLViewerTexture *getDefaultWaterTexture();
     void updateWaterObjects();
+    // Rebuild the hole and edge water once, on the next updateVisibilities(),
+    // however many regions arrive or leave before then.
+    void requestWaterObjectsUpdate();
 
     void waterHeightRegionInfo(std::string const& sim_name, F32 water_height);
     void shiftRegions(const LLVector3& offset);
@@ -167,6 +172,7 @@ public:
 
     void getInfo(LLSD& info);
     U32  getNumOfActiveCachedObjects() const {return mNumOfActiveCachedObjects;}
+    void logObjectCacheInfo() const;
 
     void clearAllVisibleObjects();
 
@@ -233,7 +239,6 @@ private:
     static const F32 mWidthInMeters;
 
     F32 mLandFarClip;                   // Far clip distance for land.
-    LLPatchVertexArray      mLandPatch;
     S32 mLastPacketsIn;
     S32 mLastPacketsOut;
     S32 mLastPacketsLost;
@@ -246,6 +251,7 @@ private:
     //
 
     std::list<LLPointer<LLVOWater> > mHoleWaterObjects;
+    bool mWaterObjectsDirty = false;
     static const S32 EDGE_WATER_OBJECTS_COUNT = 8;
     LLPointer<LLVOWater> mEdgeWaterObjects[EDGE_WATER_OBJECTS_COUNT];
 

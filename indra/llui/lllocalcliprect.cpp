@@ -27,6 +27,7 @@
 #include "lllocalcliprect.h"
 
 #include "llfontgl.h"
+#include "llrender2dutils.h"
 #include "llui.h"
 
 /*static*/ std::stack<LLRect> LLScreenClipRect::sClipRectStack;
@@ -39,7 +40,7 @@ LLScreenClipRect::LLScreenClipRect(const LLRect& rect, bool enabled)
     if (mEnabled)
     {
         pushClipRect(rect);
-        mScissorState.setEnabled(!sClipRectStack.empty());
+        mScissorState.setEnabled(true);
         updateScissorRegion();
     }
 }
@@ -90,8 +91,11 @@ void LLScreenClipRect::updateScissorRegion()
     S32 x,y,w,h;
     x = llfloor(rect.mLeft * LLUI::getScaleFactor().mV[VX]);
     y = llfloor(rect.mBottom * LLUI::getScaleFactor().mV[VY]);
-    w = llmax(0, llceil(rect.getWidth() * LLUI::getScaleFactor().mV[VX])) + 1;
-    h = llmax(0, llceil(rect.getHeight() * LLUI::getScaleFactor().mV[VY])) + 1;
+    // A rect with no area admits nothing. The pixel added to the others is the
+    // one the rect's far edge names and does not contain; added to a rect that
+    // names no pixels at all, it let a column of them through at the origin.
+    w = rect.getWidth() > 0 ? llceil(rect.getWidth() * LLUI::getScaleFactor().mV[VX]) + 1 : 0;
+    h = rect.getHeight() > 0 ? llceil(rect.getHeight() * LLUI::getScaleFactor().mV[VY]) + 1 : 0;
     glScissor( x,y,w,h );
     stop_glerror();
 }
@@ -99,11 +103,11 @@ void LLScreenClipRect::updateScissorRegion()
 //---------------------------------------------------------------------------
 // LLLocalClipRect
 //---------------------------------------------------------------------------
+// Without the scale a clip under one moved with the drawing's offset and kept
+// the drawing's old size, so the scissor and the thing it was meant to cut
+// ended up in different places.
 LLLocalClipRect::LLLocalClipRect(const LLRect& rect, bool enabled /* = true */)
-:   LLScreenClipRect(LLRect(rect.mLeft + LLFontGL::sCurOrigin.mX,
-                    rect.mTop + LLFontGL::sCurOrigin.mY,
-                    rect.mRight + LLFontGL::sCurOrigin.mX,
-                    rect.mBottom + LLFontGL::sCurOrigin.mY), enabled)
+:   LLScreenClipRect(LLRender2D::toScreen(rect), enabled)
 {}
 
 LLLocalClipRect::~LLLocalClipRect()

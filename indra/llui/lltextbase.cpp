@@ -166,6 +166,7 @@ LLTextBase::Params::Params()
     track_end("track_end", false),
     read_only("read_only", false),
     skip_link_underline("skip_link_underline", false),
+    link_color("link_color"),
     spellcheck("spellcheck", false),
     v_pad("v_pad", 0),
     h_pad("h_pad", 0),
@@ -204,6 +205,8 @@ LLTextBase::LLTextBase(const LLTextBase::Params &p)
     mReadOnly(p.read_only),
     mSkipTripleClick(false),
     mSkipLinkUnderline(p.skip_link_underline),
+    mHasLinkColor(p.link_color.isProvided()),
+    mLinkColor(p.link_color.isProvided() ? p.link_color() : LLUIColor()),
     mSpellCheck(p.spellcheck),
     mSpellCheckStart(-1),
     mSpellCheckEnd(-1),
@@ -793,7 +796,10 @@ void LLTextBase::drawCursor()
 
             ime_pos.mX = (S32) (ime_pos.mX * LLUI::getScaleFactor().mV[VX]);
             ime_pos.mY = (S32) (ime_pos.mY * LLUI::getScaleFactor().mV[VY]);
-            getWindow()->setLanguageTextInput( ime_pos );
+            if (LLWindow* window = getWindow())
+            {
+                window->setLanguageTextInput(ime_pos);
+            }
         }
     }
 }
@@ -1683,8 +1689,9 @@ void LLTextBase::onVisibilityChange( bool new_visibility )
 //virtual
 void LLTextBase::setValue(const LLSD& value )
 {
-    static const LLStyle::Params input_params = LLStyle::Params();
-    setText(value.asString(), input_params);
+    // No style of its own, so this resolves to LLStyle::defaultParams() and
+    // stays eligible for the guard in LLTextBox::setText.
+    setText(value.asString());
 }
 
 //virtual
@@ -2228,7 +2235,7 @@ std::pair<S32, S32> LLTextBase::getVisibleLines(bool require_fully_visible)
 
 LLTextViewModel* LLTextBase::getViewModel() const
 {
-    return (LLTextViewModel*)mViewModel.get();
+    return (LLTextViewModel*)viewModel();
 }
 
 void LLTextBase::addDocumentChild(LLView* view)
@@ -2448,7 +2455,7 @@ void LLTextBase::createUrlContextMenu(S32 x, S32 y, const std::string &in_url)
     }
 }
 
-void LLTextBase::setText(const LLStringExplicit &utf8str, const LLStyle::Params& input_params)
+void LLTextBase::setText(ALStringViewExplicit utf8str, const LLStyle::Params& input_params)
 {
     beforeValueChange();
     // Can insert a lot of different segments, don't want to spam events.
@@ -2550,6 +2557,11 @@ void LLTextBase::appendTextImpl(const std::string& new_text, const LLStyle::Para
             if (link_params.use_default_link_style)
             {
                 link_params.overwriteFrom(match.getStyle());
+                if (mHasLinkColor)
+                {
+                    link_params.color = mLinkColor;
+                    link_params.readonly_color = mLinkColor;
+                }
             }
 
             // output the text before the Url
@@ -4197,7 +4209,10 @@ bool LLNormalTextSegment::handleHover(S32 x, S32 y, MASK mask)
         // Only process the click if it's actually in this segment, not to the right of the end-of-line.
         if(mEditor.getSegmentAtLocalPos(x, y, false) == this)
         {
-            LLUI::getInstance()->getWindow()->setCursor(UI_CURSOR_HAND);
+            if (LLWindow* window = LLUI::getInstance()->getWindow())
+            {
+                window->setCursor(UI_CURSOR_HAND);
+            }
             return true;
         }
     }
@@ -4585,7 +4600,7 @@ S32 LLInlineViewSegment::getNumBytes(S32 num_pixels, S32 segment_offset, S32 lin
     {
         return 0;
     }
-    else if (line_offset != 0 && num_pixels < mView->getRect().getWidth())
+    else if (line_offset != 0 && num_pixels < (mLeftPad + mRightPad + mView->getRect().getWidth()))
     {
         return 0;
     }

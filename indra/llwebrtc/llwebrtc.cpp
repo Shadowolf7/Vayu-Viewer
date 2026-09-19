@@ -753,8 +753,11 @@ void LLWebRTCImpl::workerStartRecording()
 // must be run in the worker thread.  Selects the configured playout device and
 // starts playout.  Playout only runs while there's a connection to render
 // (running the output device with no engine data is heard as a buzz), so this
-// is a no-op when there are no connections or when already playing.  Device
-// changes go through workerDeployDevices(), which stops playout first.
+// is a no-op when there are no connections or when already playing on the
+// configured device.  Playing on any other device -- the engine starts playout
+// itself when a receive stream comes up, on whatever the module last had --
+// is stopped and re-selected.  Device changes go through
+// workerDeployDevices(), which stops playout first.
 void LLWebRTCImpl::workerStartPlayout()
 {
     // Only run playout while voice is enabled and there is something to render:
@@ -786,7 +789,7 @@ void LLWebRTCImpl::workerStartPlayout()
 
     if (mDeviceModule->Playing())
     {
-        if (mDeviceModule->GetPlayoutDevice() == playoutDevice)
+        if (mDeviceModule->GetPlayoutDevice() == (int32_t)playoutDevice)
         {
             return;
         }
@@ -826,14 +829,8 @@ void LLWebRTCImpl::workerDeployDevices()
 
     // Stop first so the start helpers (which no-op when already running) will
     // re-select the now-current device.
-    if (mDeviceModule->Playing())
-    {
-        mDeviceModule->StopPlayout();
-    }
-    if (mDeviceModule->Recording())
-    {
-        mDeviceModule->ForceStopRecording();
-    }
+    mDeviceModule->StopPlayout();
+    mDeviceModule->ForceStopRecording();
 
     workerStartRecording();
     workerStartPlayout();
@@ -918,7 +915,7 @@ void LLWebRTCImpl::updateDevices()
 
     int16_t renderDeviceCount  = mDeviceModule->PlayoutDevices();
 
-    LLWebRTCVoiceDeviceList newPlayoutList;
+    mPlayoutDeviceList.clear();
 #if WEBRTC_WIN
     int16_t index = 0;
 #else
@@ -932,12 +929,12 @@ void LLWebRTCImpl::updateDevices()
         char guid[webrtc::kAdmMaxGuidSize];
         mDeviceModule->PlayoutDeviceName(index, name, guid);
         RTC_LOG(LS_VERBOSE) << "updateDevices: playout device [" << index << "] name='" << name << "' guid='" << guid << "'";
-        newPlayoutList.emplace_back(name, guid);
+        mPlayoutDeviceList.emplace_back(name, guid);
     }
 
     int16_t captureDeviceCount        = mDeviceModule->RecordingDevices();
 
-    LLWebRTCVoiceDeviceList newRecordingList;
+    mRecordingDeviceList.clear();
 #if WEBRTC_WIN
     index = 0;
 #else
@@ -951,17 +948,8 @@ void LLWebRTCImpl::updateDevices()
         char guid[webrtc::kAdmMaxGuidSize];
         mDeviceModule->RecordingDeviceName(index, name, guid);
         RTC_LOG(LS_VERBOSE) << "updateDevices: recording device [" << index << "] name='" << name << "' guid='" << guid << "'";
-        newRecordingList.emplace_back(name, guid);
+        mRecordingDeviceList.emplace_back(name, guid);
     }
-
-    bool changed = (mPlayoutDeviceList != newPlayoutList || mRecordingDeviceList != newRecordingList);
-    if (!changed && !mPlayoutDeviceList.empty() && !mRecordingDeviceList.empty())
-    {
-        return;
-    }
-
-    mPlayoutDeviceList = std::move(newPlayoutList);
-    mRecordingDeviceList = std::move(newRecordingList);
 
     RTC_LOG(LS_INFO) << "updateDevices, playout count: " << renderDeviceCount << "; capture count: " << captureDeviceCount;
 
@@ -969,6 +957,8 @@ void LLWebRTCImpl::updateDevices()
     {
         observer->OnDevicesChanged(mPlayoutDeviceList, mRecordingDeviceList);
     }
+
+    deployDevices();
 }
 
 void LLWebRTCImpl::OnDevicesUpdated()
@@ -1156,10 +1146,7 @@ void LLWebRTCImpl::freePeerConnection(LLWebRTCPeerConnectionInterface* peer_conn
                 {
                     if (mDeviceModule)
                     {
-                        if (mDeviceModule->Playing())
-                        {
-                            mDeviceModule->StopPlayout();
-                        }
+                        mDeviceModule->StopPlayout();
                         if (!mVoiceEnabled)
                         {
                             mDeviceModule->ForceStopRecording();

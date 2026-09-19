@@ -1,5 +1,5 @@
 {
-  "builtin-baseline": "04a9d8e5212d01ee1dd9478eadd9caade4f8b0d4",
+  "builtin-baseline": "e6f9e70a29a3e80a1fc510d8503304315447112f",
   "dependencies": [
     "alchemy-dictionaries",
     "alchemy-fonts",
@@ -47,7 +47,6 @@
         "zlib"
       ]
     },
-    "glm",
     "harfbuzz",
     "icu",
     {
@@ -141,10 +140,6 @@
     "secondlife-emoji-shortcodes",
     "simdjson",
     "simdutf",
-    {
-      "name": "sse2neon",
-      "platform": "osx"
-    },
     "tinyexr",
     "tinygltf",
     "v-hacd",
@@ -152,47 +147,21 @@
       "name": "vlc-bin",
       "platform": "windows | osx"
     },
-    {
-      "name": "webrtc",
-      "features": [
-        {
-          "name": "alsa",
-          "platform": "linux"
-        },
-        {
-          "name": "pulseaudio",
-          "platform": "linux"
-        }
-      ]
-    },
     "websocketpp",
     "xxhash",
     "zlib"
   ],
   "features": {
-    "bugsplat": {
-      "description": "Build with support for Bugsplat crash reporting",
-      "dependencies": [
-        {
-          "name": "bugsplat",
-          "platform": "windows & x64"
-        },
-        {
-          "name": "bugsplat-apple",
-          "platform": "osx"
-        }
-      ]
-    },
     "dullahan-example": {
       "description": "Build with support for Dullahan OpenGL example application",
       "dependencies": [
         {
           "name": "glad",
-          "platform": "windows | linux",
           "features": [
             "gl-api-41",
             "loader"
-          ]
+          ],
+          "platform": "windows | linux"
         },
         {
           "name": "imgui",
@@ -234,18 +203,6 @@
       "description": "Build with support for Kakadu JPEG2000",
       "dependencies": [
         "kdu"
-      ]
-    },
-    "offscreen": {
-      "description": "Build with support for Mesa3D Software OSR backend",
-      "dependencies": [
-        {
-          "name": "mesa",
-          "features": [
-            "offscreen"
-          ],
-          "platform": "windows"
-        }
       ]
     },
     "openal": {
@@ -339,6 +296,24 @@
       "description": "Build with support for the Velopack install and update framework",
       "dependencies": [
         "velopack"
+      ]
+    },
+    "webrtc": {
+      "description": "Build with WebRTC voice",
+      "dependencies": [
+        {
+          "name": "webrtc",
+          "features": [
+            {
+              "name": "alsa",
+              "platform": "linux"
+            },
+            {
+              "name": "pulseaudio",
+              "platform": "linux"
+            }
+          ]
+        }
       ]
     }
   }

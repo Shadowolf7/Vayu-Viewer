@@ -34,7 +34,7 @@
 #include "fsjointpose.h"
 #include "llkeyframemotion.h"
 
-#define MIN_REQUIRED_PIXEL_AREA_POSING 500.f
+constexpr F32 MIN_REQUIRED_PIXEL_AREA_POSING = 500.f;
 
 //-----------------------------------------------------------------------------
 // class FSPosingMotion
@@ -218,7 +218,6 @@ private:
     /// <summary>
     /// Constructor and usage requires this not be NULL.
     /// </summary>
-    JointMotionList dummyMotionList;
 
     /// <summary>
     /// The time constant, in seconds, we use for transitioning between one animation-state to another; this affects the 'damping'

@@ -61,6 +61,7 @@ static const S32 HEADER_CHECKBOX_HEIGHT = 16;
 
 static LLDefaultChildRegistry::Register<LLAccordionCtrlTab> t1("accordion_tab");
 
+// Built by the tab, for the tab: its parent is always the tab.
 class LLAccordionCtrlTab::LLAccordionCtrlTabHeader : public LLUICtrl
 {
 public:
@@ -228,7 +229,7 @@ void LLAccordionCtrlTab::LLAccordionCtrlTabHeader::draw()
     F32 alpha = getCurrentTransparency();
     gl_rect_2d(0, 0, width - 1, height - 1, mHeaderBGColor.get() % alpha, true);
 
-    LLAccordionCtrlTab* parent = dynamic_cast<LLAccordionCtrlTab*>(getParent());
+    LLAccordionCtrlTab* parent = static_cast<LLAccordionCtrlTab*>(getParent());
     bool collapsible = parent && parent->getCollapsible();
     bool expanded = parent && parent->getDisplayChildren();
 
@@ -358,7 +359,7 @@ bool LLAccordionCtrlTab::LLAccordionCtrlTabHeader::handleDragAndDrop(S32 x, S32 
                                                                      EAcceptance* accept,
                                                                      std::string& tooltip_msg)
 {
-    LLAccordionCtrlTab* parent = dynamic_cast<LLAccordionCtrlTab*>(getParent());
+    LLAccordionCtrlTab* parent = static_cast<LLAccordionCtrlTab*>(getParent());
 
     if (parent && !parent->getDisplayChildren() && parent->getCollapsible() && parent->canOpenClose())
     {
@@ -406,6 +407,11 @@ LLAccordionCtrlTab::Params::Params()
     ,selection_enabled("selection_enabled", false)
 {
     changeDefault(mouse_opaque, false);
+    // The block calls it display_children and a file calls it `expanded`,
+    // and a file writing the other name was writing an attribute nothing
+    // declares -- read, dropped, and no warning worth finding. Both names
+    // now reach the same parameter.
+    addSynonym(display_children, "display_children");
 }
 
 LLAccordionCtrlTab::LLAccordionCtrlTab(const LLAccordionCtrlTab::Params&p)
@@ -486,7 +492,10 @@ void LLAccordionCtrlTab::setDisplayChildren(bool display)
     mDisplayChildren = display;
     LLRect rect = getRect();
 
-    rect.mBottom = rect.mTop - (getDisplayChildren() ? mExpandedHeight : HEADER_HEIGHT);
+    // Folded, a tab is its header and nothing else -- which is nothing at
+    // all where the header is hidden, rather than a blank strip as tall
+    // as the header would have been.
+    rect.mBottom = rect.mTop - (getDisplayChildren() ? mExpandedHeight : getHeaderHeight());
     setRect(rect);
 
     if (mContainerPanel)
@@ -669,7 +678,7 @@ bool LLAccordionCtrlTab::addChild(LLView* child, S32 tab_group)
 {
     if (DD_HEADER_NAME != child->getName())
     {
-        reshape(child->getRect().getWidth() , child->getRect().getHeight() + HEADER_HEIGHT );
+        reshape(child->getRect().getWidth() , child->getRect().getHeight() + getHeaderHeight() );
         mExpandedHeight = getRect().getHeight();
     }
 
@@ -881,7 +890,12 @@ S32 LLAccordionCtrlTab::notifyParent(const LLSD& info)
         if (str_action == "size_changes")
         {
             S32 height = info["height"];
-            height = llmax(height, 10) + HEADER_HEIGHT + getPaddingTop() + getPaddingBottom();
+            // What the header actually takes, which is nothing when there is
+            // no header. Every other place in this file asks; this one had
+            // the constant, so a tab with its header hidden was told to be a
+            // header taller than it needed and handed the difference to its
+            // panel as blank space under the last row.
+            height = llmax(height, 10) + getHeaderHeight() + getPaddingTop() + getPaddingBottom();
 
             mExpandedHeight = height;
 
@@ -907,7 +921,7 @@ S32 LLAccordionCtrlTab::notifyParent(const LLSD& info)
     }
     else if (info.has("scrollToShowRect"))
     {
-        LLAccordionCtrl* parent = dynamic_cast<LLAccordionCtrl*>(getParent());
+        LLAccordionCtrl* parent = getParentAs<LLAccordionCtrl>();
         if (parent && parent->getFitParent())
         {
             //  EXT-8285 ('No attachments worn' text appears at the bottom of blank 'Attachments' accordion)

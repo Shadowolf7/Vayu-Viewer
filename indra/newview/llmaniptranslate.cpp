@@ -743,7 +743,7 @@ bool LLManipTranslate::handleHover(S32 x, S32 y, MASK mask)
                     // Grass is always drawn on the ground, so clamp its position to the ground
                     if (object->getPCode() == LL_PCODE_LEGACY_GRASS)
                     {
-                        new_position_global.mdV[VZ] = LLWorld::getInstance()->resolveLandHeightGlobal(new_position_global) + 1.f;
+                        new_position_global.mdV[VZ] = LLWorld::getInstance()->resolveLandHeightGlobal(new_position_global, object->getRegion()) + 1.f;
                     }
 
                     if (object->isRootEdit())
@@ -800,8 +800,8 @@ void LLManipTranslate::highlightManipulators(S32 x, S32 y)
     }
 
     //LLBBox bbox = LLSelectMgr::getInstance()->getBBoxOfSelection();
-    LLMatrix4 projMatrix = LLViewerCamera::getInstance()->getProjection();
-    LLMatrix4 modelView = LLViewerCamera::getInstance()->getModelview();
+    LLMatrix4 projMatrix = LLViewerCamera::getInstance()->getForwardZProjection().toMatrix4();
+    LLMatrix4 modelView = LLViewerCamera::getInstance()->frameModelview().toMatrix4();
 
     LLVector3 object_position = getPivotPoint();
 
@@ -1684,11 +1684,12 @@ void LLManipTranslate::highlightIntersection(LLVector3 normal,
             normal = -normal;
         }
         F32 d = -(selection_center * normal);
-        glm::vec4 plane(normal.mV[0], normal.mV[1], normal.mV[2], d );
+        LLMatrix4a inverse;
+        inverse.setInverse(gGL.getModelviewMatrix());
+        LLVector4a plane;
+        inverse.transform4(LLVector4a(normal.mV[0], normal.mV[1], normal.mV[2], d), plane);
 
-        plane = glm::inverse(gGL.getModelviewMatrix()) * plane;
-
-        gClipProgram.uniform4fv(sClipPlane, 1, plane.v);
+        gClipProgram.uniform4fv(sClipPlane, 1, plane.getF32ptr());
 
         bool particles = gPipeline.hasRenderType(LLPipeline::RENDER_TYPE_PARTICLES);
         bool clouds = gPipeline.hasRenderType(LLPipeline::RENDER_TYPE_CLOUDS);

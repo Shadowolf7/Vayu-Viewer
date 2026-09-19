@@ -337,7 +337,7 @@ LLTextEditor::~LLTextEditor()
 // LLTextEditor
 // Public methods
 
-void LLTextEditor::setText(const LLStringExplicit &utf8str, const LLStyle::Params& input_params)
+void LLTextEditor::setText(ALStringViewExplicit utf8str, const LLStyle::Params& input_params)
 {
     // validate incoming text if necessary
     if (mPrevalidator)
@@ -1016,7 +1016,10 @@ bool LLTextEditor::handleHover(S32 x, S32 y, MASK mask)
             mSelectionEnd = mCursorPos;
         }
         LL_DEBUGS("UserInput") << "hover handled by " << getName() << " (active)" << LL_ENDL;
-        getWindow()->setCursor(UI_CURSOR_IBEAM);
+        if (LLWindow* window = getWindow())
+        {
+            window->setCursor(UI_CURSOR_IBEAM);
+        }
         handled = true;
     }
 
@@ -1034,7 +1037,10 @@ bool LLTextEditor::handleHover(S32 x, S32 y, MASK mask)
 
     if( !handled )
     {
-        getWindow()->setCursor(UI_CURSOR_IBEAM);
+        if (LLWindow* window = getWindow())
+        {
+            window->setCursor(UI_CURSOR_IBEAM);
+        }
         handled = true;
     }
 
@@ -2226,7 +2232,10 @@ bool LLTextEditor::handleUnicodeCharHere(llwchar uni_char)
         addChar( uni_char );
 
         // Keys that add characters temporarily hide the cursor
-        getWindow()->hideCursorUntilMouseMove();
+        if (LLWindow* window = getWindow())
+        {
+            window->hideCursorUntilMouseMove();
+        }
 
         handled = true;
     }
@@ -2423,7 +2432,10 @@ void LLTextEditor::focusLostHelper()
     }
 
     // Make sure cursor is shown again
-    getWindow()->showCursorFromMouseMove();
+    if (LLWindow* window = getWindow())
+    {
+        window->showCursorFromMouseMove();
+    }
 }
 
 void LLTextEditor::onFocusLost()
@@ -2660,7 +2672,10 @@ void LLTextEditor::setFocus( bool new_state )
     // Notify early if we are losing focus.
     if (!new_state)
     {
-        getWindow()->allowLanguageTextInput(this, false);
+        if (LLWindow* window = getWindow())
+        {
+            window->allowLanguageTextInput(this, false);
+        }
     }
 
     LLTextBase::setFocus( new_state );
@@ -3171,7 +3186,10 @@ void LLTextEditor::updatePreedit(std::string_view preedit_string,
         return;
     }
 
-    getWindow()->hideCursorUntilMouseMove();
+    if (LLWindow* window = getWindow())
+    {
+        window->hideCursorUntilMouseMove();
+    }
 
     S32 insert_preedit_at = mCursorPos;
 

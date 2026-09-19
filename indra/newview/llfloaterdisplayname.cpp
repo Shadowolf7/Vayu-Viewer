@@ -40,16 +40,17 @@
 #include "llagent.h"
 
 
-class LLFloaterDisplayName : public LLFloater
+class LLFloaterDisplayName final : public LLFloater
 {
 public:
+    AL_VIEW_TYPE(LLFloaterDisplayName, LLFloater);
     LLFloaterDisplayName(const LLSD& key);
     virtual ~LLFloaterDisplayName() { }
-    /*virtual*/ bool    postBuild();
+    /*virtual*/ bool    postBuild() override;
     void onSave();
     void onReset();
     void onCancel();
-    /*virtual*/ void onOpen(const LLSD& key);
+    /*virtual*/ void onOpen(const LLSD& key) override;
 
 private:
 

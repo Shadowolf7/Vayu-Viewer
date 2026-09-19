@@ -42,14 +42,16 @@ class LLViewerObject;
 class LLCheckBoxCtrl;
 class LLSpinCtrl;
 
-class LLPanelContents : public LLPanel
+class LLPanelContents final : public LLPanel
 {
 public:
-    virtual bool postBuild();
+    AL_VIEW_TYPE(LLPanelContents, LLPanel);
+
+    virtual bool postBuild() override;
     LLPanelContents();
     virtual ~LLPanelContents();
 
-    void            refresh();
+    void            refresh() override;
     void            clearContents();
 
 
@@ -82,6 +84,8 @@ protected:
     void onFilterEdit();
 
     bool mDirtyFilter { false };
+    LLUUID mLastScriptObjectID;
+    bool mLastLuaRegion { false };
 
 private:
     bool isLuaEnabledForObjectRegion(LLViewerObject *objectp);

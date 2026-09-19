@@ -715,16 +715,16 @@ void LLRenderPass::applyModelMatrix(const LLDrawInfo& params)
     applyModelMatrix(params.mModelMatrix);
 }
 
-void LLRenderPass::applyModelMatrix(const LLMatrix4* model_matrix)
+void LLRenderPass::applyModelMatrix(const LLMatrix4a* model_matrix)
 {
     if (model_matrix != gGLLastMatrix)
     {
         gGLLastMatrix = model_matrix;
         gGL.matrixMode(LLRender::MM_MODELVIEW);
-        gGL.loadMatrix(gGLModelView);
+        gGL.loadMatrix(LLViewerCamera::getCurrent().getModelview());
         if (model_matrix)
         {
-            gGL.multMatrix((GLfloat*) model_matrix->mMatrix);
+            gGL.multMatrix(model_matrix->getF32ptr());
         }
         gPipeline.mMatrixOpCount++;
     }

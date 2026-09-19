@@ -41,13 +41,14 @@ class LLFloaterSnapshotBase : public LLFloater
     LOG_CLASS(LLFloaterSnapshotBase);
 
 public:
+    AL_VIEW_TYPE(LLFloaterSnapshotBase, LLFloater);
 
     LLFloaterSnapshotBase(const LLSD& key);
     virtual ~LLFloaterSnapshotBase();
 
-    /*virtual*/ void draw();
-    /*virtual*/ void onClose(bool app_quitting);
-    virtual S32 notify(const LLSD& info);
+    /*virtual*/ void draw() override;
+    /*virtual*/ void onClose(bool app_quitting) override;
+    virtual S32 notify(const LLSD& info) override;
 
     // TODO: create a snapshot model instead
     virtual void saveTexture() = 0;
@@ -142,17 +143,19 @@ public:
     EStatus mStatus;
 };
 
-class LLFloaterSnapshot : public LLFloaterSnapshotBase
+class LLFloaterSnapshot final : public LLFloaterSnapshotBase
 {
     LOG_CLASS(LLFloaterSnapshot);
 
 public:
+    AL_VIEW_TYPE(LLFloaterSnapshot, LLFloaterSnapshotBase);
+
     LLFloaterSnapshot(const LLSD& key);
     /*virtual*/ ~LLFloaterSnapshot();
 
-    /*virtual*/ bool postBuild();
-    /*virtual*/ void onOpen(const LLSD& key);
-    /*virtual*/ S32 notify(const LLSD& info);
+    /*virtual*/ bool postBuild() override;
+    /*virtual*/ void onOpen(const LLSD& key) override;
+    /*virtual*/ S32 notify(const LLSD& info) override;
 
     static void update();
 
@@ -161,7 +164,7 @@ public:
 
     static LLFloaterSnapshot* getInstance();
     static LLFloaterSnapshot* findInstance();
-    /*virtual*/ void saveTexture();
+    /*virtual*/ void saveTexture() override;
 
     typedef boost::signals2::signal<void(void)> snapshot_saved_signal_t;
     void saveLocal(const snapshot_saved_signal_t::slot_type& success_cb, const snapshot_saved_signal_t::slot_type& failure_cb);
@@ -217,9 +220,11 @@ private:
     void setFinished(bool finished, bool ok = true, const std::string& msg = LLStringUtil::null);
 };
 
-class LLSnapshotFloaterView : public LLFloaterView
+class LLSnapshotFloaterView final : public LLFloaterView
 {
 public:
+    AL_VIEW_TYPE(LLSnapshotFloaterView, LLFloaterView);
+
     struct Params
     :   public LLInitParam::Block<Params, LLFloaterView::Params>
     {
@@ -232,10 +237,10 @@ protected:
 public:
     virtual ~LLSnapshotFloaterView();
 
-    /*virtual*/ bool handleKey(KEY key, MASK mask, bool called_from_parent);
-    /*virtual*/ bool handleMouseDown(S32 x, S32 y, MASK mask);
-    /*virtual*/ bool handleMouseUp(S32 x, S32 y, MASK mask);
-    /*virtual*/ bool handleHover(S32 x, S32 y, MASK mask);
+    /*virtual*/ bool handleKey(KEY key, MASK mask, bool called_from_parent) override;
+    /*virtual*/ bool handleMouseDown(S32 x, S32 y, MASK mask) override;
+    /*virtual*/ bool handleMouseUp(S32 x, S32 y, MASK mask) override;
+    /*virtual*/ bool handleHover(S32 x, S32 y, MASK mask) override;
 };
 
 extern LLSnapshotFloaterView* gSnapshotFloaterView;

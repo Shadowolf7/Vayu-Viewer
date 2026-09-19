@@ -89,10 +89,12 @@ namespace LLInitParam
 // Classes
 //
 
-class LLBadge
+class LLBadge final
 : public LLUICtrl
 {
 public:
+    AL_VIEW_TYPE(LLBadge, LLUICtrl);
+
     struct Params
     : public LLInitParam::Block<Params, LLUICtrl::Params>
     {
@@ -133,7 +135,7 @@ public:
 
     bool                addToView(LLView * view);
 
-    virtual void        draw();
+    virtual void        draw() override;
 
     const std::string&  getLabel() const { return mLabel.getString(); }
     void                setLabel( const LLStringExplicit& label);

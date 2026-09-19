@@ -108,13 +108,14 @@ public:
     virtual void changed() { LLFloaterLand::refreshAll(); }
 };
 
-class LLPanelLandExperiences
+class LLPanelLandExperiences final
     :   public LLPanel
 {
 public:
+    AL_VIEW_TYPE(LLPanelLandExperiences, LLPanel);
     LLPanelLandExperiences(LLSafeHandle<LLParcelSelection>& parcelp);
-    virtual bool postBuild();
-    void refresh();
+    virtual bool postBuild() override;
+    void refresh() override;
 
     void experienceAdded(const LLUUID& id, U32 xp_type, U32 access_type);
     void experienceRemoved(const LLUUID& id, U32 access_type);
@@ -130,10 +131,11 @@ protected:
 };
 
 
-class LLPanelLandEnvironment
+class LLPanelLandEnvironment final
     : public LLPanelEnvironmentInfo
 {
 public:
+    AL_VIEW_TYPE(LLPanelLandEnvironment, LLPanelEnvironmentInfo);
                         LLPanelLandEnvironment(LLSafeHandle<LLParcelSelection>& parcelp);
 
     virtual bool        isRegion() const override { return false; }

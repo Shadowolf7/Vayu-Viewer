@@ -1268,11 +1268,11 @@ U32 type_width_from_pixtype(U32 pixtype)
     {
     case GL_UNSIGNED_BYTE:
     case GL_BYTE:
-    case GL_UNSIGNED_INT_8_8_8_8_REV:
         type_width = 1;
         break;
     case GL_UNSIGNED_SHORT:
     case GL_SHORT:
+    case GL_HALF_FLOAT:
         type_width = 2;
         break;
     case GL_UNSIGNED_INT:
@@ -1299,9 +1299,7 @@ U32 type_width_from_pixtype(U32 pixtype)
 // generic compression is gone.
 bool should_stagger_image_set(bool compressed)
 {
-#if LL_MESA_HEADLESS
-    return false;
-#elif LL_LINUX
+#if LL_LINUX
     return !compressed && on_main_thread() && gGLManager.mIsNVIDIA;
 #elif LL_DARWIN
     return !compressed && on_main_thread() && gGLManager.mIsAMD;

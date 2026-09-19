@@ -46,10 +46,12 @@
 
 static const S32 MINIMUM_BALANCE_AMOUNT = 0;
 
-class LLFloaterBuyCurrencyUI
+class LLFloaterBuyCurrencyUI final
 :   public LLFloater
 {
 public:
+    AL_VIEW_TYPE(LLFloaterBuyCurrencyUI, LLFloater);
+
     LLFloaterBuyCurrencyUI(const LLSD& key);
     virtual ~LLFloaterBuyCurrencyUI();
 
@@ -66,13 +68,13 @@ public:
     void noTarget();
     void target(const std::string& name, S32 price);
 
-    virtual bool postBuild();
+    virtual bool postBuild() override;
 
     void updateUI();
     void collapsePanels(bool collapse);
 
-    virtual void draw();
-    virtual bool canClose();
+    virtual void draw() override;
+    virtual bool canClose() override;
 
     void onClickBuy();
     void onClickCancel();

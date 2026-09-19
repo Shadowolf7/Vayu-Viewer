@@ -33,7 +33,7 @@ FSPosingMotion::FSPosingMotion(const LLUUID& id) : LLKeyframeMotion(id)
 {
     mName = "fs_poser_pose";
     mMotionID = id;
-    mJointMotionList = &dummyMotionList;
+    mJointMotionList = new JointMotionList;
 }
 
 LLMotion::LLMotionInitStatus FSPosingMotion::onInitialize(LLCharacter* character)
@@ -83,7 +83,7 @@ bool FSPosingMotion::onUpdate(F32 time, U8* joint_mask)
     LLVector3 currentScale;
     LLVector3 targetScale;
 
-    for (FSJointPose jointPose : mJointPoses)
+    for (FSJointPose& jointPose : mJointPoses)
     {
         LLJoint* joint = jointPose.getJointState()->getJoint();
         if (!joint)
@@ -341,17 +341,17 @@ void FSPosingMotion::getJointStateAtTime(std::string jointPoseName, F32 timeToLo
         if (!boost::iequals(jointPoseName, jm->mJointName))
             continue;
 
-        *hasRotation = (jm->mRotationCurve.mNumKeys > 0);
+        *hasRotation = (jm->mRotationCurve.getNumKeys() > 0);
         if (hasRotation)
-            jointRotation->set(jm->mRotationCurve.getValue(timeToLoadAt, mJointMotionList->mDuration));
+            jm->mRotationCurve.getValue(timeToLoadAt).store(*jointRotation);
 
-        *hasPosition = (jm->mPositionCurve.mNumKeys > 0);
+        *hasPosition = (jm->mPositionCurve.getNumKeys() > 0);
         if (hasPosition)
-            jointPosition->set(jm->mPositionCurve.getValue(timeToLoadAt, mJointMotionList->mDuration));
+            jointPosition->set(jm->mPositionCurve.getValue(timeToLoadAt).getF32ptr());
 
-        *hasScale = (jm->mScaleCurve.mNumKeys > 0);
+        *hasScale = (jm->mScaleCurve.getNumKeys() > 0);
         if (hasScale)
-            jointScale->set(jm->mScaleCurve.getValue(timeToLoadAt, mJointMotionList->mDuration));
+            jointScale->set(jm->mScaleCurve.getValue(timeToLoadAt).getF32ptr());
 
         return;
     }
@@ -380,7 +380,7 @@ bool FSPosingMotion::motionAnimatesJoints(const std::vector<S32>& recapturedJoin
         if (std::find(recapturedJointNumbers.begin(), recapturedJointNumbers.end(), joint->getJointNum()) == recapturedJointNumbers.end())
             continue;
 
-        if (jm->mRotationCurve.mNumKeys > 0)
+        if (jm->mRotationCurve.getNumKeys() > 0)
             return true;
     }
 

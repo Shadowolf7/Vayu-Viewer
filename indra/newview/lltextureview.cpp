@@ -136,9 +136,10 @@ static S32 required_view_width()
 
 ////////////////////////////////////////////////////////////////////////////
 
-class LLTextureBar : public LLView
+class LLTextureBar final : public LLView
 {
 public:
+    AL_VIEW_TYPE(LLTextureBar, LLView);
     LLPointer<LLViewerFetchedTexture> mImagep;
     S32 mHilite;
 
@@ -158,9 +159,9 @@ public:
         mTextureView(p.texture_view)
     {}
 
-    virtual void draw();
-    virtual bool handleMouseDown(S32 x, S32 y, MASK mask);
-    virtual LLRect getRequiredRect();   // Return the height of this object, given the set options.
+    virtual void draw() override;
+    virtual bool handleMouseDown(S32 x, S32 y, MASK mask) override;
+    virtual LLRect getRequiredRect() override;   // Return the height of this object, given the set options.
 
 // Used for sorting
     struct sort
@@ -409,9 +410,10 @@ LLRect LLTextureBar::getRequiredRect()
 
 ////////////////////////////////////////////////////////////////////////////
 
-class LLAvatarTexBar : public LLView
+class LLAvatarTexBar final : public LLView
 {
 public:
+    AL_VIEW_TYPE(LLAvatarTexBar, LLView);
     struct Params : public LLInitParam::Block<Params, LLView::Params>
     {
         Mandatory<LLTextureView*>   texture_view;
@@ -428,9 +430,9 @@ public:
         mTextureView(p.texture_view)
     {}
 
-    virtual void draw();
-    virtual bool handleMouseDown(S32 x, S32 y, MASK mask);
-    virtual LLRect getRequiredRect();   // Return the height of this object, given the set options.
+    virtual void draw() override;
+    virtual bool handleMouseDown(S32 x, S32 y, MASK mask) override;
+    virtual LLRect getRequiredRect() override;   // Return the height of this object, given the set options.
 
 private:
     LLTextureView* mTextureView;
@@ -518,9 +520,10 @@ LLRect LLAvatarTexBar::getRequiredRect()
 
 ////////////////////////////////////////////////////////////////////////////
 
-class LLGLTexMemBar : public LLView
+class LLGLTexMemBar final : public LLView
 {
 public:
+    AL_VIEW_TYPE(LLGLTexMemBar, LLView);
     struct Params : public LLInitParam::Block<Params, LLView::Params>
     {
         Mandatory<LLTextureView*>   texture_view;
@@ -537,9 +540,9 @@ public:
         mTextureView(p.texture_view)
     {}
 
-    virtual void draw();
-    virtual bool handleMouseDown(S32 x, S32 y, MASK mask);
-    virtual LLRect getRequiredRect();   // Return the height of this object, given the set options.
+    virtual void draw() override;
+    virtual bool handleMouseDown(S32 x, S32 y, MASK mask) override;
+    virtual LLRect getRequiredRect() override;   // Return the height of this object, given the set options.
 
 private:
     LLTextureView* mTextureView;
@@ -925,8 +928,8 @@ void LLTextureView::draw()
             LL_INFOS() << "ID\tMEM\tBOOST\tPRI\tWIDTH\tHEIGHT\tDISCARD" << LL_ENDL;
         }
 
-        for (LLViewerTextureList::image_list_t::iterator iter = gTextureList.mImageList.begin();
-             iter != gTextureList.mImageList.end(); )
+        for (LLViewerTextureList::image_table_t::const_iterator iter = gTextureList.begin();
+             iter != gTextureList.end(); )
         {
             LLViewerFetchedTexture* imagep = *iter++;
             if(!imagep->hasFetcher())

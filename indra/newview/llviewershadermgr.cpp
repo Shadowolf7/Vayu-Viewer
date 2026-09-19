@@ -125,6 +125,8 @@ LLGLSLShader    gGaussianProgram;
 LLGLSLShader    gRadianceGenProgram;
 LLGLSLShader    gHeroRadianceGenProgram;
 LLGLSLShader    gSHProjectionProgram;
+LLGLSLShader    gSHProjectionRowsProgram;
+LLGLSLShader    gSHProjectionReduceProgram;
 LLGLSLShader    gGlowCombineFXAAProgram;
 LLGLSLShader    gTwoTextureCompareProgram;
 LLGLSLShader    gOneTextureFilterProgram;
@@ -194,6 +196,7 @@ LLGLSLShader            gHazeWaterProgram;
 LLGLSLShader            gDeferredBlurLightProgram;
 LLGLSLShader            gDeferredSoftenProgram;
 LLGLSLShader            gDeferredShadowProgram;
+LLGLSLShader            gDeferredTerrainShadowProgram;
 LLGLSLShader            gDeferredShadowCubeProgram;
 LLGLSLShader            gDeferredShadowAlphaMaskProgram;
 LLGLSLShader            gDeferredShadowGLTFAlphaMaskProgram;
@@ -219,6 +222,7 @@ LLGLSLShader            gDeferredPostProgram;
 LLGLSLShader            gDeferredPostProgramNoNear;
 LLGLSLShader            gDeferredCoFProgram;
 LLGLSLShader            gDeferredDoFCombineProgram;
+LLGLSLShader            gDeferredDoFCombineProgramNoNear;
 LLGLSLShader            gExposureProgram;
 LLGLSLShader            gExposureProgramNoFade;
 LLGLSLShader            gLuminanceProgram;
@@ -614,8 +618,7 @@ void LLViewerShaderMgr::setShaders()
     reentrance = true;
 
     // Make sure the compiled shader map is cleared before we recompile shaders.
-    mVertexShaderObjects.clear();
-    mFragmentShaderObjects.clear();
+    clearShaderObjects();
 
     initAttribsAndUniforms();
     gPipeline.releaseGLBuffers();
@@ -926,6 +929,10 @@ std::string LLViewerShaderMgr::loadBasicShaders()
         attribs["TERRAIN_TRIPLANAR_BLEND_FACTOR"] = llformat("%.2f", triplanar_factor);
         const S32 detail = clamp_terrain_detail(gSavedSettings.getS32("RenderTerrainPBRDetail"));
         attribs["TERRAIN_PBR_DETAIL"] = llformat("%d", detail);
+        if (gSavedSettings.getBOOL("AlchemyRenderTerrainHexTiling"))
+        {
+            attribs["TERRAIN_HEX_TILING"] = "1";
+        }
     }
 
     LLGLSLShader::sGlobalDefines = attribs;
@@ -954,6 +961,21 @@ std::string LLViewerShaderMgr::loadBasicShaders()
         return "windlight/atmosphericsFuncs.glsl";
     }
 
+    // The terrain's evaluation-stage objects. GLSL links per stage, so the objects the terrain
+    // evaluation calls are compiled here for that stage, under the same keys in the stage's
+    // own map.
+    shaders.clear();
+    shaders.push_back( make_pair( "deferred/terrainSurface.glsl",           1 ) );
+    shaders.push_back( make_pair( "windlight/atmosphericsVarsV.glsl",       mShaderLevel[SHADER_WINDLIGHT] ) );
+    for (U32 i = 0; i < shaders.size(); i++)
+    {
+        if (loadShaderFile(shaders[i].first, shaders[i].second, GL_TESS_EVALUATION_SHADER, &attribs) == 0)
+        {
+            LL_WARNS("Shader") << "Failed to load basic tessellation evaluation shader " << i << ": " << shaders[i].first << LL_ENDL;
+            return shaders[i].first;
+        }
+    }
+
     // Load the Basic Fragment Shaders at the appropriate level.
     // (in order of shader function call depth for reference purposes, deepest level first)
 
@@ -978,6 +1000,7 @@ std::string LLViewerShaderMgr::loadBasicShaders()
     index_channels.push_back(-1);    shaders.push_back( make_pair( "deferred/globalF.glsl",                          1));
     index_channels.push_back(-1);    shaders.push_back( make_pair( "deferred/shadowUtil.glsl",                      1) );
     index_channels.push_back(-1);    shaders.push_back( make_pair( "deferred/aoUtil.glsl",                          1) );
+    index_channels.push_back(-1);    shaders.push_back( make_pair( "deferred/terrainSurface.glsl",                  1) );
     index_channels.push_back(-1);    shaders.push_back( make_pair( "deferred/pbrterrainUtilF.glsl",                 1) );
     index_channels.push_back(-1);    shaders.push_back( make_pair( "deferred/tonemapUtilF.glsl",                    1) );
     index_channels.push_back(-1);    shaders.push_back( make_pair( "alchemy/colorGradeUtilF.glsl",                 1) );
@@ -1258,6 +1281,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredBlurLightProgram.unload();
         gDeferredSoftenProgram.unload();
         gDeferredShadowProgram.unload();
+        gDeferredTerrainShadowProgram.unload();
         gDeferredShadowCubeProgram.unload();
         gDeferredShadowAlphaMaskProgram.unload();
         gDeferredShadowGLTFAlphaMaskProgram.unload();
@@ -1282,6 +1306,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredPostProgram.unload();
         gDeferredCoFProgram.unload();
         gDeferredDoFCombineProgram.unload();
+        gDeferredDoFCombineProgramNoNear.unload();
         gExposureProgram.unload();
         gExposureProgramNoFade.unload();
         gLuminanceProgram.unload();
@@ -1800,14 +1825,18 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         // shared, so pbrterrainF derives it from position derivatives instead. See
         // terrain_geometric_normal().
         const bool flat_normals = gSavedSettings.getBOOL("RenderTerrainPBRNormalsEnabled");
+        // Read by pbrterrainUtilF, a shared object, so the define that matters is the global one
+        // set above; the program's copy keeps its name and hash honest.
+        const bool hex_tiling = gSavedSettings.getBOOL("AlchemyRenderTerrainHexTiling");
         for (U32 paint_type = 0; paint_type < TERRAIN_PAINT_TYPE_COUNT; ++paint_type)
         {
             LLGLSLShader* shader = &gDeferredPBRTerrainProgram[paint_type];
-            shader->mName = llformat("Deferred PBR Terrain Shader %d %s %s %s",
+            shader->mName = llformat("Deferred PBR Terrain Shader %d %s %s %s%s",
                     detail,
                     (paint_type == TERRAIN_PAINT_TYPE_PBR_PAINTMAP ? "paintmap" : "heightmap-with-noise"),
                     (mapping == 1 ? "flat" : "triplanar"),
-                    (flat_normals ? "faceted" : "smooth"));
+                    (flat_normals ? "faceted" : "smooth"),
+                    (hex_tiling ? " hex" : ""));
             shader->mFeatures.hasSrgb = true;
             shader->mFeatures.isAlphaLighting = true;
             shader->mFeatures.calculatesAtmospherics = true;
@@ -1815,9 +1844,12 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             shader->mFeatures.hasGamma = true;
             shader->mFeatures.hasTransport = true;
             shader->mFeatures.isPBRTerrain = true;
+            shader->mFeatures.hasTessellatedTerrain = true;
 
             shader->mShaderFiles.clear();
-            shader->mShaderFiles.push_back(make_pair("deferred/pbrterrainV.glsl", GL_VERTEX_SHADER));
+            shader->mShaderFiles.push_back(make_pair("deferred/terrainPatchV.glsl", GL_VERTEX_SHADER));
+            shader->mShaderFiles.push_back(make_pair("deferred/terrainTC.glsl", GL_TESS_CONTROL_SHADER));
+            shader->mShaderFiles.push_back(make_pair("deferred/pbrterrainTE.glsl", GL_TESS_EVALUATION_SHADER));
             shader->mShaderFiles.push_back(make_pair("deferred/pbrterrainF.glsl", GL_FRAGMENT_SHADER));
             shader->mShaderLevel = mShaderLevel[SHADER_DEFERRED];
             shader->addPermutation("TERRAIN_PBR_DETAIL", llformat("%d", detail));
@@ -1826,6 +1858,10 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             if (flat_normals)
             {
                 shader->addPermutation("TERRAIN_FLAT_NORMALS", "1");
+            }
+            if (hex_tiling)
+            {
+                shader->addPermutation("TERRAIN_HEX_TILING", "1");
             }
 
             add_common_permutations(shader);
@@ -2452,6 +2488,20 @@ bool LLViewerShaderMgr::loadShadersDeferred()
 
     if (success)
     {
+        gDeferredTerrainShadowProgram.mName = "Deferred Terrain Shadow Shader";
+        gDeferredTerrainShadowProgram.mFeatures.hasTessellatedTerrain = true;
+        gDeferredTerrainShadowProgram.mShaderFiles.clear();
+        gDeferredTerrainShadowProgram.mShaderFiles.push_back(make_pair("deferred/terrainPatchV.glsl", GL_VERTEX_SHADER));
+        gDeferredTerrainShadowProgram.mShaderFiles.push_back(make_pair("deferred/terrainTC.glsl", GL_TESS_CONTROL_SHADER));
+        gDeferredTerrainShadowProgram.mShaderFiles.push_back(make_pair("deferred/terrainShadowTE.glsl", GL_TESS_EVALUATION_SHADER));
+        gDeferredTerrainShadowProgram.mShaderFiles.push_back(make_pair("deferred/shadowF.glsl", GL_FRAGMENT_SHADER));
+        gDeferredTerrainShadowProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+        success = gDeferredTerrainShadowProgram.createShader();
+        llassert(success);
+    }
+
+    if (success)
+    {
         gDeferredShadowCubeProgram.mName = "Deferred Shadow Cube Shader";
         gDeferredShadowCubeProgram.mFeatures.isDeferred = true;
         gDeferredShadowCubeProgram.mFeatures.hasShadows = true;
@@ -2625,16 +2675,34 @@ bool LLViewerShaderMgr::loadShadersDeferred()
 
     if (success)
     {
-        gDeferredTerrainProgram.mName = "Deferred Terrain Shader";
+        // The projection count and hex tiling apply to the four-texture terrain as they do to
+        // the PBR one: terrainF blends its detail textures through pbrterrainUtilF's weights,
+        // slices and cells, which isPBRTerrain links in.
+        const S32 mapping = clamp_terrain_mapping(gSavedSettings.getS32("RenderTerrainPBRPlanarSampleCount"));
+        const bool hex_tiling = gSavedSettings.getBOOL("AlchemyRenderTerrainHexTiling");
+        gDeferredTerrainProgram.mName = llformat("Deferred Terrain Shader %s%s",
+                (mapping == 1 ? "flat" : "triplanar"),
+                (hex_tiling ? " hex" : ""));
         gDeferredTerrainProgram.mFeatures.hasSrgb = true;
         gDeferredTerrainProgram.mFeatures.isAlphaLighting = true;
         gDeferredTerrainProgram.mFeatures.calculatesAtmospherics = true;
         gDeferredTerrainProgram.mFeatures.hasAtmospherics = true;
         gDeferredTerrainProgram.mFeatures.hasGamma = true;
+        gDeferredTerrainProgram.mFeatures.isPBRTerrain = true;
+
+        gDeferredTerrainProgram.mFeatures.hasTessellatedTerrain = true;
 
         gDeferredTerrainProgram.mShaderFiles.clear();
-        gDeferredTerrainProgram.mShaderFiles.push_back(make_pair("deferred/terrainV.glsl", GL_VERTEX_SHADER));
+        gDeferredTerrainProgram.mShaderFiles.push_back(make_pair("deferred/terrainPatchV.glsl", GL_VERTEX_SHADER));
+        gDeferredTerrainProgram.mShaderFiles.push_back(make_pair("deferred/terrainTC.glsl", GL_TESS_CONTROL_SHADER));
+        gDeferredTerrainProgram.mShaderFiles.push_back(make_pair("deferred/terrainTE.glsl", GL_TESS_EVALUATION_SHADER));
         gDeferredTerrainProgram.mShaderFiles.push_back(make_pair("deferred/terrainF.glsl", GL_FRAGMENT_SHADER));
+        gDeferredTerrainProgram.clearPermutations();
+        gDeferredTerrainProgram.addPermutation("TERRAIN_PLANAR_TEXTURE_SAMPLE_COUNT", llformat("%d", mapping));
+        if (hex_tiling)
+        {
+            gDeferredTerrainProgram.addPermutation("TERRAIN_HEX_TILING", "1");
+        }
 
         add_common_permutations(&gDeferredTerrainProgram);
 
@@ -2777,7 +2845,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
                 gFXAAProgram[i].mShaderFiles.push_back(make_pair("deferred/fxaaF.glsl", GL_FRAGMENT_SHADER));
 
                 gFXAAProgram[i].clearPermutations();
-                gFXAAProgram[i].addPermutation("FXAA_QUALITY__PRESET", quality_pair.first);
+                gFXAAProgram[i].addPermutation("FXAA_QUALITY_PRESET", quality_pair.first);
                 if (gGLManager.mGLVersion > 3.9)
                 {
                     gFXAAProgram[i].addPermutation("FXAA_GLSL_400", "1");
@@ -3001,7 +3069,23 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredDoFCombineProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", GL_VERTEX_SHADER));
         gDeferredDoFCombineProgram.mShaderFiles.push_back(make_pair("deferred/dofCombineF.glsl", GL_FRAGMENT_SHADER));
         gDeferredDoFCombineProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+        gDeferredDoFCombineProgram.clearPermutations();
+        gDeferredDoFCombineProgram.addPermutation("FRONT_BLUR", "1");
         success = gDeferredDoFCombineProgram.createShader();
+        llassert(success);
+    }
+
+    if (success)
+    {
+        gDeferredDoFCombineProgramNoNear.mName = "Deferred DoFCombine Shader No Near Blur";
+        gDeferredDoFCombineProgramNoNear.mFeatures.isDeferred = true;
+        gDeferredDoFCombineProgramNoNear.mShaderFiles.clear();
+        gDeferredDoFCombineProgramNoNear.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", GL_VERTEX_SHADER));
+        gDeferredDoFCombineProgramNoNear.mShaderFiles.push_back(make_pair("deferred/dofCombineF.glsl", GL_FRAGMENT_SHADER));
+        gDeferredDoFCombineProgramNoNear.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+        gDeferredDoFCombineProgramNoNear.clearPermutations();
+        gDeferredDoFCombineProgramNoNear.addPermutation("FRONT_BLUR", "0");
+        success = gDeferredDoFCombineProgramNoNear.createShader();
         llassert(success);
     }
 
@@ -3945,6 +4029,30 @@ bool LLViewerShaderMgr::loadShadersInterface()
         gSHProjectionProgram.mShaderFiles.push_back(make_pair("interface/shProjectF.glsl", GL_FRAGMENT_SHADER));
         gSHProjectionProgram.mShaderLevel = mShaderLevel[SHADER_INTERFACE];
         success = gSHProjectionProgram.createShader();
+    }
+
+    if (success && gGLManager.mHasCubeMapArray)
+    {
+        // Row-parallel form of the projection above: one fragment per coefficient and face row,
+        // then a reduce that adds the rows. The same integrand over 6 x R times more fragments
+        // (see LLReflectionMapManager::updateProbeFace).
+        gSHProjectionRowsProgram.mName = "SH Irradiance Projection Rows Shader";
+        gSHProjectionRowsProgram.mShaderFiles.clear();
+        gSHProjectionRowsProgram.mShaderFiles.push_back(make_pair("interface/irradianceGenV.glsl", GL_VERTEX_SHADER));
+        gSHProjectionRowsProgram.mShaderFiles.push_back(make_pair("interface/shProjectF.glsl", GL_FRAGMENT_SHADER));
+        gSHProjectionRowsProgram.mShaderLevel = mShaderLevel[SHADER_INTERFACE];
+        gSHProjectionRowsProgram.addPermutation("SH_ROW_PARTIAL", "1");
+        success = gSHProjectionRowsProgram.createShader();
+    }
+
+    if (success && gGLManager.mHasCubeMapArray)
+    {
+        gSHProjectionReduceProgram.mName = "SH Irradiance Projection Reduce Shader";
+        gSHProjectionReduceProgram.mShaderFiles.clear();
+        gSHProjectionReduceProgram.mShaderFiles.push_back(make_pair("interface/irradianceGenV.glsl", GL_VERTEX_SHADER));
+        gSHProjectionReduceProgram.mShaderFiles.push_back(make_pair("interface/shProjectReduceF.glsl", GL_FRAGMENT_SHADER));
+        gSHProjectionReduceProgram.mShaderLevel = mShaderLevel[SHADER_INTERFACE];
+        success = gSHProjectionReduceProgram.createShader();
     }
 
     if( !success )

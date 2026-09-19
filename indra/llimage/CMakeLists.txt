@@ -1,39 +1,42 @@
 # -*- cmake -*-
 
-add_library (llimage STATIC)
+add_library(llimage STATIC)
 
 find_program(ISPC_EXECUTABLE ispc DOC "Intel Implicit SPMD Program Compiler")
 # Only enable ISPC on x86 targets outside Darwin; portable bc7enc is used on Darwin and ARM64
-if (ISPC_EXECUTABLE AND NOT DARWIN AND NOT BUILD_TARGET_IS_ARM64)
+if(ISPC_EXECUTABLE AND NOT DARWIN AND NOT BUILD_TARGET_IS_ARM64)
   set(ISPC_TARGETS "sse2-i32x4,sse4-i32x4,avx1-i32x8,avx2-i32x8")
-  set(BC7E_ISPC_OUTPUTS
-      ${CMAKE_CURRENT_BINARY_DIR}/bc7e/bc7e.o
-      ${CMAKE_CURRENT_BINARY_DIR}/bc7e/bc7e_sse2.o
-      ${CMAKE_CURRENT_BINARY_DIR}/bc7e/bc7e_sse4.o
-      ${CMAKE_CURRENT_BINARY_DIR}/bc7e/bc7e_avx.o
-      ${CMAKE_CURRENT_BINARY_DIR}/bc7e/bc7e_avx2.o
+  set(
+    BC7E_ISPC_OUTPUTS
+    ${CMAKE_CURRENT_BINARY_DIR}/bc7e/bc7e.o
+    ${CMAKE_CURRENT_BINARY_DIR}/bc7e/bc7e_sse2.o
+    ${CMAKE_CURRENT_BINARY_DIR}/bc7e/bc7e_sse4.o
+    ${CMAKE_CURRENT_BINARY_DIR}/bc7e/bc7e_avx.o
+    ${CMAKE_CURRENT_BINARY_DIR}/bc7e/bc7e_avx2.o
   )
   file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/bc7e)
   add_custom_command(
-      OUTPUT ${BC7E_ISPC_OUTPUTS} ${CMAKE_CURRENT_SOURCE_DIR}/bc7e/bc7e_ispc.h
-      COMMAND ${ISPC_EXECUTABLE} -O3 --pic --opt=fast-math --target=${ISPC_TARGETS} -h ${CMAKE_CURRENT_SOURCE_DIR}/bc7e/bc7e_ispc.h -o ${CMAKE_CURRENT_BINARY_DIR}/bc7e/bc7e.o ${CMAKE_CURRENT_SOURCE_DIR}/bc7e/bc7e.ispc
-      DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/bc7e/bc7e.ispc
-      COMMENT "Compiling bc7e.ispc with ISPC multi-target (SSE2, SSE4, AVX, AVX2)"
+    OUTPUT ${BC7E_ISPC_OUTPUTS} ${CMAKE_CURRENT_SOURCE_DIR}/bc7e/bc7e_ispc.h
+    COMMAND ${ISPC_EXECUTABLE} -O3 --pic --opt=fast-math --target=${ISPC_TARGETS} -h ${CMAKE_CURRENT_SOURCE_DIR}/bc7e/bc7e_ispc.h -o ${CMAKE_CURRENT_BINARY_DIR}/bc7e/bc7e.o ${CMAKE_CURRENT_SOURCE_DIR}/bc7e/bc7e.ispc
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/bc7e/bc7e.ispc
+    COMMENT "Compiling bc7e.ispc with ISPC multi-target (SSE2, SSE4, AVX, AVX2)"
   )
   add_compile_definitions(HAVE_BC7E_ISPC)
   target_compile_definitions(llimage PUBLIC HAVE_BC7E_ISPC)
   set(BC7E_SOURCES ${BC7E_ISPC_OUTPUTS})
-else ()
+else()
   set(BC7E_SOURCES bc7e/bc7enc.cpp)
-endif ()
+endif()
 
-target_sources(llimage
-    PRIVATE
+target_sources(
+  llimage
+  PRIVATE
     llimagebmp.cpp
     llimage.cpp
     llimagedimensionsinfo.cpp
     llimagedxt.cpp
     llimagefilter.cpp
+    llimageformattype.cpp
     llimagej2c.cpp
     llimagejpeg.cpp
     llimagepng.cpp
@@ -46,70 +49,70 @@ target_sources(llimage
     vayubctexturecache.cpp
     bc7e/rgbcx.cpp
     ${BC7E_SOURCES}
-    )
+)
 
-if (NOT MSVC)
+if(NOT MSVC)
   set_source_files_properties(
-      bc7e/rgbcx.cpp
-      PROPERTIES
-      COMPILE_FLAGS "-Wno-unused-function -Wno-unused-variable"
-      )
-
-  set_source_files_properties(
-      bc7e/bc7enc.cpp
-      PROPERTIES
-      COMPILE_FLAGS "-Wno-unused-function -Wno-unused-variable"
-      )
-else ()
-  set_source_files_properties(
-      bc7e/rgbcx.cpp
-      PROPERTIES
-      COMPILE_FLAGS "/wd4505 /wd4101"
-      )
+    bc7e/rgbcx.cpp
+    PROPERTIES
+    COMPILE_FLAGS "-Wno-unused-function -Wno-unused-variable"
+  )
 
   set_source_files_properties(
-      bc7e/bc7enc.cpp
-      PROPERTIES
-      COMPILE_FLAGS "/wd4505 /wd4101"
-      )
-endif ()
+    bc7e/bc7enc.cpp
+    PROPERTIES
+    COMPILE_FLAGS "-Wno-unused-function -Wno-unused-variable"
+  )
+else()
+  set_source_files_properties(
+    bc7e/rgbcx.cpp
+    PROPERTIES
+    COMPILE_FLAGS "/wd4505 /wd4101"
+  )
 
-target_sources(llimage
-    PUBLIC
+  set_source_files_properties(
+    bc7e/bc7enc.cpp
+    PROPERTIES
+    COMPILE_FLAGS "/wd4505 /wd4101"
+  )
+endif()
+
+target_sources(
+  llimage
+  PUBLIC
     FILE_SET HEADERS
-    FILES
-    llimage.h
-    llimagebmp.h
-    llimagedimensionsinfo.h
-    llimagedxt.h
-    llimagefilter.h
-    llimagej2c.h
-    llimagejpeg.h
-    llimagepng.h
-    llimagetga.h
-    llimagewebp.h
-    llimageavif.h
-    llimageworker.h
-    llmapimagetype.h
-    llpngwrapper.h
-    vayuimageblockcompressor.h
-    vayubctexturecache.h
-    bc7e/rgbcx.h
-    bc7e/bc7enc.h
-    bc7e/bc7e_ispc.h
-    )
+      FILES
+        llimage.h
+        llimagebmp.h
+        llimagedimensionsinfo.h
+        llimagedxt.h
+        llimagefilter.h
+        llimagej2c.h
+        llimagejpeg.h
+        llimagepng.h
+        llimagetga.h
+        llimagewebp.h
+        llimageavif.h
+        llimageworker.h
+        llmapimagetype.h
+        llpngwrapper.h
+        vayuimageblockcompressor.h
+        vayubctexturecache.h
+        bc7e/rgbcx.h
+        bc7e/bc7enc.h
+        bc7e/bc7e_ispc.h
+)
 
-target_include_directories( llimage  INTERFACE   ${CMAKE_CURRENT_SOURCE_DIR})
-# Libraries on which this library depends, needed for Linux builds
-# Sort by high-level to low-level
-if (USE_KDU)
+target_link_libraries(llimage PRIVATE al::flags)
+if(AL_USE_KDU)
   target_link_libraries(llimage PUBLIC llkdu)
-else ()
+else()
   target_link_libraries(llimage PUBLIC llimagej2coj)
-endif ()
+endif()
 
-target_link_libraries(llimage
-    PUBLIC
+target_link_libraries(
+  llimage
+  PUBLIC
     llfilesystem
     llmath
     llcommon
@@ -118,36 +121,30 @@ target_link_libraries(llimage
     ll::libpng
     ll::libjpeg
     ll::libyuv
-    )
+)
 
 target_precompile_headers(llimage REUSE_FROM llprecompiled)
 
 # Add tests
-if (BUILD_TESTING)
-  SET(llimage_TEST_SOURCE_FILES
-    llimageworker.cpp
-    vayuimageblockcompressor.cpp
-    vayubctexturecache.cpp
-    )
-  set_source_files_properties(
-    vayubctexturecache.cpp
-    PROPERTIES
-    LL_TEST_ADDITIONAL_LIBRARIES "llfilesystem"
-    )
-  set_source_files_properties(
-    vayuimageblockcompressor.cpp
-    PROPERTIES
-    LL_TEST_ADDITIONAL_SOURCE_FILES "bc7e/rgbcx.cpp;${BC7E_SOURCES}"
-    LL_TEST_ADDITIONAL_LIBRARIES "ll::libyuv"
-    )
-  set_source_files_properties(
-    llimageworker.cpp
-    PROPERTIES
-    LL_TEST_ADDITIONAL_SOURCE_FILES "vayuimageblockcompressor.cpp;vayubctexturecache.cpp;bc7e/rgbcx.cpp;${BC7E_SOURCES}"
-    LL_TEST_ADDITIONAL_LIBRARIES "llfilesystem;ll::libyuv"
-    )
-  LL_ADD_PROJECT_UNIT_TESTS(llimage "${llimage_TEST_SOURCE_FILES}")
-endif ()
-
-
-
+if(AL_BUILD_TESTS)
+  al_add_test(
+    llimageworker UNIT PROJECT llimage
+    SOURCES
+      vayuimageblockcompressor.cpp
+      vayubctexturecache.cpp
+      bc7e/rgbcx.cpp
+      ${BC7E_SOURCES}
+    LIBRARIES llfilesystem ll::libyuv
+  )
+  al_add_test(
+    vayuimageblockcompressor UNIT PROJECT llimage
+    SOURCES
+      bc7e/rgbcx.cpp
+      ${BC7E_SOURCES}
+    LIBRARIES ll::libyuv
+  )
+  al_add_test(
+    vayubctexturecache UNIT PROJECT llimage
+    LIBRARIES llfilesystem
+  )
+endif()

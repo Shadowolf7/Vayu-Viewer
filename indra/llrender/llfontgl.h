@@ -33,7 +33,6 @@
 
 #include "llcoord.h"
 #include "llfontregistry.h"
-#include "llimagegl.h"
 #include "llpointer.h"
 #include "llrect.h"
 #include "v2math.h"
@@ -99,6 +98,20 @@ public:
     U64 getCacheGeneration() const;
     const LLFontFreetype* getFontFreetype() const { return mFontFreetype.get(); }
 
+    // The face that draws a style asked for at render time. A file that
+    // wants italic asks the registry for the italic face by name; a caller
+    // passing ITALIC to render got a shear put on the upright one instead,
+    // whether or not an italic face was there to be had. This answers with
+    // the registry's face for the style where that face carries it, and
+    // with this one where nothing better is wired up -- in which case the
+    // shear, or the second pass a pixel over for bold, is still what is
+    // drawn. Asked once per style and kept: the registry's fonts live as
+    // long as it does, and a reload swaps their faces in place.
+    const LLFontGL* faceFor(U8 style) const;
+    // What was kept, let go of: a reload may have wired a face up or
+    // taken one away.
+    void forgetFaces();
+
     // on_pass_boundary, if non-null, is invoked once between the shadow pass and
     // the foreground pass when shadow != NO_SHADOW. LLFontTextCache uses it to
     // close one captured display list and open another so each pass lands in its
@@ -147,9 +160,9 @@ public:
 
     // A convenience name for renderBytes: `begin_offset`, `max_bytes` and the
     // count returned all index the UTF-8.
-    S32 renderUTF8(const std::string &text, S32 begin_offset, F32 x, F32 y, const LLColor4 &color, HAlign halign,  VAlign valign, U8 style, ShadowType shadow, S32 max_bytes = S32_MAX, S32 max_pixels = S32_MAX,  F32* right_x = NULL, bool use_ellipses = false, bool use_color = true) const;
-    S32 renderUTF8(const std::string &text, S32 begin_offset, S32 x, S32 y, const LLColor4 &color) const;
-    S32 renderUTF8(const std::string &text, S32 begin_offset, S32 x, S32 y, const LLColor4 &color, HAlign halign, VAlign valign, U8 style = NORMAL, ShadowType shadow = NO_SHADOW) const;
+    S32 renderUTF8(std::string_view text, S32 begin_offset, F32 x, F32 y, const LLColor4 &color, HAlign halign,  VAlign valign, U8 style, ShadowType shadow, S32 max_bytes = S32_MAX, S32 max_pixels = S32_MAX,  F32* right_x = NULL, bool use_ellipses = false, bool use_color = true) const;
+    S32 renderUTF8(std::string_view text, S32 begin_offset, S32 x, S32 y, const LLColor4 &color) const;
+    S32 renderUTF8(std::string_view text, S32 begin_offset, S32 x, S32 y, const LLColor4 &color, HAlign halign, VAlign valign, U8 style = NORMAL, ShadowType shadow = NO_SHADOW) const;
 
     // font metrics - override for LLFontFreetype that returns units of virtual pixels
     F32 getAscenderHeight() const;
@@ -280,6 +293,13 @@ public:
     static std::vector<LLFontRegistry::FamilyInfo> getAvailableFamilies(
         LLFontRegistry::FamilyFilter filter = LLFontRegistry::FamilyFilter::ANY);
 
+    // The names a XUI file may write for `font=` and `font.size=`, which
+    // is a wider list than the one a preference offers: a file names the
+    // families that are not user-selectable too. Empty if the registry is
+    // not ready.
+    static std::vector<std::string> getDeclaredFontNames();
+    static std::vector<std::string> getDeclaredSizeNames();
+
     // Takes a string with potentially several flags, i.e. "NORMAL|BOLD|ITALIC"
     static U8 getStyleFromString(const std::string &style);
     static const std::string& getStringFromStyle(U8 style);
@@ -313,9 +333,40 @@ public:
     static std::string getFontPathLocal();
     static std::string getFontPathSystem();
 
-    static LLCoordGL sCurOrigin;
+    // The shadow of the UI transform, kept on the CPU for the three things
+    // that need to know where a local coordinate lands without asking the
+    // renderer: clipping, text and badges.
+    //
+    // It composes the way LLRender composes it -- a vertex is
+    // (local + offset) * scale -- so the offset is in unscaled units and the
+    // scale is applied at the point of use. It tracked the offset and not the
+    // scale for years, which was invisible only because nothing pushed a UI
+    // scale: a scale moved the drawing and left the scissor behind it.
+    // The offset is not always a whole pixel. A scale pushed under a
+    // translation keeps the origin it was pushed at by dividing the offset
+    // that led there, and rounding that division is how a drawing and its
+    // scissor would come to be a pixel apart.
+    struct UIOrigin
+    {
+        F32 mX = 0.f;
+        F32 mY = 0.f;
+
+        void set(F32 x, F32 y) { mX = x; mY = y; }
+    };
+
+    struct UITransform
+    {
+        UIOrigin    origin;
+        F32         depth = 0.f;
+        F32         scaleX = 1.f;
+        F32         scaleY = 1.f;
+    };
+
+    static UIOrigin     sCurOrigin;
     static F32          sCurDepth;
-    static std::vector<std::pair<LLCoordGL, F32> > sOriginStack;
+    static F32          sCurScaleX;
+    static F32          sCurScaleY;
+    static std::vector<UITransform> sOriginStack;
 
     static LLColor4 sShadowColor;
 
@@ -373,6 +424,10 @@ private:
     mutable S32    mCacheGenGlobal = 0;
     mutable size_t mCacheGenChain  = 0;
     mutable bool   mCacheGenValid  = false;
+
+    // faceFor's answers, by the BOLD and ITALIC bits asked for. Null is
+    // not asked yet; this font is asked and found nothing better.
+    mutable const LLFontGL* mFaces[4] = {};
 
     void renderTriangle(LLVector4a* vertex_out, LLVector2* uv_out, LLColor4U* colors_out, const LLRectf& screen_rect, const LLRectf& uv_rect, const LLColor4U& color, F32 slant_amt) const;
     // Caller hoists shadow_color and italic slant_offset out of the glyph loop and

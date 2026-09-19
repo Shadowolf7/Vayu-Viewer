@@ -43,19 +43,13 @@
 #include "llmath.h"
 #include "m4math.h"
 #include "llstring.h"
-#include "llstacktrace.h"
 
 #include "llglheaders.h"
 #include "llglslshader.h"
 #include "llshadermgr.h"
 
-#include "glm/glm.hpp"
-#include <glm/gtc/matrix_access.hpp>
-#include "glm/gtc/type_ptr.hpp"
 
-#if LL_MESA_HEADLESS
-#  define LL_GET_PROC_ADDRESS(func) OSMesaGetProcAddress(func)
-#elif LL_SDL_WINDOW
+#if LL_SDL_WINDOW
 #  include "llwindowsdl.h"
 #  include "SDL3/SDL.h"
 #  define LL_GET_PROC_ADDRESS(func) SDL_GL_GetProcAddress(func)
@@ -78,9 +72,6 @@ bool gHeadlessClient = false;
 bool gNonInteractive = false;
 bool gGLActive = false;
 
-static const std::string HEADLESS_VENDOR_STRING("Linden Lab");
-static const std::string HEADLESS_RENDERER_STRING("Headless");
-static const std::string HEADLESS_VERSION_STRING("1.0");
 
 llofstream gFailLog;
 
@@ -651,8 +642,6 @@ void ll_fail(std::string msg)
 
         gFailLog << "Stack Trace:" << std::endl;
 
-        ll_get_stack_trace(lines);
-
         for(size_t i = 0; i < lines.size(); ++i)
         {
             gFailLog << lines[i] << std::endl;
@@ -669,13 +658,12 @@ void ll_close_fail_log()
     gFailLog.close();
 }
 
-LLMatrix4 gGLObliqueProjectionInverse;
 
 std::list<LLGLUpdate*> LLGLUpdate::sGLQ;
 
 #if LL_GL_FUNC_POINTER
 
-#if LL_WINDOWS && !LL_MESA_HEADLESS
+#if LL_WINDOWS
 // WGL_ARB_pixel_format
 PFNWGLGETPIXELFORMATATTRIBIVARBPROC wglGetPixelFormatAttribivARB = nullptr;
 PFNWGLGETPIXELFORMATATTRIBFVARBPROC wglGetPixelFormatAttribfvARB = nullptr;
@@ -708,15 +696,7 @@ PFNWGLDXLOCKOBJECTSNVPROC      wglDXLockObjectsNV = nullptr;
 PFNWGLDXUNLOCKOBJECTSNVPROC    wglDXUnlockObjectsNV = nullptr;
 #endif
 
-#if LL_LINUX && LL_X11 && !LL_MESA_HEADLESS
-// GLX_MESA_query_renderer
-PFNGLXQUERYCURRENTRENDERERINTEGERMESAPROC glXQueryCurrentRendererIntegerMESA = nullptr;
-PFNGLXQUERYCURRENTRENDERERSTRINGMESAPROC glXQueryCurrentRendererStringMESA = nullptr;
-PFNGLXQUERYRENDERERINTEGERMESAPROC glXQueryRendererIntegerMESA = nullptr;
-PFNGLXQUERYRENDERERSTRINGMESAPROC glXQueryRendererStringMESA = nullptr;
-#endif
-
-#if LL_LINUX && LL_WAYLAND &&!LL_MESA_HEADLESS
+#if LL_LINUX
 // EGL_VERSION_1_0
 PFNEGLQUERYSTRINGPROC eglQueryString = nullptr;
 
@@ -1476,7 +1456,7 @@ LLGLManager::LLGLManager() :
 //---------------------------------------------------------------------
 void LLGLManager::initWGL()
 {
-#if LL_WINDOWS && !LL_MESA_HEADLESS
+#if LL_WINDOWS
     reloadExtensionsString();
 
     if (mGLExtensions.contains("WGL_ARB_pixel_format"))
@@ -1542,31 +1522,9 @@ void LLGLManager::initWGL()
 #endif
 }
 
-void LLGLManager::initGLX()
-{
-#if LL_LINUX && LL_X11 && !LL_MESA_HEADLESS
-    if (!mIsX11)
-        return;
-
-    reloadExtensionsString();
-
-    mHasGLXMESAQueryRenderer = mGLExtensions.contains("GLX_MESA_query_renderer");
-    if (mHasGLXMESAQueryRenderer)
-    {
-        glXQueryCurrentRendererIntegerMESA = (PFNGLXQUERYCURRENTRENDERERINTEGERMESAPROC)LL_GET_PROC_ADDRESS("glXQueryCurrentRendererIntegerMESA");
-        glXQueryCurrentRendererStringMESA = (PFNGLXQUERYCURRENTRENDERERSTRINGMESAPROC)LL_GET_PROC_ADDRESS("glXQueryCurrentRendererStringMESA");
-        glXQueryRendererIntegerMESA = (PFNGLXQUERYRENDERERINTEGERMESAPROC)LL_GET_PROC_ADDRESS("glXQueryRendererIntegerMESA");
-        glXQueryRendererStringMESA = (PFNGLXQUERYRENDERERSTRINGMESAPROC)LL_GET_PROC_ADDRESS("glXQueryRendererStringMESA");
-    }
-#endif
-}
-
 void LLGLManager::initEGL()
 {
-#if LL_LINUX && LL_WAYLAND && !LL_MESA_HEADLESS
-    if (!mIsWayland)
-        return;
-
+#if LL_LINUX
     reloadExtensionsString();
 
     // EGL_VERSION_1_0
@@ -1759,7 +1717,7 @@ bool LLGLManager::initGL()
     U32 old_vram = mVRAM;
     mVRAM = 0;
 
-#if LL_WINDOWS && !LL_MESA_HEADLESS
+#if LL_WINDOWS
     if (mHasAMDAssociations)
     {
         GLuint gl_gpus_count = wglGetGPUIDsAMD(0, 0);
@@ -1790,22 +1748,9 @@ bool LLGLManager::initGL()
     } else
 #endif
 
-#if LL_LINUX && LL_X11 && !LL_MESA_HEADLESS
-    if(mHasGLXMESAQueryRenderer && mVRAM == 0)
-    {
-        unsigned int vram_val = 0;
-        if(glXQueryCurrentRendererIntegerMESA(GLX_RENDERER_VIDEO_MEMORY_MESA, &vram_val))
-        {
-            gGLManager.mVRAM = vram_val;
-
-            if (mVRAM != 0)
-            {
-                LL_INFOS("RenderInit") << "VRAM Detected (GLXMesaQueryRenderer):" << mVRAM << LL_ENDL;
-            }
-        }
-    }
-#endif
-
+    // On Linux these two are what Mesa offers as well as the vendor drivers:
+    // every gallium driver that can report memory exposes both, which is what
+    // GLX_MESA_query_renderer used to be asked for on X11.
 #if LL_WINDOWS || LL_LINUX
     {
         if (mHasNVXGpuMemoryInfo && mVRAM == 0)
@@ -1909,46 +1854,24 @@ bool LLGLManager::initGL()
 
 void LLGLManager::getGLInfo(LLSD& info)
 {
-    if (gHeadlessClient)
-    {
-        info["GLInfo"]["GLVendor"] = HEADLESS_VENDOR_STRING;
-        info["GLInfo"]["GLRenderer"] = HEADLESS_RENDERER_STRING;
-        info["GLInfo"]["GLVersion"] = HEADLESS_VERSION_STRING;
-        return;
-    }
-    else
-    {
-        info["GLInfo"]["GLVendor"] = ll_safe_string((const char *)glGetString(GL_VENDOR));
-        info["GLInfo"]["GLRenderer"] = ll_safe_string((const char *)glGetString(GL_RENDERER));
-        info["GLInfo"]["GLVersion"] = ll_safe_string((const char *)glGetString(GL_VERSION));
-    }
+    info["GLInfo"]["GLVendor"] = ll_safe_string((const char *)glGetString(GL_VENDOR));
+    info["GLInfo"]["GLRenderer"] = ll_safe_string((const char *)glGetString(GL_RENDERER));
+    info["GLInfo"]["GLVersion"] = ll_safe_string((const char *)glGetString(GL_VERSION));
 
-#if !LL_MESA_HEADLESS
     for (const auto& ext : mGLExtensions)
     {
         info["GLInfo"]["GLExtensions"].append(ext);
     }
-#endif
 }
 
 std::string LLGLManager::getGLInfoString()
 {
     std::string info_str;
 
-    if (gHeadlessClient)
-    {
-        info_str += std::string("GL_VENDOR      ") + HEADLESS_VENDOR_STRING + std::string("\n");
-        info_str += std::string("GL_RENDERER    ") + HEADLESS_RENDERER_STRING + std::string("\n");
-        info_str += std::string("GL_VERSION     ") + HEADLESS_VERSION_STRING + std::string("\n");
-    }
-    else
-    {
-        info_str += std::string("GL_VENDOR      ") + ll_safe_string((const char *)glGetString(GL_VENDOR)) + std::string("\n");
-        info_str += std::string("GL_RENDERER    ") + ll_safe_string((const char *)glGetString(GL_RENDERER)) + std::string("\n");
-        info_str += std::string("GL_VERSION     ") + ll_safe_string((const char *)glGetString(GL_VERSION)) + std::string("\n");
-    }
+    info_str += std::string("GL_VENDOR      ") + ll_safe_string((const char *)glGetString(GL_VENDOR)) + std::string("\n");
+    info_str += std::string("GL_RENDERER    ") + ll_safe_string((const char *)glGetString(GL_RENDERER)) + std::string("\n");
+    info_str += std::string("GL_VERSION     ") + ll_safe_string((const char *)glGetString(GL_VERSION)) + std::string("\n");
 
-#if !LL_MESA_HEADLESS
     std::string all_exts;
     for (const auto& ext : mGLExtensions)
     {
@@ -1956,27 +1879,16 @@ std::string LLGLManager::getGLInfoString()
         all_exts += '\n';
     }
     info_str += std::string("GL_EXTENSIONS:\n") + all_exts + std::string("\n");
-#endif
 
     return info_str;
 }
 
 void LLGLManager::printGLInfoString()
 {
-    if (gHeadlessClient)
-    {
-        LL_INFOS("RenderInit") << "GL_VENDOR:     " << HEADLESS_VENDOR_STRING << LL_ENDL;
-        LL_INFOS("RenderInit") << "GL_RENDERER:   " << HEADLESS_RENDERER_STRING << LL_ENDL;
-        LL_INFOS("RenderInit") << "GL_VERSION:    " << HEADLESS_VERSION_STRING << LL_ENDL;
-    }
-    else
-    {
-        LL_INFOS("RenderInit") << "GL_VENDOR:     " << ll_safe_string((const char *)glGetString(GL_VENDOR)) << LL_ENDL;
-        LL_INFOS("RenderInit") << "GL_RENDERER:   " << ll_safe_string((const char *)glGetString(GL_RENDERER)) << LL_ENDL;
-        LL_INFOS("RenderInit") << "GL_VERSION:    " << ll_safe_string((const char *)glGetString(GL_VERSION)) << LL_ENDL;
-    }
+    LL_INFOS("RenderInit") << "GL_VENDOR:     " << ll_safe_string((const char *)glGetString(GL_VENDOR)) << LL_ENDL;
+    LL_INFOS("RenderInit") << "GL_RENDERER:   " << ll_safe_string((const char *)glGetString(GL_RENDERER)) << LL_ENDL;
+    LL_INFOS("RenderInit") << "GL_VERSION:    " << ll_safe_string((const char *)glGetString(GL_VERSION)) << LL_ENDL;
 
-#if !LL_MESA_HEADLESS
     std::string all_exts;
     for (const auto& ext : mGLExtensions)
     {
@@ -1984,20 +1896,12 @@ void LLGLManager::printGLInfoString()
         all_exts += '\n';
     }
     LL_INFOS("RenderInit") << "GL_EXTENSIONS:\n" << all_exts << LL_ENDL;
-#endif
 }
 
 std::string LLGLManager::getRawGLString()
 {
     std::string gl_string;
-    if (gHeadlessClient)
-    {
-        gl_string = HEADLESS_VENDOR_STRING + " " + HEADLESS_RENDERER_STRING;
-    }
-    else
-    {
-        gl_string = ll_safe_string((char*)glGetString(GL_VENDOR)) + " " + ll_safe_string((char*)glGetString(GL_RENDERER));
-    }
+    gl_string = ll_safe_string((char*)glGetString(GL_VENDOR)) + " " + ll_safe_string((char*)glGetString(GL_RENDERER));
     return gl_string;
 }
 
@@ -2077,7 +1981,7 @@ void LLGLManager::reloadExtensionsString()
     }
 #endif
 
-#if LL_WINDOWS && !LL_MESA_HEADLESS
+#if LL_WINDOWS
     {
         PFNWGLGETEXTENSIONSSTRINGARBPROC wglGetExtensionsStringARB = (PFNWGLGETEXTENSIONSSTRINGARBPROC)LL_GET_PROC_ADDRESS("wglGetExtensionsStringARB");
         if (wglGetExtensionsStringARB)
@@ -2093,29 +1997,7 @@ void LLGLManager::reloadExtensionsString()
     }
 #endif
 
-#if LL_SDL_WINDOW && LL_LINUX && LL_X11 && !LL_MESA_HEADLESS
-    if (mIsX11)
-    {
-        if (LLWindowSDL::sX11Data.xdisplay && LLWindowSDL::sX11Data.xwindow)
-        {
-            typedef const char *(*PFNEGLXQUERYEXTENSIONSSTRINGPROC) (Display *dpy, int screen );
-            PFNEGLXQUERYEXTENSIONSSTRINGPROC llglXQueryExtensionsString = (PFNEGLXQUERYEXTENSIONSSTRINGPROC)LL_GET_PROC_ADDRESS("glXQueryExtensionsString");
-            if (llglXQueryExtensionsString)
-            {
-                std::string glx_exts = ll_safe_string((const char*)llglXQueryExtensionsString(LLWindowSDL::sX11Data.xdisplay, LLWindowSDL::sX11Data.xscreen));
-                boost::char_separator<char> sep(" ");
-                boost::tokenizer<boost::char_separator<char> > tok(glx_exts, sep);
-                for (boost::tokenizer<boost::char_separator<char> >::iterator i = tok.begin(); i != tok.end(); ++i)
-                {
-                    mGLExtensions.insert(*i);
-                }
-            }
-        }
-    }
-#endif
-
-#if LL_SDL_WINDOW && LL_LINUX && LL_WAYLAND && !LL_MESA_HEADLESS
-    if (mIsWayland)
+#if LL_SDL_WINDOW && LL_LINUX
     {
         SDL_EGLDisplay egl_display = SDL_EGL_GetCurrentDisplay();
         if (egl_display)
@@ -3468,7 +3350,7 @@ void parse_glsl_version(S32& major, S32& minor)
     LLStringUtil::convertToS32(minor_str, minor);
 }
 
-LLGLUserClipPlane::LLGLUserClipPlane(const LLPlane& p, const glm::mat4& modelview, const glm::mat4& projection, bool apply)
+LLGLUserClipPlane::LLGLUserClipPlane(const LLPlane& p, const LLMatrix4a& modelview, const LLMatrix4a& projection, bool apply)
 {
     mApply = apply;
 
@@ -3499,26 +3381,32 @@ void LLGLUserClipPlane::disable()
 // reverse-Z aware (the ZERO_TO_ONE near-plane constant differs) before use.
 void LLGLUserClipPlane::setPlane(F32 a, F32 b, F32 c, F32 d)
 {
-    const glm::mat4& P = mProjection;
-    const glm::mat4& M = mModelview;
+    // the plane into clip space: through the inverse transpose of the
+    // modelview then projection
+    LLMatrix4a invtrans_MVP;
+    invtrans_MVP.setMul(mModelview, mProjection);
+    invtrans_MVP.invert();
+    invtrans_MVP.transpose();
+    LLVector4a cplane;
+    invtrans_MVP.transform4(LLVector4a(a, b, c, d), cplane);
 
-    glm::mat4 invtrans_MVP = glm::transpose(glm::inverse(P*M));
-    glm::vec4 oplane(a,b,c,d);
-    glm::vec4 cplane = invtrans_MVP * oplane;
+    cplane.mul(1.f / fabsf(cplane[2])); // normalize such that depth is not scaled
+    cplane.getF32ptr()[3] -= 1.f;
 
-    cplane /= fabs(cplane[2]); // normalize such that depth is not scaled
-    cplane[3] -= 1;
+    if (cplane[2] < 0.f)
+    {
+        cplane.negate();
+    }
 
-    if(cplane[2] < 0)
-        cplane *= -1;
-
-    glm::mat4 suffix = glm::identity<glm::mat4>();
-    suffix = glm::row(suffix, 2, cplane);
-    glm::mat4 newP = suffix * P;
+    // the projection with its depth column replaced by the plane
+    LLMatrix4a suffix;
+    suffix.setIdentity();
+    suffix.setColumn<2>(cplane);
+    LLMatrix4a newP;
+    newP.setMul(mProjection, suffix);
     gGL.matrixMode(LLRender::MM_PROJECTION);
     gGL.pushMatrix();
-    gGL.loadMatrix(glm::value_ptr(newP));
-    gGLObliqueProjectionInverse = LLMatrix4(glm::value_ptr(glm::transpose(glm::inverse(newP))));
+    gGL.loadMatrix(newP);
     gGL.matrixMode(LLRender::MM_MODELVIEW);
 }
 
@@ -3642,16 +3530,15 @@ void LLGLDepthTest::checkState()
 
 LLGLSquashToFarClip::LLGLSquashToFarClip()
 {
-    glm::mat4 proj = get_current_projection();
-    setProjectionMatrix(proj, 0);
+    setProjectionMatrix(gGL.getProjectionMatrix(), 0);
 }
 
-LLGLSquashToFarClip::LLGLSquashToFarClip(const glm::mat4& P, U32 layer)
+LLGLSquashToFarClip::LLGLSquashToFarClip(const LLMatrix4a& P, U32 layer)
 {
     setProjectionMatrix(P, layer);
 }
 
-void LLGLSquashToFarClip::setProjectionMatrix(glm::mat4 projection, U32 layer)
+void LLGLSquashToFarClip::setProjectionMatrix(LLMatrix4a projection, U32 layer)
 {
     // Replacing row 2 with row 3 * depth forces ndc z = depth for every vertex regardless
     // of projection, so only the far-plane constant mirrors under reverse-Z (far = 0).
@@ -3660,14 +3547,16 @@ void LLGLSquashToFarClip::setProjectionMatrix(glm::mat4 projection, U32 layer)
     F32 depth = LLRender::sReverseZ ? (0.000005f + 0.00005f * layer)
                                     : (0.99999f - 0.0001f * layer);
 
-    glm::vec4 P_row_3 = glm::row(projection, 3) * depth;
-    projection = glm::row(projection, 2, P_row_3);
+    // the depth column is the w column scaled: clip z = depth * clip w
+    LLVector4a squashed = projection.getColumn<3>();
+    squashed.mul(depth);
+    projection.setColumn<2>(squashed);
 
     LLRender::eMatrixMode last_matrix_mode = gGL.getMatrixMode();
 
     gGL.matrixMode(LLRender::MM_PROJECTION);
     gGL.pushMatrix();
-    gGL.loadMatrix(glm::value_ptr(projection));
+    gGL.loadMatrix(projection);
 
     gGL.matrixMode(last_matrix_mode);
 }

@@ -47,9 +47,11 @@ class LLInventoryItem;
 class LLTextEditor;
 // [/SL:KB]
 
-class LLPreviewNotecard : public LLPreview, public LLVOInventoryListener
+class LLPreviewNotecard final : public LLPreview, public LLVOInventoryListener
 {
 public:
+    AL_VIEW_TYPE(LLPreviewNotecard, LLPreview);
+
     LLPreviewNotecard(const LLSD& key);
     virtual ~LLPreviewNotecard();
 

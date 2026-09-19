@@ -41,10 +41,8 @@
 #include "llwebrtc.h"
 #include "alaudiodevicenotifier.h"
 #include "alaudioechobuffer.h"
+#include <cstdint>
 #include <memory>
-#include <cstddef>
-using std::nullptr_t;
-
 // WebRTC Includes
 #ifdef WEBRTC_WIN
 #pragma warning(push)
@@ -200,7 +198,10 @@ private:
 class LLWebRTCAudioDeviceModule : public webrtc::AudioDeviceModule
 {
 public:
-    explicit LLWebRTCAudioDeviceModule(webrtc::scoped_refptr<webrtc::AudioDeviceModule> inner) : inner_(inner), tuning_(false)
+    explicit LLWebRTCAudioDeviceModule(webrtc::scoped_refptr<webrtc::AudioDeviceModule> inner) :
+        inner_(inner),
+        playout_device_(kPlayoutDeviceUnset),
+        tuning_(false)
     {
         RTC_CHECK(inner_);
     }
@@ -224,7 +225,11 @@ public:
     }
     bool    Initialized() const override { return inner_->Initialized(); }
 
-    int32_t ForceTerminate() { return inner_->Terminate(); }
+    int32_t ForceTerminate()
+    {
+        playout_device_ = kPlayoutDeviceUnset;
+        return inner_->Terminate();
+    }
 
     // --- Device enumeration/selection (forward) ---
     int16_t PlayoutDevices() override { return inner_->PlayoutDevices(); }
@@ -239,7 +244,7 @@ public:
     }
     int32_t SetPlayoutDevice(uint16_t index) override
     {
-        mPlayoutDevice = static_cast<int16_t>(index);
+        playout_device_ = index;
         return inner_->SetPlayoutDevice(index);
     }
     int32_t SetRecordingDevice(uint16_t index) override { return inner_->SetRecordingDevice(index); }
@@ -247,12 +252,17 @@ public:
     // Windows default/communications selectors, if your branch exposes them:
     int32_t SetPlayoutDevice(WindowsDeviceType type) override
     {
-        mPlayoutDevice = static_cast<int16_t>(type);
+        playout_device_ = type;
         return inner_->SetPlayoutDevice(type);
     }
     int32_t SetRecordingDevice(WindowsDeviceType type) override { return inner_->SetRecordingDevice(type); }
 
-    int16_t GetPlayoutDevice() const { return mPlayoutDevice; }
+    // The playout selection last handed to the module -- an index or a
+    // WindowsDeviceType -- or kPlayoutDeviceUnset when none has been since it
+    // was last terminated.  libwebrtc's module never reports its selection
+    // back, so this record is what workerStartPlayout() compares against.
+    static constexpr int32_t kPlayoutDeviceUnset = INT32_MIN;
+    int32_t GetPlayoutDevice() const { return playout_device_; }
 
     // --- Init/start/stop (forward) ---
     int32_t InitPlayout() override { return inner_->InitPlayout(); }
@@ -362,9 +372,9 @@ protected:
 private:
     webrtc::scoped_refptr<webrtc::AudioDeviceModule> inner_;
     LLWebRTCAudioTransport                        audio_transport_;
+    int32_t                                       playout_device_;
 
     bool tuning_;
-    int16_t                                       mPlayoutDevice{-1};
 };
 
 class LLCustomProcessorState

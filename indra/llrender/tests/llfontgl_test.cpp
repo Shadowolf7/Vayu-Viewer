@@ -1,13 +1,13 @@
 /**
  * @file llfontgl_test.cpp
- * @brief Smoke test for the OSMesa-backed headless GL harness.
+ * @brief Smoke test for the headless GL harness.
  *
- * Brings up a real GL context via LLWindowMesaHeadless, runs
+ * Brings up a real GL context on LLWindowManager's hidden window, runs
  * LLFontGL::initClass through the explicit-fonts.xml-path overload,
  * and verifies the GL-backed atlas pipeline produces a live texture.
  *
  * The single fixture instance shared across test methods (see
- * llheadlessgl_fixture.h) keeps the OSMesa context creation cost
+ * llheadlessgl_fixture.h) keeps the context creation cost
  * out of every test — but each test method still gets a fresh
  * sFontRegistry, so font-state mutations don't leak.
  *
@@ -72,7 +72,7 @@ namespace
 
 namespace tut
 {
-    // Shared OSMesa fixture. TUT spins fixtures per-test method, but
+    // Shared GL fixture. TUT spins fixtures per-test method, but
     // per-fixture HeadlessGL recreation poisons LLFontGL's per-getter
     // static fontp caches after ~10 cycles (the per-test new GL
     // context invalidates LLImageGL textures the fontps reference).
@@ -984,7 +984,7 @@ namespace tut
 
     // ===================================================================
     // Render-output group: fixture brings up gUIProgram (needs_render=true)
-    // so LLFontGL::render() completes end-to-end against the OSMesa
+    // so LLFontGL::render() completes end-to-end against the
     // framebuffer; tests verify pixel-level invariants via glReadPixels.
     // Shared static HeadlessGL — per-test recreation poisons LLFontGL's
     // static fontp cache after a few cycles (see vertexbuffer fixture).
@@ -1512,6 +1512,51 @@ namespace tut
                     first, again, dragging);
         ensure("the drag stays within two shapes per line per width",
                dragging <= 2 * lines_per_wrap * 20);
+    }
+
+    // An ellipsized draw buys itself padding by measuring "....", and that
+    // measurement shapes: on a cold cache it misses, inserts, and moves the
+    // shape cache's mutation count -- after renderBytes has already shaped the
+    // string it is about to walk. That count is the tripwire for the walk
+    // holding a pointer into an entry that went away underneath it, so it has
+    // to be read after the dots are measured. Read before, the first
+    // ellipsized string of a session trips a tripwire for a walk that has not
+    // started yet, which on the login screen is every session.
+    template<> template<>
+    void llfontgl_render_object::test<10>()
+    {
+        if (!fileExists(kFontsXml))
+            skip("fonts.xml not found");
+        LLFontGL* font = LLFontGL::getFontSansSerif();
+        ensure("font resolves", font != nullptr);
+
+        const std::string s = "a string rather wider than the budget it is given";
+
+        // Warm the string itself, so the only thing left to shape inside the
+        // draw below is the ellipsis measurement.
+        ALFontShaping::clearCache();
+        const F32 full = font->getWidthF32(s);
+        ensure("the sample string has width", full > 0.f);
+
+        const size_t before = ALFontShaping::cacheMutationCount();
+
+        std::list<LLVertexBufferData> capture;
+        gGL.beginList(&capture);
+        const S32 n = font->renderBytes(s, 0, /*x=*/20.f, /*y=*/64.f,
+                                        LLColor4::white,
+                                        LLFontGL::LEFT, LLFontGL::BASELINE,
+                                        LLFontGL::NORMAL, LLFontGL::NO_SHADOW,
+                                        (S32)s.size(), (S32)(full / 2.f),
+                                        nullptr, /*use_ellipses=*/true);
+        gGL.flush();
+        gGL.endList();
+
+        ensure("an ellipsized draw stops short of the whole string",
+               n < (S32)s.size());
+        // Without this the test proves nothing: it is the dots landing in the
+        // cache mid-draw that puts the snapshot and the count out of step.
+        ensure("the ellipsis measurement shaped inside the draw",
+               ALFontShaping::cacheMutationCount() > before);
     }
 
 }

@@ -342,6 +342,9 @@ class LLTextBase
     public ll::ui::SearchableControl
 {
 public:
+    AL_VIEW_TYPE(LLTextBase, LLUICtrl);
+    LLView* asView() override { return this; }
+
     friend class LLTextSegment;
     friend class LLNormalTextSegment;
     friend class LLEmbeddedItemSegment;
@@ -371,7 +374,8 @@ public:
                                 bg_highlighted_color,
 // [/SL:KB]
                                 text_selected_color,
-                                bg_selected_color;
+                                bg_selected_color,
+                                link_color;
 
         Optional<bool>          bg_visible,
                                 border_visible,
@@ -429,6 +433,7 @@ public:
     // LLUICtrl interface
     /*virtual*/ bool        acceptsTextInput() const override { return !mReadOnly; }
     /*virtual*/ void        setColor(const LLUIColor& c) override;
+    const LLUIColor&        getColor() const { return mFgColor; }
     virtual     void        setReadOnlyColor(const LLUIColor& c);
     /*virtual*/ void        onVisibilityChange(bool new_visibility) override;
     void                    setBgReadOnlyColor(const LLUIColor& c) { mReadOnlyBgColor = c; }
@@ -479,7 +484,10 @@ public:
 
     // Text accessors
     // TODO: add optional style parameter
-    virtual void            setText(const LLStringExplicit &utf8str , const LLStyle::Params& input_params = LLStyle::Params()); // uses default style
+    // By view. Every implementation below copies what it is given, because
+    // it has to validate and truncate it; taking an owning string as well
+    // meant the caller copied it first so the callee could copy it again.
+    virtual void            setText(ALStringViewExplicit utf8str , const LLStyle::Params& input_params = LLStyle::defaultParams()); // uses default style
     /*virtual*/ const std::string& getText() const override;
     void                    setMaxTextLength(S32 length) { mMaxTextByteLength = length; }
     S32                     getMaxTextLength() const { return mMaxTextByteLength; }
@@ -867,6 +875,8 @@ protected:
     bool                        mAlwaysShowIcons;
 
     bool                        mSkipLinkUnderline;
+    bool                        mHasLinkColor;
+    LLUIColor                   mLinkColor;
 
     // support widgets
     LLHandle<LLContextMenu>     mPopupMenuHandle;

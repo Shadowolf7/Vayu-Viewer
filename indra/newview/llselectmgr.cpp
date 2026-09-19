@@ -1578,7 +1578,7 @@ void LLSelectMgr::getGrid(LLVector3& origin, LLQuaternion &rotation, LLVector3 &
             LLDrawable* drawable = first_grid_object->mDrawable;
             if (drawable && drawable->isActive())
             {
-                mGridOrigin = mGridOrigin * first_grid_object->getRenderMatrix();
+                mGridOrigin = mGridOrigin * first_grid_object->getRenderMatrix().toMatrix4();
             }
             mGridScale.set(size.getF32ptr());
         }
@@ -6438,11 +6438,13 @@ void LLSelectMgr::processObjectProperties(LLMessageSystem* msg, void** user_data
             node->mInventorySerial = inv_serial;
             node->mSitName.assign(sit_name);
             node->mTouchName.assign(touch_name);
+        }
 
-            if (auto ws_server = LLScriptEditorWSServer::getServer())
-            {
-                ws_server->onObjectPropertyChanged(id, name, desc, inv_serial);
-            }
+        // Published objects need property updates even when not selected.
+        LLScriptEditorWSServer::ptr_t ws_server = LLScriptEditorWSServer::getServer();
+        if (ws_server)
+        {
+            ws_server->onObjectPropertyChanged(id, name, desc, inv_serial);
         }
     }
 
@@ -6584,7 +6586,6 @@ void LLSelectMgr::processForceObjectSelect(LLMessageSystem* msg, void**)
     LLSelectMgr::getInstance()->highlightObjectAndFamily(objects);
 }
 
-extern F32  gGLModelView[16];
 
 void LLSelectMgr::updateSilhouettes()
 {
@@ -6919,12 +6920,12 @@ void LLSelectMgr::renderSilhouettes(bool for_hud)
         if (!is_hud_object)
         {
             gGL.loadIdentity();
-            gGL.multMatrix(gGLModelView);
+            gGL.multMatrix(LLViewerCamera::getCurrent().getModelview());
         }
 
         if (objectp->mDrawable->isActive())
         {
-            gGL.multMatrix((F32*)objectp->getRenderMatrix().mMatrix);
+            gGL.multMatrix(objectp->getRenderMatrix().getF32ptr());
         }
         else if (!is_hud_object)
         {
@@ -7578,13 +7579,13 @@ void LLSelectNode::renderOneSilhouette(const LLColor4 &color)
     if (!is_hud_object)
     {
         gGL.loadIdentity();
-        gGL.multMatrix(gGLModelView);
+        gGL.multMatrix(LLViewerCamera::getCurrent().getModelview());
     }
 
 
     if (drawable->isActive())
     {
-        gGL.multMatrix((F32*) objectp->getRenderMatrix().mMatrix);
+        gGL.multMatrix(objectp->getRenderMatrix().getF32ptr());
     }
 
     LLVolume *volume = objectp->getVolume();

@@ -75,9 +75,11 @@ LLColor4 LLFontGL::sShadowColor(0.f, 0.f, 0.f, 1.f);
 bool     LLFontGL::sEnableShaderShadow = false;
 LLFontRegistry* LLFontGL::sFontRegistry = NULL;
 
-LLCoordGL LLFontGL::sCurOrigin;
+LLFontGL::UIOrigin LLFontGL::sCurOrigin;
 F32 LLFontGL::sCurDepth;
-std::vector<std::pair<LLCoordGL, F32> > LLFontGL::sOriginStack;
+F32 LLFontGL::sCurScaleX = 1.f;
+F32 LLFontGL::sCurScaleY = 1.f;
+std::vector<LLFontGL::UITransform> LLFontGL::sOriginStack;
 
 const F32 PAD_UVY = 0.5f; // half of vertical padding between glyphs in the glyph texture
 const F32 DROP_SHADOW_SOFT_STRENGTH = 0.3f;
@@ -367,9 +369,17 @@ ALTextTransform::ALTextTransform()
     // 'in-world' and is correctly occluded.
     gGL.matrixMode(LLRender::MM_MODELVIEW);
     gGL.pushMatrix();
-    gGL.translatef(floorf((F32)LLFontGL::sCurOrigin.mX * LLFontGL::sScaleX),
-                   floorf((F32)LLFontGL::sCurOrigin.mY * LLFontGL::sScaleY),
+    // Where the text sits is (local + origin) * scale, the same composition
+    // the renderer applies to every other UI vertex. The glyphs arrive in
+    // local units, so the scale goes on the matrix under them rather than
+    // into the placement.
+    gGL.translatef(floorf(LLFontGL::sCurOrigin.mX * LLFontGL::sCurScaleX * LLFontGL::sScaleX),
+                   floorf(LLFontGL::sCurOrigin.mY * LLFontGL::sCurScaleY * LLFontGL::sScaleY),
                    LLFontGL::sCurDepth);
+    if (LLFontGL::sCurScaleX != 1.f || LLFontGL::sCurScaleY != 1.f)
+    {
+        gGL.scalef(LLFontGL::sCurScaleX, LLFontGL::sCurScaleY, 1.f);
+    }
 }
 
 ALTextTransform::~ALTextTransform()
@@ -410,6 +420,15 @@ S32 LLFontGL::renderBytes(std::string_view utf8text, S32 begin_offset, F32 x, F3
     // frame: run from here it would put a throttle check in the per-glyph path
     // and could evict a sheet while this call still holds glyph pointers into
     // it.
+
+    // A style this face does not carry is another face's to draw, where
+    // the registry has one that does.
+    if (const LLFontGL* face = faceFor(style); face != this)
+    {
+        return face->renderBytes(utf8text, begin_offset, x, y, color, halign, valign, style, shadow,
+                                 max_bytes, max_pixels, right_x, use_ellipses, use_color,
+                                 std::move(on_pass_boundary));
+    }
 
     S32 scaled_max_pixels = max_pixels == S32_MAX ? S32_MAX : llceil((F32)max_pixels * sScaleX);
 
@@ -774,6 +793,16 @@ S32 LLFontGL::renderBytes(std::string_view utf8text, S32 begin_offset, F32 x, F3
 
     bool shape_run_taken = false;
 
+    // Two measurements above shape, and so may miss-insert into the shape
+    // cache after build_shape_layout took its snapshot: the empty-layout width
+    // fallback, and the ellipsis padding width, which shapes "...." the first
+    // time anything in the process ellipsizes. Neither can have evicted the
+    // layout's own entry -- an insert drops the LRU tail and this entry was
+    // just put at the head -- so carry the count forward here. What the assert
+    // after the loop guards is the loop, which is the part that holds the
+    // pointer; snapshotting there instead would guard nothing.
+    layout.mutation_snapshot = ALFontShaping::cacheMutationCount();
+
     S32 next_i = begin_offset;
     for (i = begin_offset; i < begin_offset + length; i = next_i)
     {
@@ -1089,17 +1118,17 @@ S32 LLFontGL::renderBytes(std::string_view utf8text, S32 begin_offset, F32 x, F3
     return chars_drawn;
 }
 
-S32 LLFontGL::renderUTF8(const std::string &text, S32 begin_offset, F32 x, F32 y, const LLColor4 &color, HAlign halign, VAlign valign, U8 style, ShadowType shadow, S32 max_bytes, S32 max_pixels, F32* right_x, bool use_ellipses, bool use_color) const
+S32 LLFontGL::renderUTF8(std::string_view text, S32 begin_offset, F32 x, F32 y, const LLColor4 &color, HAlign halign, VAlign valign, U8 style, ShadowType shadow, S32 max_bytes, S32 max_pixels, F32* right_x, bool use_ellipses, bool use_color) const
 {
     return renderBytes(text, begin_offset, x, y, color, halign, valign, style, shadow, max_bytes, max_pixels, right_x, use_ellipses, use_color);
 }
 
-S32 LLFontGL::renderUTF8(const std::string &text, S32 begin_offset, S32 x, S32 y, const LLColor4 &color) const
+S32 LLFontGL::renderUTF8(std::string_view text, S32 begin_offset, S32 x, S32 y, const LLColor4 &color) const
 {
     return renderUTF8(text, begin_offset, (F32)x, (F32)y, color, LEFT, BASELINE, NORMAL, NO_SHADOW);
 }
 
-S32 LLFontGL::renderUTF8(const std::string &text, S32 begin_offset, S32 x, S32 y, const LLColor4 &color, HAlign halign, VAlign valign, U8 style, ShadowType shadow) const
+S32 LLFontGL::renderUTF8(std::string_view text, S32 begin_offset, S32 x, S32 y, const LLColor4 &color, HAlign halign, VAlign valign, U8 style, ShadowType shadow) const
 {
     return renderUTF8(text, begin_offset, (F32)x, (F32)y, color, halign, valign, style, shadow);
 }
@@ -1869,6 +1898,22 @@ std::vector<LLFontRegistry::FamilyInfo> LLFontGL::getAvailableFamilies(
     return sFontRegistry->getAvailableFamilies(filter);
 }
 
+// static
+std::vector<std::string> LLFontGL::getDeclaredFontNames()
+{
+    if (!sFontRegistry)
+        return {};
+    return sFontRegistry->getDeclaredFontNames();
+}
+
+// static
+std::vector<std::string> LLFontGL::getDeclaredSizeNames()
+{
+    if (!sFontRegistry)
+        return {};
+    return sFontRegistry->getDeclaredSizeNames();
+}
+
 //static
 void LLFontGL::destroyAllGL()
 {
@@ -2041,6 +2086,46 @@ LLFontGL* LLFontGL::getFontSansSerifBold()
 {
     static LLFontGL* fontp = getFont(LLFontDescriptor("SansSerif","Medium",BOLD));
     return fontp;
+}
+
+const LLFontGL* LLFontGL::faceFor(U8 style) const
+{
+    // Only the bits this face does not carry are worth asking about.
+    if (!mFontFreetype || !sFontRegistry)
+    {
+        return this;
+    }
+    const U8 want = (style | mFontDescriptor.getStyle()) & (BOLD | ITALIC) & ~mFontFreetype->getStyle();
+    if (!want)
+    {
+        return this;
+    }
+    const LLFontGL*& kept = mFaces[want];
+    if (!kept)
+    {
+        kept = this;
+        LLFontDescriptor desc(mFontDescriptor);
+        desc.setStyle(mFontDescriptor.getStyle() | want);
+        // The registry answers with the nearest face it has, which with
+        // nothing wired up for the style is this face again under another
+        // name. Only one carrying a bit this one lacks is better; what it
+        // lacks in turn it synthesizes itself, so each hop asks for less.
+        const LLFontGL* other = sFontRegistry->getFont(desc);
+        if (other && other != this && other->mFontFreetype
+            && (other->mFontFreetype->getStyle() & want))
+        {
+            kept = other;
+        }
+    }
+    return kept;
+}
+
+void LLFontGL::forgetFaces()
+{
+    for (const LLFontGL*& face : mFaces)
+    {
+        face = nullptr;
+    }
 }
 
 //static

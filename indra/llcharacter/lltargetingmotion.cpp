@@ -103,11 +103,11 @@ bool LLTargetingMotion::onActivate()
 //-----------------------------------------------------------------------------
 bool LLTargetingMotion::onUpdate(F32 time, U8* joint_mask)
 {
-    LL_PROFILE_ZONE_SCOPED;
+    LL_PROFILE_ZONE_SCOPED_CATEGORY_AVATAR;
     F32 slerp_amt = LLSmoothInterpolation::getInterpolant(TORSO_TARGET_HALF_LIFE);
 
     LLVector3 target;
-    LLVector3* lookAtPoint = (LLVector3*)mCharacter->getAnimationData("LookAtPoint");
+    LLVector3* lookAtPoint = (LLVector3*)mCharacter->getAnimationData(LLCharacter::ANIM_CHANNEL_LOOK_AT_POINT);
 
     bool result = true;
 

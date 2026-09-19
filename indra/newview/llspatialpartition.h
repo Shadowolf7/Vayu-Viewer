@@ -66,7 +66,6 @@ void pushVerts(LLFace* face);
 */
 class alignas(16) LLDrawInfo final : public LLRefCount
 {
-    LL_ALIGN_NEW;
 protected:
     ~LLDrawInfo();
 
@@ -100,7 +99,7 @@ public:
     const LLMatrix4* mSpecularMapMatrix = nullptr;
     const LLMatrix4* mNormalMapMatrix = nullptr;
     const LLMatrix4* mTextureMatrix = nullptr;
-    const LLMatrix4* mModelMatrix = nullptr;
+    const LLMatrix4a* mModelMatrix = nullptr;
 
     LLPointer<LLVOAvatar> mAvatar = nullptr;
     // Owning, like mAvatar above: the mesh repo culls skins whose only
@@ -225,7 +224,6 @@ class alignas(16) LLSpatialGroup : public LLOcclusionCullingGroup
     friend class LLSpatialPartition;
     friend class LLOctreeStateCheck;
 
-    LL_ALIGN_NEW
 public:
 
     LLSpatialGroup(const LLSpatialGroup& rhs) = delete;
@@ -589,19 +587,19 @@ public:
     typedef LLDrawInfo** drawinfo_iterator;
     typedef LLDrawable** drawable_iterator;
 
-    // Helper function for taking advantage of _mm_prefetch when iterating over cull results
+    // Prefetches the vertex buffers of the draw infos about to be walked
     static inline void increment_iterator(LLCullResult::drawinfo_iterator& i, const LLCullResult::drawinfo_iterator& end)
     {
         ++i;
 
         if (i != end)
         {
-            _mm_prefetch((char*)(*i)->mVertexBuffer.get(), _MM_HINT_NTA);
+            alsimd::prefetch_nta((*i)->mVertexBuffer.get());
 
             auto* ni = i + 1;
             if (ni != end)
             {
-                _mm_prefetch((char*)*ni, _MM_HINT_NTA);
+                alsimd::prefetch_nta(*ni);
             }
         }
     }
@@ -784,7 +782,9 @@ class LLVolumeGeometryManager: public LLGeometryManager
     virtual void getGeometry(LLSpatialGroup* group);
     virtual void addGeometryCount(LLSpatialGroup* group, U32& vertex_count, U32& index_count);
     U32 genDrawInfo(LLSpatialGroup* group, U32 mask, LLFace** faces, U32 face_count, bool distance_sort = false, bool batch_textures = false, bool rigged = false, bool batch_gltf = false, bool batch_legacy = false);
-    void registerFace(LLSpatialGroup* group, LLFace* facep, U32 type);
+    // material_slot: the face's texture index is a material slot from the indexed
+    // accumulation in genDrawInfo, not a texture index
+    void registerFace(LLSpatialGroup* group, LLFace* facep, U32 type, bool material_slot);
 
 private:
     void allocateFaces(U32 pMaxFaceCount);

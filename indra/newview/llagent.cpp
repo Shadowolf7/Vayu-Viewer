@@ -1324,6 +1324,38 @@ void LLAgent::sendReliableMessage()
 }
 
 //-----------------------------------------------------------------------------
+// setHealth()
+//-----------------------------------------------------------------------------
+void LLAgent::setHealth(S32 health)
+{
+    if (health == mHealth)
+    {
+        return;
+    }
+
+    // A big enough drop is worth hearing. Read before the value moves, since
+    // the sound is about the size of the change.
+    if (mHealth > health)
+    {
+        static LLCachedControl<F32> reduction_threshold(gSavedSettings, "UISndHealthReductionThreshold");
+        if (mHealth > (health + reduction_threshold) && isAgentAvatarValid())
+        {
+            make_ui_sound(gAgentAvatarp->getSex() == SEX_FEMALE
+                              ? "UISndHealthReductionF"
+                              : "UISndHealthReductionM");
+        }
+    }
+
+    mHealth = health;
+    mHealthChangedSignal(mHealth);
+}
+
+boost::signals2::connection LLAgent::addHealthChangedCallback(const health_changed_signal_t::slot_type& cb)
+{
+    return mHealthChangedSignal.connect(cb);
+}
+
+//-----------------------------------------------------------------------------
 // getVelocity()
 //-----------------------------------------------------------------------------
 LLVector3 LLAgent::getVelocity() const
@@ -1473,7 +1505,7 @@ void LLAgent::resetAxes()
     mFrameAgent.resetAxes();
 }
 
-// Copied from LLCamera::setOriginAndLookAt
+// Copied from LLCoordFrame::lookAt
 // Look_at must be unit vector
 //-----------------------------------------------------------------------------
 // resetAxes()

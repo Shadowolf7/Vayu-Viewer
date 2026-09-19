@@ -34,8 +34,8 @@
 #include "llcharacter.h"
 #include "v3dmath.h"
 
-#define MIN_REQUIRED_PIXEL_AREA_WALK_ADJUST (20.f)
-#define MIN_REQUIRED_PIXEL_AREA_FLY_ADJUST (20.f)
+constexpr F32 MIN_REQUIRED_PIXEL_AREA_WALK_ADJUST = 20.f;
+constexpr F32 MIN_REQUIRED_PIXEL_AREA_FLY_ADJUST = 20.f;
 
 //-----------------------------------------------------------------------------
 // class LLKeyframeWalkMotion
@@ -94,6 +94,10 @@ public:
     // static constructor
     // all subclasses must implement such a function and register it
     static LLMotion *create(const LLUUID &id) { return new LLWalkAdjustMotion(id); }
+
+    // The playback rate that would put the planted foot on the ground, given
+    // how fast the avatar is going and how fast the foot is going with it.
+    static F32 speedMultiplier(F32 speed, F32 foot_speed, F32 min_multiplier, F32 max_multiplier);
 
 public:
     //-------------------------------------------------------------------------

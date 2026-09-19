@@ -601,8 +601,16 @@ void LLViewerTexture::updateClass()
     static LLCachedControl<F32> minimized_discard_time(gSavedSettings, "TextureDiscardMinimizedTime", 1.f);
     static LLCachedControl<F32> backgrounded_discard_time(gSavedSettings, "TextureDiscardBackgroundedTime", 60.f);
 
-    bool in_background = (gViewerWindow && !gViewerWindow->getWindow()->getVisible()) || !gFocusMgr.getAppHasFocus();
-    bool is_minimized  = gViewerWindow && gViewerWindow->getWindow()->getMinimized() && in_background;
+    static LLCachedControl<bool> discard_on_focus_loss(gSavedSettings, "AlchemyTextureDiscardOnFocusLoss", false);
+
+    // A window can be visible and unfocused at the same time, on a second
+    // monitor for instance, where purging its textures buys nothing and costs
+    // the user a full re-stream on the way back. Treat focus loss on its own
+    // as backgrounded only when asked to.
+    const bool has_focus = gFocusMgr.getAppHasFocus();
+    const bool is_hidden = gViewerWindow && !gViewerWindow->getWindow()->getVisible();
+    bool is_minimized  = gViewerWindow && gViewerWindow->getWindow()->getMinimized() && !has_focus;
+    bool in_background = is_hidden || is_minimized || (discard_on_focus_loss && !has_focus);
     if (in_background)
     {
         F32 discard_time = is_minimized ? minimized_discard_time : backgrounded_discard_time;
@@ -653,19 +661,10 @@ void LLViewerTexture::updateClass()
 //static
 U32Megabytes LLViewerTexture::getFreeSystemMemory()
 {
-    static LLFrameTimer timer;
-    static U32Megabytes physical_res = U32Megabytes(U32_MAX);
-
-    if (timer.getElapsedTimeF32() < MEMORY_CHECK_WAIT_TIME) //call this once per second.
-    {
-        return physical_res;
-    }
-
-    timer.reset();
-
-    LLMemory::updateMemoryInfo();
-    physical_res = LLMemory::getAvailableMemKB();
-    return physical_res;
+    LLMemory::updateFreeSystemMemory(); //samples at most once per second.
+    // the same figure the draw-distance factor budgets against, so the two
+    // escalate in the order intended whichever kind of memory runs out first
+    return U32Megabytes(LLMemory::getScarcestFreeMemMB());
 }
 
 S32Megabytes get_render_free_main_memory_treshold()
@@ -1146,7 +1145,7 @@ void LLViewerFetchedTexture::init(bool firstinit)
 
     if (firstinit)
     {
-        mInImageList = 0;
+        mListIndex = -1;
     }
 
     // Only set mIsMissingAsset true when we know for certain that the database
@@ -2114,6 +2113,18 @@ bool LLViewerFetchedTexture::updateFetch()
     S32 desired_discard = getDesiredDiscardLevel();
     F32 decode_priority = mMaxVirtualSize;
 
+    // what the running request reports, into the fields the texture console reads
+    auto apply_status = [this](const LLTextureFetch::FetchStatus& status)
+    {
+        mFetchState = status.mState;
+        mDownloadProgress = status.mDataProgress;
+        mRequestedDownloadPriority = status.mRequestedPriority;
+        mFetchPriority = status.mFetchPriority;
+        mFetchDeltaTime = status.mFetchDeltaTime;
+        mRequestDeltaTime = status.mRequestDeltaTime;
+        mCanUseHTTP = status.mCanUseHTTP;
+    };
+
     if (mIsFetching)
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_TEXTURE("vftuf - is fetching");
@@ -2123,8 +2134,10 @@ bool LLViewerFetchedTexture::updateFetch()
         if (mRawImage.notNull()) sRawCount--;
         if (mAuxRawImage.notNull()) sAuxCount--;
         // keep in mind that fetcher still might need raw image, don't modify original
+        LLTextureFetch::FetchStatus status;
+        status.mCanUseHTTP = mCanUseHTTP; // stands when the worker has no work to report on
         bool finished = LLAppViewer::getTextureFetch()->getRequestFinished(getID(), fetch_discard, mFetchState, mRawImage, mAuxRawImage,
-            mLastHttpGetStatus);
+            mLastHttpGetStatus, status);
         if (mRawImage.notNull()) sRawCount++;
         if (mAuxRawImage.notNull())
         {
@@ -2139,8 +2152,7 @@ bool LLViewerFetchedTexture::updateFetch()
         }
         else
         {
-            mFetchState = LLAppViewer::getTextureFetch()->getFetchState(mID, mDownloadProgress, mRequestedDownloadPriority,
-                mFetchPriority, mFetchDeltaTime, mRequestDeltaTime, mCanUseHTTP);
+            apply_status(status);
         }
 
         if (!processFetchResults(desired_discard, current_discard, fetch_discard, decode_priority))
@@ -2233,8 +2245,9 @@ bool LLViewerFetchedTexture::updateFetch()
         const bool allow_compression = LLImageGL::sCompressTextures
             && mGLTexturep->getAllowCompression()
             && LLImageGL::categoryAllowsCompression(mBoostLevel);
+        LLTextureFetch::FetchStatus status;
         fetch_request_response = LLAppViewer::getTextureFetch()->createRequest(mFTType, mUrl, getID(), getTargetHost(), decode_priority,
-            w, h, c, desired_discard, needsAux(), mCanUseHTTP, allow_compression);
+            w, h, c, desired_discard, needsAux(), mCanUseHTTP, allow_compression, status);
 
         if (fetch_request_response >= 0) // positive values and 0 are discard values
         {
@@ -2245,8 +2258,7 @@ bool LLViewerFetchedTexture::updateFetch()
             // in some cases createRequest can modify discard, as an example
             // bake textures are always at discard 0
             mRequestedDiscardLevel = llmin(desired_discard, fetch_request_response);
-            mFetchState = LLAppViewer::getTextureFetch()->getFetchState(mID, mDownloadProgress, mRequestedDownloadPriority,
-                mFetchPriority, mFetchDeltaTime, mRequestDeltaTime, mCanUseHTTP);
+            apply_status(status);
         }
         else if (fetch_request_response == LLTextureFetch::CREATE_REQUEST_ERROR_TRANSITION)
         {
@@ -2839,7 +2851,7 @@ void LLViewerFetchedTexture::forceImmediateUpdate()
         return;
     }
     //if already called forceImmediateUpdate()
-    if(mInImageList && mMaxVirtualSize == LLViewerFetchedTexture::sMaxVirtualSize)
+    if(isInImageList() && mMaxVirtualSize == LLViewerFetchedTexture::sMaxVirtualSize)
     {
         return;
     }

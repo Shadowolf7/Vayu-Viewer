@@ -67,6 +67,8 @@ class LLButton
 , public ll::ui::SearchableControl
 {
 public:
+    AL_VIEW_TYPE(LLButton, LLUICtrl);
+
     struct Params
     :   public LLInitParam::Block<Params, LLUICtrl::Params>
     {
@@ -157,6 +159,7 @@ protected:
 public:
 
     ~LLButton();
+
     // For backward compatability only
     typedef std::function<void(void*)> button_callback_t;
 
@@ -223,6 +226,8 @@ public:
     LLFontGL::HAlign getHAlign() const                      { return mHAlign; }
     void            setLeftHPad( S32 pad )                  { mLeftHPad = pad; }
     void            setRightHPad( S32 pad )                 { mRightHPad = pad; }
+    S32             getLeftHPad() const                     { return mLeftHPad; }
+    S32             getRightHPad() const                    { return mRightHPad; }
 
     void            setImageOverlayTopPad( S32 pad )            { mImageOverlayTopPad = pad; }
     S32             getImageOverlayTopPad() const               { return mImageOverlayTopPad; }
@@ -278,6 +283,7 @@ public:
     void            setImageDisabled(LLPointer<LLUIImage> image);
     void            setImageDisabledSelected(LLPointer<LLUIImage> image);
     void            setImageFlash(LLPointer<LLUIImage> image);
+    LLPointer<LLUIImage> getImageFlash() const { return mImageFlash; }
     void            setImagePressed(LLPointer<LLUIImage> image);
 
     void            setCommitOnReturn(bool commit) { mCommitOnReturn = commit; }

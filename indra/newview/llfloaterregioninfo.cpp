@@ -181,9 +181,10 @@ void unpack_request_params(
 }
 */
 
-class LLPanelRegionEnvironment : public LLPanelEnvironmentInfo
+class LLPanelRegionEnvironment final : public LLPanelEnvironmentInfo
 {
 public:
+    AL_VIEW_TYPE(LLPanelRegionEnvironment, LLPanelEnvironmentInfo);
                         LLPanelRegionEnvironment();
     virtual             ~LLPanelRegionEnvironment();
 
@@ -630,7 +631,9 @@ void LLFloaterRegionInfo::sRefreshFromRegion(LLViewerRegion* region)
 {
     if (region != gAgent.getRegion()) { return; }
 
-    LLFloaterRegionInfo* floater = LLFloaterReg::getTypedInstance<LLFloaterRegionInfo>("region_info");
+    // A floater that has never been opened cannot be visible, so there is
+    // nothing to refresh; getTypedInstance would build it from XUI to find that out.
+    LLFloaterRegionInfo* floater = LLFloaterReg::findTypedInstance<LLFloaterRegionInfo>("region_info");
     if (!floater) { return; }
 
     if (floater->getVisible() && region == gAgent.getRegion())
@@ -710,8 +713,7 @@ LLPanelRegionTerrainInfo* LLFloaterRegionInfo::getPanelRegionTerrain()
     }
 
     LLTabContainer* tab_container = floater->getChild<LLTabContainer>("region_panels");
-    LLPanelRegionTerrainInfo* panel =
-        dynamic_cast<LLPanelRegionTerrainInfo*>(tab_container->getChild<LLPanel>("Terrain"));
+    LLPanelRegionTerrainInfo* panel = tab_container->getChild<LLPanel>("Terrain")->as<LLPanelRegionTerrainInfo>();
     llassert(panel);
     return panel;
 }
@@ -826,7 +828,7 @@ void LLPanelRegionInfo::onChangeAnything()
 // Enables set button on change to line editor
 void LLPanelRegionInfo::onChangeText(LLLineEditor* caller, void* user_data)
 {
-    LLPanelRegionInfo* panel = dynamic_cast<LLPanelRegionInfo*>(caller->getParent());
+    LLPanelRegionInfo* panel = caller->getParentAs<LLPanelRegionInfo>();
     if(panel)
     {
         panel->enableButton("apply_btn");

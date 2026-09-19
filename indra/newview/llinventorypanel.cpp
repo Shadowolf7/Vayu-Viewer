@@ -49,6 +49,7 @@
 #include "llpreview.h"
 #include "llsidepanelinventory.h"
 #include "llstartup.h"
+#include "lltextbox.h"
 #include "lltrans.h"
 #include "llviewerassettype.h"
 #include "llviewerattachmenu.h"
@@ -563,15 +564,15 @@ void LLInventoryPanel::itemChanged(const LLUUID& item_id, U32 mask, const LLInve
     LLFolderViewModelItemInventory* viewmodel_item =
         static_cast<LLFolderViewModelItemInventory*>(view_item ? view_item->getViewModelItem() : NULL);
 
-    // LLFolderViewFolder is derived from LLFolderViewItem so dynamic_cast from item
-    // to folder is the fast way to get a folder without searching through folders tree.
+    // LLFolderViewFolder is derived from LLFolderViewItem so asking the item its
+    // kind is the fast way to get a folder without searching through folders tree.
     LLFolderViewFolder* view_folder = NULL;
 
     // Check requires as this item might have already been deleted
     // as a child of its deleted parent.
     if (model_item && view_item)
     {
-        view_folder = dynamic_cast<LLFolderViewFolder*>(view_item);
+        view_folder = view_item->as<LLFolderViewFolder>();
     }
 
     // if folder is not fully initialized (likely due to delayed load on idle)
@@ -620,8 +621,8 @@ void LLInventoryPanel::itemChanged(const LLUUID& item_id, U32 mask, const LLInve
         if (model_item && view_item && viewmodel_item)
         {
             const LLUUID idp = viewmodel_item->getUUID();
-            view_item->destroyView();
             removeItemID(idp);
+            view_item->destroyView();
         }
 
         LLInventoryObject const* objectp = mInventory->getObject(item_id);
@@ -637,7 +638,7 @@ void LLInventoryPanel::itemChanged(const LLUUID& item_id, U32 mask, const LLInve
 
         viewmodel_item =
             static_cast<LLFolderViewModelItemInventory*>(view_item ? view_item->getViewModelItem() : NULL);
-        view_folder = dynamic_cast<LLFolderViewFolder *>(view_item);
+        view_folder = ALViewType::as<LLFolderViewFolder>(view_item);
     }
 
     //////////////////////////////
@@ -727,6 +728,7 @@ void LLInventoryPanel::itemChanged(const LLUUID& item_id, U32 mask, const LLInve
                 LLFolderViewModelItem* old_parent_vmi = old_parent->getViewModelItem();
                 LLFolderViewModelItemInventory* viewmodel_folder = static_cast<LLFolderViewModelItemInventory*>(old_parent_vmi);
                 LLFolderViewFolder* new_parent = getFolderByID(model_item->getParentUUID());
+                const bool was_favorite = view_item->isFavorite();
 
                 if (old_parent != new_parent // Item has been moved.
                     && (new_parent != NULL || !isInRootContent(item_id, view_item)) // item is not or shouldn't be in root content
@@ -766,7 +768,7 @@ void LLInventoryPanel::itemChanged(const LLUUID& item_id, U32 mask, const LLInve
                         old_parent_vmi->dirtyDescendantsFilter();
                     }
 
-                    if (view_item->isFavorite())
+                    if (was_favorite)
                     {
                         if (old_parent)
                         {
@@ -1212,7 +1214,7 @@ LLFolderViewItem* LLInventoryPanel::buildViewsTree(const LLUUID& id,
         if (root_id == id)
         {
             // We insert an extra level that's seen by the UI but has no influence on the model
-            parent_folder = dynamic_cast<LLFolderViewFolder*>(folder_view_item);
+            parent_folder = ALViewType::as<LLFolderViewFolder>(folder_view_item);
             folder_view_item = NULL;
             allow_drop = mParams.allow_drop_on_root;
             create_root = true;
@@ -1377,7 +1379,7 @@ LLFolderViewItem* LLInventoryPanel::buildViewsTree(const LLUUID& id,
         const S32 MIN_ITEMS_PER_CALL = 500;
         const S32 starting_item_count = static_cast<S32>(mItemMap.size());
 
-        LLFolderViewFolder *parentp = dynamic_cast<LLFolderViewFolder*>(folder_view_item);
+        LLFolderViewFolder *parentp = folder_view_item->as<LLFolderViewFolder>();
         bool done = true;
 
         if(categories)
@@ -1476,7 +1478,7 @@ void LLInventoryPanel::openStartFolderOrMyInventory()
     // Find My Inventory folder and open it up by name
     for (LLView *child = mFolderRoot.get()->getFirstChild(); child; child = mFolderRoot.get()->findNextSibling(child))
     {
-        LLFolderViewFolder *fchild = dynamic_cast<LLFolderViewFolder*>(child);
+        LLFolderViewFolder *fchild = child->as<LLFolderViewFolder>();
         if (fchild
             && fchild->getViewModelItem()
             // Is this right? Name might be localized,
@@ -2041,7 +2043,7 @@ LLInventoryPanel* LLInventoryPanel::getActiveInventoryPanel(bool auto_open)
     LLFloaterReg::const_instance_list_t& inst_list = LLFloaterReg::getFloaterList("inventory");
     for (LLFloaterReg::const_instance_list_t::const_iterator iter = inst_list.begin(); iter != inst_list.end(); ++iter)
     {
-        LLFloaterSidePanelContainer* inventory_floater = dynamic_cast<LLFloaterSidePanelContainer*>(*iter);
+        LLFloaterSidePanelContainer* inventory_floater = (*iter)->as<LLFloaterSidePanelContainer>();
         inventory_panel = inventory_floater->findChild<LLSidepanelInventory>("main_panel");
 
         if (inventory_floater && inventory_panel && inventory_floater->getVisible())
@@ -2164,7 +2166,7 @@ void LLInventoryPanel::setSFViewAndOpenFolder(const LLInventoryPanel* panel, con
     LLFloaterReg::const_instance_list_t& inst_list = LLFloaterReg::getFloaterList("inventory");
     for (LLFloaterReg::const_instance_list_t::const_iterator iter = inst_list.begin(); iter != inst_list.end(); ++iter)
     {
-        LLFloaterSidePanelContainer* inventory_floater = dynamic_cast<LLFloaterSidePanelContainer*>(*iter);
+        LLFloaterSidePanelContainer* inventory_floater = (*iter)->as<LLFloaterSidePanelContainer>();
         LLSidepanelInventory* sidepanel_inventory = inventory_floater->findChild<LLSidepanelInventory>("main_panel");
 
         LLPanelMainInventory* main_inventory = sidepanel_inventory->getMainInventoryPanel();
@@ -2231,7 +2233,7 @@ LLFolderViewItem* LLInventoryPanel::getItemByID(const LLUUID& id)
 LLFolderViewFolder* LLInventoryPanel::getFolderByID(const LLUUID& id)
 {
     LLFolderViewItem* item = getItemByID(id);
-    return dynamic_cast<LLFolderViewFolder*>(item);
+    return ALViewType::as<LLFolderViewFolder>(item);
 }
 
 
@@ -2357,9 +2359,10 @@ bool LLInventoryPanel::isSelectionRemovable()
 /* Recent Inventory Panel related class                                 */
 /************************************************************************/
 static const LLRecentInventoryBridgeBuilder RECENT_ITEMS_BUILDER;
-class LLInventoryRecentItemsPanel : public LLInventoryPanel
+class LLInventoryRecentItemsPanel final : public LLInventoryPanel
 {
 public:
+    AL_VIEW_TYPE(LLInventoryRecentItemsPanel, LLInventoryPanel);
     struct Params : public LLInitParam::Block<Params, LLInventoryPanel::Params>
     {};
 
@@ -2388,9 +2391,10 @@ LLInventoryRecentItemsPanel::LLInventoryRecentItemsPanel( const Params& params)
 /* Favorites Inventory Panel related class                              */
 /************************************************************************/
 static const LLFavoritesInventoryBridgeBuilder FAVORITES_BUILDER;
-class LLInventoryFavoritesItemsPanel : public LLInventoryPanel
+class LLInventoryFavoritesItemsPanel final : public LLInventoryPanel
 {
 public:
+    AL_VIEW_TYPE(LLInventoryFavoritesItemsPanel, LLInventoryPanel);
     struct Params : public LLInitParam::Block<Params, LLInventoryPanel::Params>
     {};
 

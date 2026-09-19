@@ -81,13 +81,15 @@ typedef std::shared_ptr<LLGiveMoneyInfo> give_money_ptr;
 /// Class LLFloaterPay
 ///----------------------------------------------------------------------------
 
-class LLFloaterPay : public LLFloater
+class LLFloaterPay final : public LLFloater
 {
 public:
+    AL_VIEW_TYPE(LLFloaterPay, LLFloater);
+
     LLFloaterPay(const LLSD& key);
     virtual ~LLFloaterPay();
-    /*virtual*/ bool    postBuild();
-    /*virtual*/ void onClose(bool app_quitting);
+    /*virtual*/ bool    postBuild() override;
+    /*virtual*/ void onClose(bool app_quitting) override;
 
     void setCallback(money_callback callback) { mCallback = callback; }
 

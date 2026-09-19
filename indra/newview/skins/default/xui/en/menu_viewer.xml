@@ -2766,7 +2766,7 @@ function="World.EnvPreset"
           </menu_item_check>
           <menu_item_check
              label="Fullbright"
-             name="Rendering Type Glow">
+             name="Rendering Type Fullbright">
             <menu_item_check.on_check
              function="Advanced.CheckRenderType"
              parameter="fullbright" />
@@ -3206,14 +3206,6 @@ function="World.EnvPreset"
                  function="Advanced.ToggleConsole"
                  parameter="debug" />
             </menu_item_check>
-            <menu_item_call
-             label="Notifications Console"
-             name="Notifications"
-             shortcut="control|shift|5">
-              <menu_item_call.on_click
-               function="Floater.Toggle"
-               parameter="notifications_console" />
-            </menu_item_call>
             <menu_item_check
                label="Scene Statistics"
                name="Scene Statistics">
@@ -3443,7 +3435,7 @@ function="World.EnvPreset"
             </menu_item_call>
             <menu_item_call
              label="Force LLError, Message And Crash"
-             name="Force LLError And Crash">
+             name="Force LLError Message And Crash">
                 <menu_item_call.on_click
                  function="Advanced.ForceErrorLlerrorMsg" />
             </menu_item_call>
@@ -3514,6 +3506,24 @@ function="World.EnvPreset"
              name="Force an Exception Crash in a Thread">
                 <menu_item_call.on_click
                  function="Advanced.ForceExceptionThreadCrash" />
+            </menu_item_call>
+            <menu_item_call
+             label="Force Abort"
+             name="Force Abort">
+                <menu_item_call.on_click
+                 function="Advanced.ForceErrorAbort" />
+            </menu_item_call>
+            <menu_item_call
+             label="Force Stack Overflow"
+             name="Force Stack Overflow">
+                <menu_item_call.on_click
+                 function="Advanced.ForceErrorStackOverflow" />
+            </menu_item_call>
+            <menu_item_call
+             label="Force Terminate"
+             name="Force Terminate">
+                <menu_item_call.on_click
+                 function="Advanced.ForceErrorTerminate" />
             </menu_item_call>
             <menu_item_call
              label="Force Disconnect Viewer"
@@ -4254,34 +4264,6 @@ function="World.EnvPreset"
          label="Recorder"
          name="Recorder"
          tear_off="true">
-            <menu_item_call visible="false"
-             label="Start event recording"
-             name="Start event recording">
-	      <menu_item_call.on_visible
-		 function="displayViewerEventRecorderMenuItems" />
-                <menu_item_call.on_click
-                 function="Advanced.EventRecorder"
-                 parameter="start recording" />
-            </menu_item_call>
-            <menu_item_call visible="false"
-             label="Stop event recording"
-             name="Stop event recording">
-	      <menu_item_call.on_visible
-		 function="displayViewerEventRecorderMenuItems" />
-                <menu_item_call.on_click
-                 function="Advanced.EventRecorder"
-                 parameter="stop recording" />
-            </menu_item_call>
-            <menu_item_call visible="false"
-             label="Playback event recording"
-             name="Playback event recording">
-	      <menu_item_call.on_visible
-		 function="displayViewerEventRecorderMenuItems" />
-                <menu_item_call.on_click
-                 function="Advanced.EventRecorder"
-                 parameter="start playback" />
-            </menu_item_call>
-
             <menu_item_call
              label="Start Playback"
              name="Start Playback">
@@ -4570,11 +4552,11 @@ function="World.EnvPreset"
          name="XUI"
          tear_off="true">
             <menu_item_call
-             label="XUI Preview Tool"
-             name="UI Preview Tool">
+             label="XUI Studio"
+             name="XUI Studio">
              <menu_item_call.on_click
               function="Floater.Toggle"
-              parameter="ui_preview" />
+              parameter="xui_studio" />
             </menu_item_call>
             <menu_item_call
              label="Show Color settings"
@@ -4815,15 +4797,6 @@ function="World.EnvPreset"
                  parameter="ShowPointAt" />
                 <menu_item_check.on_click
                  function="Advanced.ToggleShowPointAt" />
-            </menu_item_check>
-            <menu_item_check
-             label="Debug Joint Updates"
-             name="Debug Joint Updates">
-                <menu_item_check.on_check
-                 function="Advanced.CheckDebugJointUpdates"
-                 parameter="DebugJointUpdates" />
-                <menu_item_check.on_click
-                 function="Advanced.ToggleDebugJointUpdates" />
             </menu_item_check>
             <menu_item_check
              label="Disable LOD"

@@ -229,7 +229,7 @@ namespace {
 
 struct GLTFPreviewModel
 {
-    GLTFPreviewModel(LLPointer<LLDrawInfo>& info, const LLMatrix4& mat)
+    GLTFPreviewModel(LLPointer<LLDrawInfo>& info, const LLMatrix4a& mat)
     : mDrawInfo(info)
     , mModelMatrix(mat)
     {
@@ -243,14 +243,14 @@ struct GLTFPreviewModel
         gGLLastMatrix = nullptr;
     }
     LLPointer<LLDrawInfo> mDrawInfo;
-    LLMatrix4 mModelMatrix; // Referenced by mDrawInfo
+    LLMatrix4a mModelMatrix; // Referenced by mDrawInfo
 };
 
 using PreviewSpherePart = std::unique_ptr<GLTFPreviewModel>;
 using PreviewSphere = std::vector<PreviewSpherePart>;
 
 // Like LLVolumeGeometryManager::registerFace but without batching or too-many-indices/vertices checking.
-PreviewSphere create_preview_sphere(LLPointer<LLFetchedGLTFMaterial>& material, const LLMatrix4& model_matrix)
+PreviewSphere create_preview_sphere(LLPointer<LLFetchedGLTFMaterial>& material, const LLMatrix4a& model_matrix)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_UI;
 
@@ -368,7 +368,7 @@ void set_preview_sphere_material(PreviewSphere& preview_sphere, LLPointer<LLFetc
     }
 }
 
-PreviewSphere& get_preview_sphere(LLPointer<LLFetchedGLTFMaterial>& material, const LLMatrix4& model_matrix)
+PreviewSphere& get_preview_sphere(LLPointer<LLFetchedGLTFMaterial>& material, const LLMatrix4a& model_matrix)
 {
     static PreviewSphere preview_sphere;
     if (preview_sphere.empty())
@@ -448,6 +448,9 @@ bool LLGLTFPreviewTexture::render()
 
     gPipeline.mReflectionMapManager.forceDefaultProbeAndUpdateUniforms();
 
+    // setPerspective makes the preview camera current; the UI draw this
+    // returns into wants the one it was using
+    const LLCamera saved_camera = LLViewerCamera::getCurrent();
     LLViewerCamera camera;
 
     // Calculate the object distance at which the object of a given radius will
@@ -459,8 +462,9 @@ bool LLGLTFPreviewTexture::render()
     // Negative coordinate shows the textures on the sphere right-side up, when
     // combined with the UV hacks in create_preview_sphere
     const LLVector3 object_position(0.0, -object_distance, 0.0);
-    LLMatrix4 object_transform;
-    object_transform.translate(object_position);
+    LLMatrix4a object_transform;
+    object_transform.setIdentity();
+    object_transform.setTranslation(object_position);
 
     // Set up camera and viewport
     const LLVector3 origin(0.0, 0.0, 0.0);
@@ -474,10 +478,10 @@ bool LLGLTFPreviewTexture::render()
     PreviewSphere& preview_sphere = get_preview_sphere(mGLTFMaterial, object_transform);
 
     gPipeline.setupHWLights();
-    glm::mat4 mat = get_current_modelview();
-    glm::vec4 transformed_light_dir(light_dir);
-    transformed_light_dir = mat * transformed_light_dir;
-    SetTemporarily<LLVector4> force_sun_direction_high_graphics(&gPipeline.mTransformedSunDir, LLVector4(transformed_light_dir));
+    LLVector4a light_dir_in, transformed_light_dir;
+    light_dir_in.loadua(light_dir.mV);
+    LLViewerCamera::getCurrent().getModelview().transform4(light_dir_in, transformed_light_dir);
+    SetTemporarily<LLVector4> force_sun_direction_high_graphics(&gPipeline.mTransformedSunDir, LLVector4(transformed_light_dir.getF32ptr()));
     // Override lights to ensure the sun is always shining from a certain direction (low graphics)
     // See also force_sun_direction_high_graphics and fixup_shader_constants
     {
@@ -567,6 +571,7 @@ bool LLGLTFPreviewTexture::render()
     gPipeline.setupHWLights();
     gPipeline.mReflectionMapManager.forceDefaultProbeAndUpdateUniforms(false);
     gSavedSettings.set<S32>("RenderLocalLightCount", old_local_light_count);
+    LLViewerCamera::setCurrent(saved_camera);
 
     return true;
 }

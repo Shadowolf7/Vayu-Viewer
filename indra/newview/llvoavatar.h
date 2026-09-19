@@ -91,7 +91,6 @@ class LLVOAvatar :
     public LLViewerObject,
     public boost::signals2::trackable
 {
-    LL_ALIGN_NEW;
     LOG_CLASS(LLVOAvatar);
 
 public:
@@ -243,7 +242,7 @@ public:
     /*virtual*/ F32             getPixelArea() const;
     /*virtual*/ LLVector3d      getPosGlobalFromAgent(const LLVector3 &position);
     /*virtual*/ LLVector3       getPosAgentFromGlobal(const LLVector3d &position);
-    virtual void                updateVisualParams();
+    virtual bool                updateVisualParams();
 
 /**                    Inherited
  **                                                                            **
@@ -290,6 +289,7 @@ public:
     virtual void    idleUpdateAppearanceAnimation();
     void            idleUpdateLipSync(bool voice_enabled);
     void            idleUpdateLoadingEffect();
+    void            startCloudParticles();
     void            idleUpdateWindEffect();
     void            idleUpdateNameTag(const LLVector3& root_pos_last);
     void            idleUpdateNameTagText(bool new_name);
@@ -373,13 +373,16 @@ public:
     static bool     sShowAnimationDebug; // show animation debug info
     static bool     sShowCollisionVolumes;  // show skeletal collision volumes
     static bool     sVisibleInFirstPerson;
+    // bumped whenever the mute or friend list changes; the per-avatar caches
+    // of membership are renewed against them
+    static U32      sMuteListGeneration;
+    static U32      sBuddyListGeneration;
     static S32      sNumLODChangesThisFrame;
     static S32      sNumVisibleChatBubbles;
     static bool     sDebugInvisible;
     static bool     sShowAttachmentPoints;
     static F32      sLODFactor; // user-settable LOD factor
     static F32      sPhysicsLODFactor; // user-settable physics LOD factor
-    static bool     sJointDebug; // output total number of joints being touched for each avatar
 
     static LLPointer<LLViewerTexture>  sCloudTexture;
 
@@ -489,6 +492,8 @@ public:
     LLVector3           mTargetRootToHeadOffset;
 
     S32                 mLastSkeletonSerialNum;
+    // resolved once, since the parameters are added when the avatar loads
+    LLVisualParam*      mMaleParam = nullptr;
 
 
 /**                    Skeleton
@@ -504,6 +509,7 @@ public:
     U32         renderImpostor(LLColor4U color = LLColor4U(255,255,255,255), S32 diffuse_channel = 0);
     bool        isVisuallyMuted();
     bool        isInMuteList() const;
+    bool        isStaffUser() const;
 // [RLVa:KB] - Checked: RLVa-2.2 (@setcam_avdist)
     bool        isRlvSilhouette() const;
 // [/RLVa:KB]
@@ -579,6 +585,12 @@ private:
     F32         mLastSkinTime; //value of gFrameTimeSeconds at last skin update
 
     S32         mUpdatePeriod;
+    // An avatar wearing animesh is asked both of these once for itself and
+    // once more per attachment, every frame. Both answers hold for the frame
+    // they were worked out in.
+    S32         mUpdatePeriodFrame;
+    S32         mNeedsUpdateFrame;
+    bool        mNeedsUpdate;
     S32         mNumInitFaces; //number of faces generated when creating the avatar drawable, does not inculde splitted faces due to long vertex buffer.
 
     // profile handle
@@ -594,9 +606,12 @@ private:
     F32 mCPURenderTime = 0.f;
 
     mutable bool        mCachedInMuteList;
-    mutable F64         mCachedMuteListUpdateTime;
+    mutable U32         mCachedMuteListGeneration = U32_MAX;
     mutable bool        mCachedInBuddyList = false;
-    mutable F64         mCachedBuddyListUpdateTime = 0.0;
+    mutable U32         mCachedBuddyListGeneration = U32_MAX;
+    // final once the name is known; an avatar's staff status never changes
+    mutable bool        mIsStaffUser = false;
+    mutable bool        mStaffUserKnown = false;
 // [RLVa:KB] - Checked: RLVa-2.2 (@setcam_avdist)
     mutable bool        mCachedIsRlvSilhouette = false;
     mutable F64         mCachedRlvSilhouetteUpdateTime = 0.f;
@@ -726,6 +741,9 @@ private:
 public:
     virtual bool isImpostor();
     bool        shouldImpostor(const F32 rank_factor = 1.0);
+    // the rank half of shouldImpostor, for callers that have already
+    // established this avatar is neither self nor visually muted
+    bool        shouldImpostorByRank(const F32 rank_factor = 1.0) const;
     bool        needsImpostorUpdate() const;
     const LLVector3& getImpostorOffset() const;
     const LLVector2& getImpostorDim() const;
@@ -1036,6 +1054,10 @@ private:
     //--------------------------------------------------------------------
 public:
     bool            isVisible() const;
+    // Whether what this avatar draws is inside the view this frame. The
+    // same as isVisible() for an avatar; an animated object answers for its
+    // volume, since it never draws anything of its own.
+    virtual bool    isInView() const;
     virtual bool    shouldRenderRigged() const;
     void            setVisibilityRank(U32 rank);
     U32             getVisibilityRank() const { return mVisibilityRank; }
@@ -1249,7 +1271,8 @@ private:
     F32             mNameAlpha;
     S32             mRenderGroupTitles;
     LLColor4        mNameTagColor;
-    std::string     mDistanceString;
+    // what the distance line last showed, in the whole metres it prints
+    S32             mDistanceMetres;
 
     //--------------------------------------------------------------------
     // Display the name (then optionally fade it out)

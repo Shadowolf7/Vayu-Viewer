@@ -91,6 +91,8 @@
 #include "rlvlocks.h"
 // [/RLVa:KB]
 const std::string HELP_LSL_PORTAL_TOPIC = "LSL_Portal";
+const std::string HELP_LUA_PORTAL_URL = "https://wiki.secondlife.com/wiki/Lua_Alpha";
+const std::string HELP_LUA_LIBRARY_URL = "https://luau.org/library";
 
 const std::string DEFAULT_SCRIPT_NAME = "New Script"; // *TODO:Translate?
 const std::string DEFAULT_SCRIPT_DESC = "(No Description)"; // *TODO:Translate?
@@ -98,6 +100,36 @@ const std::string DEFAULT_SCRIPT_DESC = "(No Description)"; // *TODO:Translate?
 // Description and header information
 const S32 MAX_HISTORY_COUNT = 10;
 const F32 LIVE_HELP_REFRESH_TIME = 1.f;
+
+static bool is_luau_library_symbol(const std::string& symbol)
+{
+    return symbol.rfind("bit32.", 0) == 0
+        || symbol.rfind("buffer.", 0) == 0
+        || symbol.rfind("coroutine.", 0) == 0
+        || symbol.rfind("debug.", 0) == 0
+        || symbol.rfind("math.", 0) == 0
+        || symbol.rfind("os.", 0) == 0
+        || symbol.rfind("string.", 0) == 0
+        || symbol.rfind("table.", 0) == 0
+        || symbol.rfind("utf8.", 0) == 0;
+}
+
+static std::string build_script_help_url(bool luau_language, const std::string& help_string)
+{
+    if (!luau_language || help_string.rfind("ll.", 0) == 0)
+    {
+        LLUIString url_string = gSavedSettings.getString("LSLHelpURL");
+        std::string page = help_string;
+        if (luau_language)
+        {
+            page.erase(2, 1); // Lua's ll.GetOwner maps to LSL's llGetOwner.
+        }
+        url_string.setArg("[LSL_STRING]", page.empty() ? HELP_LSL_PORTAL_TOPIC : page);
+        return url_string.getString();
+    }
+
+    return is_luau_library_symbol(help_string) ? HELP_LUA_LIBRARY_URL : HELP_LUA_PORTAL_URL;
+}
 
 static bool have_script_upload_cap(LLUUID& object_id)
 {
@@ -174,9 +206,10 @@ bool LLLiveLSLFile::loadFile()
 /// ---------------------------------------------------------------------------
 /// LLFloaterScriptSearch
 /// ---------------------------------------------------------------------------
-class LLFloaterScriptSearch : public LLFloater
+class LLFloaterScriptSearch final : public LLFloater
 {
 public:
+    AL_VIEW_TYPE(LLFloaterScriptSearch, LLFloater);
     LLFloaterScriptSearch(LLScriptEdCore* editor_core);
     ~LLFloaterScriptSearch();
 
@@ -224,7 +257,7 @@ LLFloaterScriptSearch::LLFloaterScriptSearch(LLScriptEdCore* editor_core)
     LLView* viewp = (LLView*)editor_core;
     while(viewp)
     {
-        LLFloater* floaterp = dynamic_cast<LLFloater*>(viewp);
+        LLFloater* floaterp = viewp->as<LLFloater>();
         if (floaterp)
         {
             floaterp->addDependentFloater(this);
@@ -912,13 +945,9 @@ void LLScriptEdCore::setHelpPage(const std::string& help_string)
     LLComboBox* history_combo = help_floater->getChild<LLComboBox>("history_combo");
     if (!history_combo) return;
 
-    LLUIString url_string = gSavedSettings.getString("LSLHelpURL");
-
-    url_string.setArg("[LSL_STRING]", help_string.empty() ? HELP_LSL_PORTAL_TOPIC : help_string);
-
     addHelpItemToHistory(help_string);
 
-    web_browser->navigateTo(url_string);
+    web_browser->navigateTo(build_script_help_url(mEditor->getIsLuauLanguage(), help_string));
 
 }
 
@@ -1022,7 +1051,7 @@ void LLScriptEdCore::onBtnDynamicHelp()
     {
         live_help_floater = new LLFloater(LLSD());
         live_help_floater->buildFromFile("floater_lsl_guide.xml");
-        LLFloater* parent = dynamic_cast<LLFloater*>(getParent());
+        LLFloater* parent = getParentAs<LLFloater>();
         llassert(parent);
         if (parent)
             parent->addDependentFloater(live_help_floater, true);
@@ -1052,6 +1081,10 @@ void LLScriptEdCore::onBtnDynamicHelp()
         mLiveHelpHandle = live_help_floater->getHandle();
         mLiveHelpHistorySize = 0;
     }
+
+    const bool luau_language = mEditor->getIsLuauLanguage();
+    live_help_floater->setTitle(luau_language ? "LUA REFERENCE" : "LSL REFERENCE");
+    live_help_floater->setHelpTopic(luau_language ? "Lua_Alpha" : "lsl_reference");
 
     bool visible = true;
     bool take_focus = true;
@@ -1126,9 +1159,7 @@ void LLScriptEdCore::onHelpComboCommit(LLUICtrl* ctrl, void* userdata)
         corep->addHelpItemToHistory(help_string);
 
         LLMediaCtrl* web_browser = live_help_floater->getChild<LLMediaCtrl>("lsl_guide_html");
-        LLUIString url_string = gSavedSettings.getString("LSLHelpURL");
-        url_string.setArg("[LSL_STRING]", help_string);
-        web_browser->navigateTo(url_string);
+        web_browser->navigateTo(build_script_help_url(corep->mEditor->getIsLuauLanguage(), help_string));
     }
 }
 

@@ -954,7 +954,7 @@ private:
      */
     void done()
     {
-        LLInventoryPanel* active_panel = dynamic_cast<LLInventoryPanel*>(mActivePanel.get());
+        LLInventoryPanel* active_panel = ALViewType::as<LLInventoryPanel>(mActivePanel.get());
 
         // if selection is not changed since watch started lets hightlight new items.
         if (active_panel && !isSelectionChanged())
@@ -1061,7 +1061,7 @@ private:
 
 void LLViewerInventoryMoveObserver::changed(U32 mask)
 {
-    LLInventoryPanel* active_panel = dynamic_cast<LLInventoryPanel*>(mActivePanel.get());
+    LLInventoryPanel* active_panel = ALViewType::as<LLInventoryPanel>(mActivePanel.get());
 
     if (NULL == active_panel)
     {
@@ -4359,10 +4359,7 @@ void process_health_message(LLMessageSystem *mesgsys, void **user_data)
 
     mesgsys->getF32Fast(_PREHASH_HealthData, _PREHASH_Health, health);
 
-    if (gStatusBar)
-    {
-        gStatusBar->setHealth((S32)health);
-    }
+    gAgent.setHealth((S32)health);
 }
 
 
@@ -5372,10 +5369,12 @@ bool handle_teleport_access_blocked(LLSD& llsdBlock, const std::string & notific
     {
         U8 regionAccess = static_cast<U8>(llsdBlock["_region_access"].asInteger());
         std::string regionMaturity = LLViewerRegion::accessToString(regionAccess);
+        llsdBlock["REGIONMATURITY_CAP"] = regionMaturity;
         LLStringUtil::toLower(regionMaturity);
         llsdBlock["REGIONMATURITY"] = regionMaturity;
 
         LLNotificationPtr tp_failure_notification;
+        bool skip_notif = false;
         std::string notifySuffix;
 
         if (notificationID == std::string("TeleportEntryAccessBlocked"))
@@ -5445,21 +5444,39 @@ bool handle_teleport_access_blocked(LLSD& llsdBlock, const std::string & notific
             }
         }       // End of special handling for "TeleportEntryAccessBlocked"
         else
-        {   // Normal case, no message munging
-            gAgent.clearTeleportRequest();
-            if (LLNotifications::getInstance()->templateExists(notificationID))
+        {
+            if (notificationID == "RegionTPAccessBlocked")
             {
-                tp_failure_notification = LLNotificationsUtil::add(notificationID, llsdBlock, llsdBlock);
+                bool can_change_maturity = (regionAccess == SIM_ACCESS_MATURE) ? gAgent.isMature() : gAgent.isAdult();
+                if (can_change_maturity)
+                {
+                    LLFloaterReg::showInstance("maturity_dialog", LLSD((S32)regionAccess));
+                    skip_notif = true;
+                }
+                else
+                {
+                    gAgent.clearTeleportRequest();
+                    tp_failure_notification = LLNotificationsUtil::add("RegionTPAccessBlocked_NotifyAdultsOnly", llsdBlock);
+                }
             }
             else
             {
-                llsdBlock["MESSAGE"] = defaultMessage;
-                tp_failure_notification = LLNotificationsUtil::add("GenericAlertOK", llsdBlock);
+                // Normal case, no message munging
+                gAgent.clearTeleportRequest();
+                if (LLNotifications::getInstance()->templateExists(notificationID))
+                {
+                    tp_failure_notification = LLNotificationsUtil::add(notificationID, llsdBlock, llsdBlock);
+                }
+                else
+                {
+                    llsdBlock["MESSAGE"] = defaultMessage;
+                    tp_failure_notification = LLNotificationsUtil::add("GenericAlertOK", llsdBlock);
+                }
             }
             returnValue = true;
         }
 
-        if ((tp_failure_notification == NULL) || tp_failure_notification->isIgnored())
+        if (((tp_failure_notification == NULL) || tp_failure_notification->isIgnored()) && !skip_notif)
         {
             // Given a simple notification if no tp_failure_notification is set or it is ignore
             LLNotificationsUtil::add(notificationID + notifySuffix, llsdBlock);
@@ -5592,7 +5609,7 @@ bool attempt_standard_notification(LLMessageSystem* msgsystem)
                 LLSD params;
                 params["NAME"] = llsdBlock["NAME"];
                 params["SECONDS"] = (LLSD::Integer)seconds;
-                LLFloaterRegionRestarting* restarting_floater = dynamic_cast<LLFloaterRegionRestarting*>(LLFloaterReg::showInstance("region_restarting", params));
+                LLFloaterRegionRestarting* restarting_floater = LLFloaterReg::showTypedInstance<LLFloaterRegionRestarting>("region_restarting", params);
                 if(restarting_floater)
                 {
                     restarting_floater->center();

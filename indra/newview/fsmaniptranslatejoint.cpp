@@ -457,7 +457,7 @@ bool FSManipTranslateJoint::handleHover(S32 x, S32 y, MASK mask)
 
     LLVector3d clamped_relative_move = axis_magnitude * axis_d; // scalar multiply
     LLVector3 clamped_relative_move_f = (F32)axis_magnitude * axis_f; // scalar multiply
-    auto* poser = dynamic_cast<FSFloaterPoser*>(LLFloaterReg::findInstance("fs_poser"));
+    auto* poser = LLFloaterReg::findTypedInstance<FSFloaterPoser>("fs_poser");
     if (poser && mJoint)
         poser->updatePosedBones(mJoint->getName(), LLQuaternion(), getChangeInPosition(clamped_relative_move_f), LLVector3::zero);
 
@@ -512,8 +512,8 @@ void FSManipTranslateJoint::highlightManipulators(S32 x, S32 y)
     if (!isAvatarJointSafeToUse())
         return;
 
-    LLMatrix4 projMatrix = LLViewerCamera::getInstance()->getProjection();
-    LLMatrix4 modelView = LLViewerCamera::getInstance()->getModelview();
+    LLMatrix4 projMatrix = LLViewerCamera::getInstance()->getForwardZProjection().toMatrix4();
+    LLMatrix4 modelView = LLViewerCamera::getInstance()->frameModelview().toMatrix4();
 
     LLVector3 object_position = mJoint->getWorldPosition();
 

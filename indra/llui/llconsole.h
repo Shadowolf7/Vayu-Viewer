@@ -34,9 +34,10 @@
 
 class LLSD;
 
-class LLConsole : public LLFixedBuffer, public LLUICtrl, public LLInstanceTracker<LLConsole>
+class LLConsole final : public LLFixedBuffer, public LLUICtrl, public LLInstanceTracker<LLConsole>
 {
 public:
+    AL_VIEW_TYPE(LLConsole, LLUICtrl);
 
     typedef enum e_font_size
     {
@@ -132,14 +133,14 @@ public:
     // each line lasts this long after being added
     void            setLinePersistTime(F32 seconds);
 
-    void            reshape(S32 width, S32 height, bool called_from_parent = true);
+    void            reshape(S32 width, S32 height, bool called_from_parent = true) override;
 
     // -1 = monospace, 0 means small, font size = 1 means big
     void            setFontSize(S32 size_index);
 
 
     // Overrides
-    /*virtual*/ void    draw();
+    /*virtual*/ void    draw() override;
 private:
     void        update();
 

@@ -178,11 +178,27 @@ public:
     static void popMatrix();
     static void loadIdentity();
     static void translate(F32 x, F32 y, F32 z = 0.0f);
+    // Everything under this draws, clips and measures at this scale, about
+    // the origin it is pushed at: what is under it grows where it already
+    // is, the way it would under a matrix stack. The renderer has always
+    // been able to scale the UI; what this adds is the shadow of it that
+    // clipping, text and badges read.
+    static void scale(F32 x, F32 y);
+
+    // Where a local rect lands on screen under the UI transform, which is
+    // (local + offset) * scale: the composition the renderer applies to
+    // every UI vertex. Everything that draws or clips in screen coordinates
+    // under a reset matrix asks this, rather than each writing it out and
+    // one of them forgetting a term -- which is how a scale used to move
+    // the drawing and leave the scissor behind.
+    static LLRect toScreen(const LLRect& local);
+    static void toScreen(F32 local_x, F32 local_y, F32& x, F32& y);
 
     static void setLineWidth(F32 width);
 
     LLPointer<LLUIImage> getUIImageByID(const LLUUID& image_id, S32 priority = 0);
     LLPointer<LLUIImage> getUIImage(std::string_view name, S32 priority = 0);
+    bool hasUIImage(std::string_view name) const;
 
 protected:
     // since LLRender2D has no control of image provider's lifecycle
@@ -203,6 +219,12 @@ public:
     virtual LLPointer<LLUIImage> getUIImage(std::string_view name, S32 priority) = 0;
     virtual LLPointer<LLUIImage> getUIImageByID(const LLUUID& id, S32 priority) = 0;
     virtual void cleanUp() = 0;
+
+    // Whether a name is one the provider knows, asked without loading
+    // anything: getUIImage treats an unknown name as a file to fetch, so
+    // it cannot answer this. A provider that cannot say answers yes, and
+    // a caller checking a name for a mistake finds none.
+    virtual bool hasUIImage(std::string_view name) const { return true; }
 
     // to notify holders when pointer gets deleted
     typedef void(*callback_t)();

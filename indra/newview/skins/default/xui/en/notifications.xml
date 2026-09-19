@@ -5836,6 +5836,17 @@ You won't receive any more notifications that you're about to visit a region wit
 
   <notification
    icon="alertmodal.tga"
+   name="RegionTPAccessBlocked_NotifyAdultsOnly"
+   type="alertmodal">
+    <tag>fail</tag>
+    The region you are trying to visit is rated [REGIONMATURITY_CAP], which is not available on your account type.
+    <usetemplate
+     name="okbutton"
+     yestext="OK"/>
+  </notification>
+
+  <notification
+   icon="alertmodal.tga"
    name="LandClaimAccessBlocked"
    type="alertmodal">
     The land you're trying to claim has a maturity rating exceeding your current preferences.  You can change your preferences using Me &gt; Preferences &gt; General.
@@ -13464,6 +13475,20 @@ Always Run disabled.
 	 Irrevocably destroying object. Hope you didn't need that.
  </notification>
 
+ <notification
+  icon="alertmodal.tga"
+  name="AlchemyCrashReportConsent"
+  type="alertmodal">
+Send crash reports to the Alchemy developers?
+
+A report carries where the viewer crashed, its log, your settings and your avatar name. It goes to Sentry, where only the Alchemy developers can see it, and never without this permission. Preferences can change the answer later.
+    <tag>confirm</tag>
+    <usetemplate
+     name="okcancelbuttons"
+     notext="Don't send"
+     yestext="Send reports"/>
+ </notification>
+
   <notification
    icon="alertmodal.tga"
    name="SceneExplorerFullRegion"
@@ -13556,5 +13581,35 @@ Incoming instant messages from anyone who is not your friend will now be answere
      ignoretext="I change my status to autorespond mode for non-friends"
      name="okignore"
      yestext="OK"/>
+  </notification>
+
+  <notification
+   icon="alertmodal.tga"
+   name="XUIStudioRemoveOrphans"
+   type="alertmodal">
+Take every orphaned value out of every file of [LANG]?
+
+An orphan is a value the language writes for something the base no longer has: an element whose name is gone, an element with no name, or an attribute the base's element does not carry. The merge applies none of them.
+
+This writes the files and cannot be undone from here.
+    <tag>confirm</tag>
+    <usetemplate
+     name="okcancelbuttons"
+     notext="Cancel"
+     yestext="Remove"/>
+  </notification>
+
+  <notification
+   icon="alertmodal.tga"
+   name="XUIStudioCloseDocument"
+   type="alertmodal">
+[FILE] has edits that are not saved.
+Save them before letting it go?
+    <tag>confirm</tag>
+    <usetemplate
+     canceltext="Cancel"
+     name="yesnocancelbuttons"
+     notext="Don&apos;t Save"
+     yestext="Save"/>
   </notification>
 </notifications>

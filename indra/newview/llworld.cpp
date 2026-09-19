@@ -58,6 +58,8 @@
 #include "pipeline.h"
 #include "llappviewer.h"        // for do_disconnect()
 #include "llscenemonitor.h"
+#include <fmt/format.h>
+
 #include <deque>
 #include <queue>
 #include <map>
@@ -116,6 +118,7 @@ LLWorld::LLWorld() :
 void LLWorld::resetClass()
 {
     mHoleWaterObjects.clear();
+    mWaterObjectsDirty = false;
     gObjectList.destroy();
     gSky.cleanup(); // references an object
     for(region_list_t::iterator region_it = mRegionList.begin(); region_it != mRegionList.end(); )
@@ -141,6 +144,7 @@ void LLWorld::resetClass()
 
 LLViewerRegion* LLWorld::addRegion(const U64 &region_handle, const LLHost &host)
 {
+    LL_PROFILE_ZONE_SCOPED_CATEGORY_NETWORK;
     LL_INFOS() << "Add region with handle: " << region_handle << " on host " << host << LL_ENDL;
     LLViewerRegion *regionp = getRegionFromHandle(region_handle);
     std::string seedUrl;
@@ -243,7 +247,7 @@ LLViewerRegion* LLWorld::addRegion(const U64 &region_handle, const LLHost &host)
         }
     }
 
-    updateWaterObjects();
+    requestWaterObjectsUpdate();
 
     return regionp;
 }
@@ -251,6 +255,7 @@ LLViewerRegion* LLWorld::addRegion(const U64 &region_handle, const LLHost &host)
 
 void LLWorld::removeRegion(const LLHost &host)
 {
+    LL_PROFILE_ZONE_SCOPED_CATEGORY_NETWORK;
     F32 x, y;
 
     LLViewerRegion *regionp = getRegion(host);
@@ -297,7 +302,7 @@ void LLWorld::removeRegion(const LLHost &host)
 
     mRegionRemovedSignal(regionp);
 
-    updateWaterObjects();
+    requestWaterObjectsUpdate();
 
     //double check all objects of this region are removed.
     gObjectList.clearAllMapObjectsInRegion(regionp) ;
@@ -362,17 +367,28 @@ LLVector3d  LLWorld::clipToVisibleRegions(const LLVector3d &start_pos, const LLV
     LLVector3 region_coord = regionp->getPosRegionFromGlobal(end_pos);
     F64 clip_factor = 1.0;
     F32 region_width = regionp->getWidth();
+
+    // How far back along the travel to walk to land on the border. The axis that left the region
+    // is not always the axis that moved: a position that was already outside on one axis and is
+    // travelling purely along the other divides by a zero delta here, and the resulting infinity
+    // survives llclamp as a NaN that ends up in the object's position and then in the octree.
+    // With no motion on the offending axis there is no crossing to solve for, so hold still.
+    auto clip_along = [](F64 excess, F64 travel) -> F64
+    {
+        return (travel > 0.0) ? (excess / travel) : 0.0;
+    };
+
     if (region_coord.mV[VX] < 0.f)
     {
         if (region_coord.mV[VY] < region_coord.mV[VX])
         {
             // clip along y -
-            clip_factor = -(region_coord.mV[VY] / delta_pos_abs.mdV[VY]);
+            clip_factor = clip_along(-region_coord.mV[VY], delta_pos_abs.mdV[VY]);
         }
         else
         {
             // clip along x -
-            clip_factor = -(region_coord.mV[VX] / delta_pos_abs.mdV[VX]);
+            clip_factor = clip_along(-region_coord.mV[VX], delta_pos_abs.mdV[VX]);
         }
     }
     else if (region_coord.mV[VX] > region_width)
@@ -380,23 +396,23 @@ LLVector3d  LLWorld::clipToVisibleRegions(const LLVector3d &start_pos, const LLV
         if (region_coord.mV[VY] > region_coord.mV[VX])
         {
             // clip along y +
-            clip_factor = (region_coord.mV[VY] - region_width) / delta_pos_abs.mdV[VY];
+            clip_factor = clip_along(region_coord.mV[VY] - region_width, delta_pos_abs.mdV[VY]);
         }
         else
         {
             //clip along x +
-            clip_factor = (region_coord.mV[VX] - region_width) / delta_pos_abs.mdV[VX];
+            clip_factor = clip_along(region_coord.mV[VX] - region_width, delta_pos_abs.mdV[VX]);
         }
     }
     else if (region_coord.mV[VY] < 0.f)
     {
         // clip along y -
-        clip_factor = -(region_coord.mV[VY] / delta_pos_abs.mdV[VY]);
+        clip_factor = clip_along(-region_coord.mV[VY], delta_pos_abs.mdV[VY]);
     }
     else if (region_coord.mV[VY] > region_width)
     {
         // clip along y +
-        clip_factor = (region_coord.mV[VY] - region_width) / delta_pos_abs.mdV[VY];
+        clip_factor = clip_along(region_coord.mV[VY] - region_width, delta_pos_abs.mdV[VY]);
     }
 
     // clamp to within region dimensions
@@ -469,7 +485,7 @@ bool LLWorld::positionRegionValidGlobal(const LLVector3d &pos_global)
 // Allow objects to go up to their radius underground.
 F32 LLWorld::getMinAllowedZ(LLViewerObject* object, const LLVector3d &global_pos)
 {
-    F32 land_height = resolveLandHeightGlobal(global_pos);
+    F32 land_height = resolveLandHeightGlobal(global_pos, object->getRegion());
     F32 radius = 0.5f * object->getScale().length();
     return land_height - radius;
 }
@@ -512,9 +528,14 @@ F32 LLWorld::resolveLandHeightAgent(const LLVector3 &pos_agent)
 }
 
 
-F32 LLWorld::resolveLandHeightGlobal(const LLVector3d &pos_global)
+F32 LLWorld::resolveLandHeightGlobal(const LLVector3d &pos_global, LLViewerRegion* regionp)
 {
-    LLViewerRegion *regionp = getRegionFromPosGlobal(pos_global);
+    // Every moving object asks this every frame about the ground under its next position, which is
+    // nearly always in the region it is already in. Try that one before walking the region list.
+    if (!regionp || !regionp->pointInRegionGlobal(pos_global))
+    {
+        regionp = getRegionFromPosGlobal(pos_global);
+    }
     if (regionp)
     {
         return regionp->getLand().resolveHeightGlobal(pos_global);
@@ -621,6 +642,11 @@ LLVector3 LLWorld::resolveLandNormalGlobal(const LLVector3d &pos_global)
 
 void LLWorld::updateVisibilities()
 {
+    if (mWaterObjectsDirty)
+    {
+        updateWaterObjects();
+    }
+
     F32 cur_far_clip = LLViewerCamera::getInstance()->getFar();
 
     // Go through the culled list and check for visible regions (region is visible if land is visible)
@@ -662,7 +688,6 @@ void LLWorld::updateVisibilities()
             if (LLViewerCamera::getInstance()->AABBInFrustum(bounds[0], bounds[1]))
             {
                 regionp->calculateCameraDistance();
-                regionp->getLand().updatePatchVisibilities(gAgent);
             }
             else
             {
@@ -748,6 +773,64 @@ void LLWorld::updateRegions(F32 max_update_time)
     }
 
     sample(sNumActiveCachedObjects, mNumOfActiveCachedObjects);
+}
+
+void LLWorld::logObjectCacheInfo() const
+{
+    U32 total_cached = 0;
+    U32 total_active = 0;
+    U32 total_waiting = 0;
+    U64 total_bytes = 0;
+    U64 total_evicted = 0;
+    U64 total_built = 0;
+    U64 total_missed = 0;
+
+    for (const LLViewerRegion* regionp : mRegionList)
+    {
+        U32 cached = 0, active = 0, waiting = 0;
+        U64 bytes = 0, evicted = 0, built = 0;
+        regionp->getObjectCacheFootprint(cached, active, waiting, bytes, evicted, built);
+        const U64 missed = regionp->getRegionCacheMissCount();
+
+        LL_INFOS() << "VOCACHE: " << regionp->getName()
+                   << " cached " << cached
+                   << " active " << active
+                   << " waiting " << waiting
+                   << fmt::format(" {:.2f} MB", (F64)bytes / (1024.0 * 1024.0))
+                   << " evicted " << evicted
+                   << " built " << built
+                   << " missed " << missed
+                   << LL_ENDL;
+
+        total_cached += cached;
+        total_active += active;
+        total_waiting += waiting;
+        total_bytes += bytes;
+        total_evicted += evicted;
+        total_built += built;
+        total_missed += missed;
+    }
+
+    LL_INFOS() << "VOCACHE: " << mRegionList.size() << " regions"
+               << " cached " << total_cached
+               << " active " << total_active
+               << " waiting " << total_waiting
+               << fmt::format(" {:.2f} MB", (F64)total_bytes / (1024.0 * 1024.0))
+               << " evicted " << total_evicted
+               << " built " << total_built
+               << " missed " << total_missed
+               << LL_ENDL;
+
+    // The policy those figures were taken under. evicted, built and missed are
+    // cumulative for each region's life, so a rate is the difference between
+    // two of these lines.
+    LL_INFOS() << "VOCACHE: policy"
+               << fmt::format(" factor {:.2f}", LLVOCacheEntry::sMemoryAdjustFactor)
+               << fmt::format(" near {:.1f}m", LLVOCacheEntry::sNearRadius)
+               << fmt::format(" rear {:.1f}m", LLVOCacheEntry::sRearFarRadius)
+               << fmt::format(" evict {:.1f}m", LLVOCacheEntry::sEvictFarRadius)
+               << " frames " << LLVOCacheEntry::sMinFrameRange
+               << LL_ENDL;
 }
 
 void LLWorld::clearAllVisibleObjects()
@@ -924,7 +1007,7 @@ void LLWorld::setLandFarClip(const F32 far_clip)
 
     if (need_water_objects_update)
     {
-        updateWaterObjects();
+        requestWaterObjectsUpdate();
     }
 }
 
@@ -962,8 +1045,14 @@ void LLWorld::clearEdgeWaterObjects()
     }
 }
 
+void LLWorld::requestWaterObjectsUpdate()
+{
+    mWaterObjectsDirty = true;
+}
+
 void LLWorld::updateWaterObjects()
 {
+    mWaterObjectsDirty = false;
     if (!gAgent.getRegion())
     {
         return;

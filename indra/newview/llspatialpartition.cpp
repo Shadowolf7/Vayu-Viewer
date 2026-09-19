@@ -1131,9 +1131,9 @@ public:
     {
         LLSpatialGroup* group = (LLSpatialGroup*)base_group;
 
-        if (group->getOctreeNode() &&               // ← add this
-            group->getOctreeNode()->getParent() &&
-            LLPipeline::sUseOcclusion &&
+        if (group->getOctreeNode() &&
+            group->getOctreeNode()->getParent() &&  //never occlusion cull the root node
+            LLPipeline::sUseOcclusion &&            //ignore occlusion if disabled
             group->isOcclusionState(LLSpatialGroup::OCCLUDED))
         {
             return true;
@@ -1209,10 +1209,10 @@ public:
     {
         LLSpatialGroup* group = (LLSpatialGroup*)base_group;
 
-        if (mResult ||
-            (group->getOctreeNode() &&              // ← add this
-             group->getOctreeNode()->getParent() &&
-             LLPipeline::sUseOcclusion &&
+        if (mResult ||                              //already found a node, don't check any more
+            (group->getOctreeNode() &&
+             group->getOctreeNode()->getParent() && //never occlusion cull the root node
+             LLPipeline::sUseOcclusion &&           //ignore occlusion if disabled
              group->isOcclusionState(LLSpatialGroup::OCCLUDED)))
         {
             return true;
@@ -1697,7 +1697,7 @@ void renderOctree(LLSpatialGroup* group)
                 if (rigged)
                 {
                     gGL.pushMatrix();
-                    gGL.loadMatrix(gGLModelView);
+                    gGL.loadMatrix(LLViewerCamera::getCurrent().getModelview());
                     if (!LLRenderPass::uploadMatrixPalette(face->mAvatar, face->mSkinInfo, lastAvatar, lastMeshId, skipLastSkin))
                     {
                         continue;
@@ -2069,7 +2069,7 @@ void renderNormals(LLDrawable *drawablep)
                 {
                     LLVector4a n, p;
 
-                    n.setMul(face.mNormals[j], 1.0);
+                    n = face.mNormals[j];
                     n.mul(inv_scale);  // Pre-scale normal, so it's left with an inverse-transpose xform after MVP
                     n.normalize3fast();
                     n.mul(draw_length);
@@ -2090,7 +2090,7 @@ void renderNormals(LLDrawable *drawablep)
                     {
                         LLVector4a t, p;
 
-                        t.setMul(face.mTangents[j], 1.0f);
+                        t = face.mTangents[j];
                         t.normalize3fast();
                         t.mul(draw_length);
                         p.setAdd(face.mPositions[j], t);
@@ -2532,7 +2532,7 @@ void renderPhysicsShapes(LLSpatialGroup* group, bool wireframe)
             if (bridge)
             {
                 gGL.pushMatrix();
-                gGL.multMatrix((F32*)bridge->mDrawable->getRenderMatrix().mMatrix);
+                gGL.multMatrix(bridge->mDrawable->getRenderMatrix().getF32ptr());
                 bridge->renderPhysicsShapes(wireframe);
                 gGL.popMatrix();
             }
@@ -2562,7 +2562,7 @@ void renderPhysicsShapes(LLSpatialGroup* group, bool wireframe)
                 if (object && object->getPCode() == LLViewerObject::LL_VO_SURFACE_PATCH)
                 {
                     gGL.pushMatrix();
-                    gGL.multMatrix((F32*) object->getRegion()->mRenderMatrix.mMatrix);
+                    gGL.multMatrix(object->getRegion()->mRenderMatrix.getF32ptr());
                     //push face vertices for terrain
                     for (S32 i = 0; i < drawable->getNumFaces(); ++i)
                     {
@@ -2676,7 +2676,7 @@ void renderBatchSize(LLDrawInfo* params)
     if (params->mAvatar)
     {
         gGL.pushMatrix();
-        gGL.loadMatrix(gGLModelView);
+        gGL.loadMatrix(LLViewerCamera::getCurrent().getModelview());
         bind = true;
         old_shader->mRiggedVariant->bind();
         LLRenderPass::uploadMatrixPalette(*params);
@@ -3010,7 +3010,7 @@ void renderRaycast(LLDrawable* drawablep)
         {
             // draw intersection point
             gGL.pushMatrix();
-            gGL.loadMatrix(gGLModelView);
+            gGL.loadMatrix(LLViewerCamera::getCurrent().getModelview());
             LLVector3 translate(gDebugRaycastIntersection.getF32ptr());
             gGL.translatef(translate.mV[0], translate.mV[1], translate.mV[2]);
             LLCoordFrame orient;
@@ -3332,7 +3332,7 @@ public:
                 gGL.flush();
                 gGL.pushMatrix();
                 gGLLastMatrix = NULL;
-                gGL.loadMatrix(gGLModelView);
+                gGL.loadMatrix(LLViewerCamera::getCurrent().getModelview());
                 renderXRay(group, mCamera);
                 stop_glerror();
                 gGLLastMatrix = NULL;
@@ -3685,11 +3685,11 @@ public:
 
             if (group->getSpatialPartition()->isBridge())
             {
-                LLMatrix4 local_matrix = group->getSpatialPartition()->asBridge()->mDrawable->getRenderMatrix();
+                LLMatrix4 local_matrix = group->getSpatialPartition()->asBridge()->mDrawable->getRenderMatrix().toMatrix4();
                 local_matrix.invert();
 
                 LLMatrix4a local_matrix4a;
-                local_matrix4a.loadu(local_matrix);
+                local_matrix4a.set(local_matrix);
 
                 local_matrix4a.affineTransform(mStart, local_start);
                 local_matrix4a.affineTransform(mEnd, local_end);

@@ -104,7 +104,8 @@ const U32 DEFAULT_MAX_REGION_WIDE_PRIM_COUNT = 15000;
 bool LLViewerRegion::sVOCacheCullingEnabled = false;
 S32  LLViewerRegion::sLastCameraUpdated = 0;
 S32  LLViewerRegion::sNewObjectCreationThrottle = -1;
-LLViewerRegion::vocache_entry_map_t LLViewerRegion::sRegionCacheCleanup;
+std::vector<LLPointer<LLVOCacheEntry>> LLViewerRegion::sRegionCacheCleanup;
+LLViewerRegion::region_info_signal_t LLViewerRegion::sRegionInfoChangedSignal;
 
 typedef boost::unordered_map<std::string, std::string, ll::string_hash, std::equal_to<>> CapabilityMap;
 
@@ -659,6 +660,7 @@ LLViewerRegion::LLViewerRegion(const U64 &handle,
     mViewerAssetUrl(""),
     mCacheLoaded(false),
     mCacheDirty(false),
+    mGLTFOverridesDirty(false),
     mReleaseNotesRequested(false),
     mCapabilitiesState(CAPABILITIES_STATE_INIT),
     mSimulatorFeaturesReceived(false),
@@ -670,6 +672,8 @@ LLViewerRegion::LLViewerRegion(const U64 &handle,
     mPaused(false),
     mRegionCacheHitCount(0),
     mRegionCacheMissCount(0),
+    mObjectsEvicted(0),
+    mObjectsBuiltFromCache(0),
     mInterestListMode(IL_MODE_DEFAULT)
 {
     mWidth = region_width_meters;
@@ -799,6 +803,7 @@ void LLViewerRegion::setRegionID(const LLUUID& region_id)
 
 void LLViewerRegion::loadObjectCache()
 {
+    LL_PROFILE_ZONE_SCOPED;
     if (mCacheLoaded)
     {
         return;
@@ -810,9 +815,23 @@ void LLViewerRegion::loadObjectCache()
     if(LLVOCache::instanceExists())
     {
         LLVOCache & vocache = LLVOCache::instance();
-        // Without this a "corrupted" vocache persists until a cache clear or other rewrite. Mark as dirty hereif read fails to force a rewrite.
-        mCacheDirty = !vocache.readFromCache(mHandle, mImpl->mCacheID, mImpl->mCacheMap);
-        vocache.readGenericExtrasFromCache(mHandle, mImpl->mCacheID, mImpl->mGLTFOverridesLLSD, mImpl->mCacheMap);
+        // A read that fails marks the cache dirty so it is rewritten rather
+        // than left corrupted; a file that yielded nothing is dropped now.
+        const bool cache_ok = vocache.readFromCache(mHandle, mImpl->mCacheID, mImpl->mCacheMap);
+        mCacheDirty = !cache_ok;
+        if (!cache_ok && mImpl->mCacheMap.empty())
+        {
+            vocache.removeEntry(mHandle);
+        }
+
+        // Overrides mean nothing without the objects they belong to, so a bad
+        // extras file takes the object cache with it and the simulator sends
+        // both afresh.
+        if (!vocache.readGenericExtrasFromCache(mHandle, mImpl->mCacheID, mImpl->mGLTFOverridesLLSD, mImpl->mCacheMap))
+        {
+            mImpl->mGLTFOverridesLLSD.clear();
+            vocache.removeGenericExtrasForHandle(mHandle);
+        }
 
         if (mImpl->mCacheMap.empty())
         {
@@ -843,9 +862,14 @@ void LLViewerRegion::saveObjectCache()
         LLVOCache & instance = LLVOCache::instance();
 
         instance.writeToCache(mHandle, mImpl->mCacheID, mImpl->mCacheMap, mCacheDirty, removal_enabled);
-        instance.writeGenericExtrasToCache(mHandle, mImpl->mCacheID, mImpl->mGLTFOverridesLLSD, mCacheDirty, removal_enabled);
+        instance.writeGenericExtrasToCache(mHandle, mImpl->mCacheID, mImpl->mGLTFOverridesLLSD, mGLTFOverridesDirty, removal_enabled);
         mCacheDirty = false;
+        mGLTFOverridesDirty = false;
     }
+
+    // The map holds the only reference to its entries, and the eviction walk's
+    // cursor is a bare pointer into them.
+    mLastVisitedEntry = NULL;
 
     if (LLAppViewer::instance()->isQuitting())
     {
@@ -853,8 +877,13 @@ void LLViewerRegion::saveObjectCache()
     }
     else
     {
-        // Map of LLVOCacheEntry takes time to release, store map for cleanup on idle
-        sRegionCacheCleanup.insert(mImpl->mCacheMap.begin(), mImpl->mCacheMap.end());
+        // Releasing tens of thousands of entries at once is a visible hitch, so
+        // the pointers are handed to idleCleanup to drop a batch at a time.
+        sRegionCacheCleanup.reserve(sRegionCacheCleanup.size() + mImpl->mCacheMap.size());
+        for (auto& [local_id, entry] : mImpl->mCacheMap)
+        {
+            sRegionCacheCleanup.push_back(std::move(entry));
+        }
         mImpl->mCacheMap.clear();
         // TODO - probably need to do the same for overrides cache
     }
@@ -903,12 +932,20 @@ void LLViewerRegion::setOriginGlobal(const LLVector3d &origin_global)
 
 void LLViewerRegion::updateRenderMatrix()
 {
+    // LLMatrix4a is trivial and starts uninitialised, where the LLMatrix4 this
+    // replaced default-constructed to the identity.
+    mRenderMatrix.setIdentity();
     mRenderMatrix.setTranslation(getOriginAgent());
 }
 
 void LLViewerRegion::setTimeDilation(F32 time_dilation)
 {
-    mTimeDilation = time_dilation;
+    // This scales the step every object in the region is predicted forward by, and it is only ever
+    // written from an incoming object update -- a region that goes quiet keeps whatever it last
+    // reported. A floor keeps a badly lagged or malformed report from stopping prediction outright
+    // and banking the whole stall as one step once updates resume.
+    constexpr F32 MIN_TIME_DILATION = 0.01f;
+    mTimeDilation = llclamp(time_dilation, MIN_TIME_DILATION, 1.f);
 }
 
 const LLVector3d & LLViewerRegion::getOriginGlobal() const
@@ -967,8 +1004,11 @@ bool LLViewerRegion::canManageEstate() const
         || gAgent.getID() == getOwner();
 }
 
-const std::string LLViewerRegion::getSimAccessString() const
+const std::string& LLViewerRegion::getSimAccessString() const
 {
+    // By reference: accessToString hands back one of five strings it owns for
+    // the life of the process, and this is asked for whenever a location
+    // readout rebuilds.
     return accessToString(mSimAccess);
 }
 
@@ -1211,7 +1251,10 @@ void LLViewerRegion::killCacheEntry(LLVOCacheEntry* entry, bool for_rendering)
         }
     }
     // Kill the assocaited overrides
-    mImpl->mGLTFOverridesLLSD.erase(entry->getLocalID());
+    if (mImpl->mGLTFOverridesLLSD.erase(entry->getLocalID()))
+    {
+        mGLTFOverridesDirty = true;
+    }
     //will remove it from the object cache, real deletion
     entry->setState(LLVOCacheEntry::INACTIVE);
     entry->removeOctreeEntry();
@@ -1228,6 +1271,31 @@ void LLViewerRegion::killCacheEntry(U32 local_id)
 U32 LLViewerRegion::getNumOfActiveCachedObjects() const
 {
     return static_cast<U32>(mImpl->mActiveSet.size());
+}
+
+void LLViewerRegion::getObjectCacheFootprint(U32& cached, U32& active, U32& waiting, U64& bytes,
+                                            U64& evicted, U64& built) const
+{
+    cached = static_cast<U32>(mImpl->mCacheMap.size());
+    active = static_cast<U32>(mImpl->mActiveSet.size());
+    waiting = static_cast<U32>(mImpl->mWaitingSet.size());
+    evicted = mObjectsEvicted;
+    built = mObjectsBuiltFromCache;
+
+    // The entry itself plus the packed object data it holds. Node map and set
+    // overhead is not counted, so this is a floor.
+    U64 total = (U64)mImpl->mCacheMap.size() * sizeof(LLVOCacheEntry);
+    for (const auto& [local_id, entry] : mImpl->mCacheMap)
+    {
+        if (entry.notNull())
+        {
+            if (const LLDataPackerBinaryBuffer* dp = entry->getDP())
+            {
+                total += (U64)dp->getBufferSize();
+            }
+        }
+    }
+    bytes = total;
 }
 
 void LLViewerRegion::addActiveCacheEntry(LLVOCacheEntry* entry)
@@ -1718,10 +1786,14 @@ void LLViewerRegion::idleUpdate(F32 max_update_time)
 // static
 void LLViewerRegion::idleCleanup(F32 max_update_time)
 {
+    // Reading the timer costs more than releasing an entry, so it is checked
+    // once per batch rather than once per entry.
+    constexpr size_t BATCH = 256;
     LLTimer update_timer;
     while (!sRegionCacheCleanup.empty() && (max_update_time - update_timer.getElapsedTimeF32() > 0))
     {
-        sRegionCacheCleanup.erase(sRegionCacheCleanup.begin());
+        const size_t drop = llmin(BATCH, sRegionCacheCleanup.size());
+        sRegionCacheCleanup.resize(sRegionCacheCleanup.size() - drop);
     }
 }
 
@@ -1768,10 +1840,8 @@ bool LLViewerRegion::isViewerCameraStatic()
 
 void LLViewerRegion::killInvisibleObjects(F32 max_time)
 {
-#if 1 // TODO: kill this.  This is ill-conceived, objects that aren't in the camera frustum should not be deleted from memory.
-        // because of this, every time you turn around the simulator sends a swarm of full object update messages from cache
-    // probe misses and objects have to be reloaded from scratch.  From some reason, disabling this causes holes to
-    // appear in the scene when flying back and forth between regions
+    LL_PROFILE_ZONE_SCOPED;
+
     if(!sVOCacheCullingEnabled)
     {
         return;
@@ -1785,12 +1855,31 @@ void LLViewerRegion::killInvisibleObjects(F32 max_time)
         return;
     }
 
+    // Dropping an object the camera cannot see costs the work of rebuilding it
+    // when the camera comes back, so by default it is only done while memory is
+    // actually short. The 2024 note above isAnyVisible describes this evicting
+    // things still in view; the radius that decided that was pinned to two
+    // metres by memory bounds left over from 32-bit builds, and mode 2 is how
+    // that gets measured rather than argued.
+    static LLCachedControl<U32> eviction_mode(gSavedSettings, "AlchemyVOCacheEvictionMode", 1u);
+    if(eviction_mode == 0u)
+    {
+        return;
+    }
+    constexpr F32 PRESSURE_THRESHOLD = 0.5f; //half the radii pulled in
+    if(eviction_mode == 1u && LLVOCacheEntry::sMemoryAdjustFactor > PRESSURE_THRESHOLD)
+    {
+        return;
+    }
+
     LLTimer update_timer;
     LLVector4a camera_origin;
     camera_origin.load3(LLViewerCamera::getInstance()->getOrigin().mV);
     LLVector4a local_origin;
     local_origin.load3((LLViewerCamera::getInstance()->getOrigin() - getOriginAgent()).mV);
-    F32 back_threshold = LLVOCacheEntry::sRearFarRadius;
+    // Wider than the radius that loads an entry, so that turning around does not
+    // cross both at once.
+    F32 back_threshold = LLVOCacheEntry::sEvictFarRadius;
 
     size_t max_update = 64;
     if(!mInvisibilityCheckHistory && isViewerCameraStatic())
@@ -1801,7 +1890,10 @@ void LLViewerRegion::killInvisibleObjects(F32 max_time)
 
     std::vector<LLDrawable*> delete_list;
     auto update_counter = llmin(max_update, mImpl->mActiveSet.size());
-    LLVOCacheEntry::vocache_entry_set_t::iterator iter = mImpl->mActiveSet.upper_bound(mLastVisitedEntry);
+    // The cursor is the first entry the previous walk did not reach. lower_bound
+    // resumes on it while it is still in the set and on its successor once it
+    // has left; upper_bound would step past it either way.
+    LLVOCacheEntry::vocache_entry_set_t::iterator iter = mImpl->mActiveSet.lower_bound(mLastVisitedEntry);
 
     for(; update_counter > 0; --update_counter, ++iter)
     {
@@ -1814,19 +1906,26 @@ void LLViewerRegion::killInvisibleObjects(F32 max_time)
                 break;
             }
         }
-        if((*iter)->getParentID() > 0)
-        {
-            continue; //skip child objects, they are removed with their parent.
-        }
-
+        // An entry can lose its octree entry while it is still in the active set
+        // -- clearCachedVisibleObjects walks this same set and skips those -- and
+        // a child is removed with its parent rather than on its own. Neither is a
+        // reason to stop reading the clock, so the deadline is checked below for
+        // every entry the walk visits, skipped or not.
         LLVOCacheEntry* vo_entry = *iter;
-        if(!vo_entry->isAnyVisible(camera_origin, local_origin, back_threshold) && vo_entry->mLastCameraUpdated < sLastCameraUpdated)
+        if(vo_entry && vo_entry->getEntry() && !vo_entry->getParentID())
         {
-            killObject(vo_entry, delete_list);
+            if(!vo_entry->isAnyVisible(camera_origin, local_origin, back_threshold) && vo_entry->mLastCameraUpdated < sLastCameraUpdated)
+            {
+                killObject(vo_entry, delete_list);
+            }
         }
 
         if(max_time < update_timer.getElapsedTimeF32()) //time out
         {
+            // The loop's own increment has not run yet, so step past the entry
+            // just visited: the cursor below is the first one not reached, on
+            // this exit as on the other.
+            ++iter;
             break;
         }
     }
@@ -1844,27 +1943,39 @@ void LLViewerRegion::killInvisibleObjects(F32 max_time)
     if(!delete_list.empty())
     {
         mInvisibilityCheckHistory |= 1;
+        mObjectsEvicted += delete_list.size();
         for (auto drawable : delete_list)
         {
             gObjectList.killObject(drawable->getVObj());
         }
         delete_list.clear();
     }
-
-    return;
-#endif
 }
 
 void LLViewerRegion::killObject(LLVOCacheEntry* entry, std::vector<LLDrawable*>& delete_list)
 {
+    // An active entry can be without an octree entry, and a drawable can outlive
+    // the object it drew: addNewObject guards both before it touches a cached
+    // entry's drawable, and llassert is compiled out of a release build.
+    LLViewerOctreeEntry* oct_entry = entry->getEntry();
+    if(!oct_entry)
+    {
+        return;
+    }
+
     //kill the object.
-    LLDrawable* drawablep = (LLDrawable*)entry->getEntry()->getDrawable();
+    LLDrawable* drawablep = (LLDrawable*)oct_entry->getDrawable();
     llassert(drawablep);
-    llassert(drawablep->getRegion() == this);
+    llassert(!drawablep || drawablep->getRegion() == this);
 
     if(drawablep && !drawablep->getParent())
     {
         LLViewerObject* v_obj = drawablep->getVObj();
+        if(!v_obj || drawablep->isDead())
+        {
+            return;
+        }
+
         if (v_obj->isSelected()
             || (v_obj->flagAnimSource() && isAgentAvatarValid() && gAgentAvatarp->hasMotionFromSource(v_obj->getID())))
         {
@@ -1922,6 +2033,7 @@ LLViewerObject* LLViewerRegion::addNewObject(LLVOCacheEntry* entry)
         obj = gObjectList.processObjectUpdateFromCache(entry, this);
         if(obj)
         {
+            mObjectsBuiltFromCache++;
             if(!entry->isState(LLVOCacheEntry::ACTIVE))
             {
                 mImpl->mWaitingSet.insert(entry);
@@ -2491,12 +2603,38 @@ void LLViewerRegion::getInfo(LLSD& info)
     info["Region"]["Handle"]["y"] = (LLSD::Integer)y;
 }
 
+void LLViewerRegion::queryPBRTerrainFeatures()
+{
+    if (getCapability("ModifyRegion").empty())
+    {
+        LLFloaterRegionInfo::sRefreshFromRegion(this);
+        return;
+    }
+
+    LLPBRTerrainFeatures::queueQuery(*this, [](LLUUID region_id, bool success, const LLModifyRegion& composition_changes)
+    {
+        if (!success) { return; }
+        LLViewerRegion* region = LLWorld::getInstance()->getRegionFromID(region_id);
+        if (!region) { return; }
+        LLVLComposition* compp = region->getComposition();
+        if (!compp) { return; }
+        compp->apply(composition_changes);
+        LLFloaterRegionInfo::sRefreshFromRegion(region);
+    });
+}
+
 void LLViewerRegion::requestSimulatorFeatures()
 {
     LL_DEBUGS("SimulatorFeatures") << "region " << getName() << " ptr " << this
                                    << " trying to request SimulatorFeatures" << LL_ENDL;
     // kick off a request for simulator features
-    std::string url = getCapability("SimulatorFeatures");
+    // setCapability() calls this the moment the cap is installed, before the
+    // full set has been declared received, so look it up without that guard.
+    std::string url;
+    if (auto iter = mImpl->mCapabilities.find("SimulatorFeatures"); iter != mImpl->mCapabilities.end())
+    {
+        url = iter->second;
+    }
     if (!url.empty())
     {
         std::string coroname =
@@ -2838,8 +2976,6 @@ LLViewerRegion::eCacheUpdateResult LLViewerRegion::cacheFullUpdate(LLDataPackerB
         {
             LL_DEBUGS("AnimatedObjects") << " got dupe for local_id " << local_id << LL_ENDL;
 
-            // Record a hit
-            entry->recordDupe();
             result = CACHE_UPDATE_DUPE;
         }
         else //CRC changed
@@ -2885,16 +3021,17 @@ LLViewerRegion::eCacheUpdateResult LLViewerRegion::cacheFullUpdate(LLViewerObjec
     return result;
 }
 
-void LLViewerRegion::cacheFullUpdateGLTFOverride(const LLGLTFOverrideCacheEntry &override_data)
+void LLViewerRegion::cacheFullUpdateGLTFOverride(LLGLTFOverrideCacheEntry override_data)
 {
     U32 local_id = override_data.mLocalId;
     if (override_data.mSides.size() > 0)
     { // empty override means overrides were removed from this object
-        mImpl->mGLTFOverridesLLSD[local_id] = override_data;
+        mImpl->mGLTFOverridesLLSD[local_id] = std::move(override_data);
+        mGLTFOverridesDirty = true;
     }
-    else
+    else if (mImpl->mGLTFOverridesLLSD.erase(local_id))
     {
-        mImpl->mGLTFOverridesLLSD.erase(local_id);
+        mGLTFOverridesDirty = true;
     }
 }
 
@@ -3123,6 +3260,7 @@ void LLViewerRegion::clearVOCacheFromMemory()
 
 void LLViewerRegion::unpackRegionHandshake()
 {
+    LL_PROFILE_ZONE_SCOPED;
     LLMessageSystem *msg = gMessageSystem;
 
     U64 region_flags = 0;
@@ -3154,6 +3292,13 @@ void LLViewerRegion::unpackRegionHandshake()
         msg->getU32Fast(_PREHASH_RegionInfo, _PREHASH_RegionFlags, flags);
         region_flags = flags;
     }
+
+    // What this handshake is about to overwrite, so the signal at the end of
+    // this function can say whether it moved. The sim re-sends the handshake
+    // when region-level settings change, so this is the path an estate
+    // manager's maturity change or a rename actually arrives on.
+    const U8 old_sim_access = mSimAccess;
+    const std::string old_name = mName;
 
     setRegionFlags(region_flags);
     setRegionProtocols(region_protocols);
@@ -3270,23 +3415,32 @@ void LLViewerRegion::unpackRegionHandshake()
             compp->setParamsReady();
         }
 
-        std::string cap = getCapability("ModifyRegion"); // needed for queueQuery
-        if (cap.empty())
+        // Capabilities arrive over HTTP after the seed-cap round trip, so the
+        // first handshake for a region always precedes them. Query the PBR
+        // terrain composition now if the cap is here, otherwise once it is.
+        if (capabilitiesReceived())
         {
-            LLFloaterRegionInfo::sRefreshFromRegion(this);
+            queryPBRTerrainFeatures();
         }
         else
         {
-            LLPBRTerrainFeatures::queueQuery(*this, [](LLUUID region_id, bool success, const LLModifyRegion& composition_changes)
+            LLFloaterRegionInfo::sRefreshFromRegion(this);
+            if (!mTerrainQueryOnCaps)
             {
-                if (!success) { return; }
-                LLViewerRegion* region = LLWorld::getInstance()->getRegionFromID(region_id);
-                if (!region) { return; }
-                LLVLComposition* compp = region->getComposition();
-                if (!compp) { return; }
-                compp->apply(composition_changes);
-                LLFloaterRegionInfo::sRefreshFromRegion(region);
-            });
+                mTerrainQueryOnCaps = true;
+                // The signal fires inside the seed-cap coroutine, and the
+                // query launches a coroutine of its own from the main coro.
+                setCapabilitiesReceivedCallback([](const LLUUID& region_id, LLViewerRegion*)
+                {
+                    LLAppViewer::instance()->postToMainCoro([region_id]()
+                    {
+                        if (LLViewerRegion* region = LLWorld::getInstance()->getRegionFromID(region_id))
+                        {
+                            region->queryPBRTerrainFeatures();
+                        }
+                    });
+                });
+            }
         }
     }
 
@@ -3338,6 +3492,20 @@ void LLViewerRegion::unpackRegionHandshake()
         NULL);
 
     mRegionTimer.reset(); //reset region timer.
+
+    // Announced after the reply is away, and only when one of the two values
+    // anyone listens for actually moved -- a handshake arrives for every
+    // neighbour that comes into view, and almost none of them are a change to
+    // a region already on screen.
+    if (mSimAccess != old_sim_access || mName != old_name)
+    {
+        sRegionInfoChangedSignal(this);
+    }
+}
+
+boost::signals2::connection LLViewerRegion::setRegionInfoChangedCallback(const region_info_signal_t::slot_type& cb)
+{
+    return sRegionInfoChangedSignal.connect(cb);
 }
 
 // static
@@ -3617,7 +3785,7 @@ std::string LLViewerRegion::getCapability(std::string_view name) const
 {
     if (!capabilitiesReceived() && (name != "Seed") && (name != "ObjectMedia"))
     {
-        LL_WARNS() << "getCapability called before caps received for " << name << LL_ENDL;
+        LL_WARNS("Capabilities") << "getCapability called before caps received for " << name << LL_ENDL;
     }
 
     CapabilityMap::const_iterator iter = mImpl->mCapabilities.find(name);
@@ -3633,7 +3801,7 @@ bool LLViewerRegion::isCapabilityAvailable(std::string_view name) const
 {
     if (!capabilitiesReceived() && (name != "Seed") && (name != "ObjectMedia"))
     {
-        LL_WARNS() << "isCapabilityAvailable called before caps received for " << name << LL_ENDL;
+        LL_WARNS("Capabilities") << "isCapabilityAvailable called before caps received for " << name << LL_ENDL;
     }
 
     if (!mImpl->mCapabilities.contains(name))
@@ -4015,7 +4183,9 @@ void LLViewerRegion::applyCacheMiscExtras(LLViewerObject* obj)
         {
             iter->second.mObjectId = obj->getID();
         }
-        llassert(iter->second.mGLTFMaterial.size() == iter->second.mSides.size());
+        // An entry loaded from the cache carries only the override LLSD until
+        // an object actually needs the materials.
+        iter->second.materialize();
 
         for (auto& side : iter->second.mGLTFMaterial)
         {

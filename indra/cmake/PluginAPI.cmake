@@ -1,24 +1,21 @@
 # -*- cmake -*-
 include_guard()
 
-include(OpenGL)
+add_library(ll::pluginlibraries INTERFACE IMPORTED)
 
-add_library( ll::pluginlibraries INTERFACE IMPORTED )
+if(WINDOWS)
+  target_link_libraries(
+    ll::pluginlibraries
+    INTERFACE wsock32 ws2_32 Iphlpapi psapi advapi32 user32
+  )
+endif()
 
-if (WINDOWS)
-  target_link_libraries( ll::pluginlibraries INTERFACE
-      wsock32
-      ws2_32
-      Iphlpapi
-      psapi
-      advapi32
-      user32
-      )
-endif (WINDOWS)
+target_link_libraries(ll::pluginlibraries INTERFACE ll::opengl)
 
-target_link_libraries( ll::pluginlibraries INTERFACE OpenGL::GL)
-
-target_include_directories( ll::pluginlibraries INTERFACE ${INDRA_SOURCE_DIR}/llimage ${INDRA_SOURCE_DIR}/llrender)
+target_include_directories(
+  ll::pluginlibraries
+  INTERFACE ${INDRA_SOURCE_DIR}/llimage ${INDRA_SOURCE_DIR}/llrender
+)
 
 # Slim per-plugin host executables (media_plugin_example, media_plugin_libvlc, ...)
 # only need llplugin's child-side code (llpluginprocesschild.cpp etc). mold has an

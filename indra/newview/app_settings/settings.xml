@@ -1495,6 +1495,28 @@
         <key>Value</key>
         <integer>1</integer>
     </map>
+    <key>BuyCurrencyHTML</key>
+    <map>
+      <key>Comment</key>
+      <string>Use HTML based L$ packs floater instead of legacy XUI version</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>Boolean</string>
+      <key>Value</key>
+      <integer>1</integer>
+    </map>
+    <key>BuyCurrencyPacksURL</key>
+    <map>
+      <key>Comment</key>
+      <string>URL for the L$ packs purchase floater</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>String</string>
+      <key>Value</key>
+      <string>https://accounts.secondlife.com/packs/floater?lang=[LANGUAGE]&amp;shortfall=[SHORTFALL]</string>
+    </map>
     <key>EnableButtonFlashing</key>
     <map>
       <key>Comment</key>
@@ -1972,9 +1994,9 @@
       <key>Persist</key>
       <integer>1</integer>
       <key>Type</key>
-      <string>S32</string>
+      <string>Boolean</string>
       <key>Value</key>
-      <integer>0</integer>
+      <boolean>0</boolean>
     </map>
     <key>ChatBubbleOpacity</key>
     <map>
@@ -2982,7 +3004,7 @@
     <key>HeadlessClient</key>
     <map>
       <key>Comment</key>
-      <string>Run in headless mode by disabling GL rendering, keyboard, etc</string>
+      <string>Run with no desktop: render on a window that is never shown, with no splash, keyboard or mouse</string>
       <key>Persist</key>
       <integer>1</integer>
       <key>Type</key>
@@ -7692,7 +7714,7 @@
     <key>QuickBuyCurrency</key>
     <map>
       <key>Comment</key>
-      <string>Toggle between HTML based currency purchase floater and legacy XUI version</string>
+      <string>(Deprecated) Use BuyCurrencyHTML instead</string>
       <key>Persist</key>
       <integer>1</integer>
       <key>Type</key>
@@ -10368,7 +10390,7 @@
     <key>RenderTerrainPBRPlanarSampleCount</key>
     <map>
       <key>Comment</key>
-      <string>How many UV planes to sample PBR terrain textures from. 1 is "flat", 3 is triplanar mapping (aka box mapping)</string>
+      <string>How many UV planes to sample terrain textures from, PBR and legacy alike. 1 is "flat", 3 is triplanar mapping (aka box mapping)</string>
       <key>Persist</key>
       <integer>1</integer>
       <key>Type</key>
@@ -11532,17 +11554,6 @@
       <string>Show log in SL window</string>
       <key>Persist</key>
       <integer>1</integer>
-      <key>Type</key>
-      <string>Boolean</string>
-      <key>Value</key>
-      <integer>0</integer>
-    </map>
-    <key>ShowEventRecorderMenuItems</key>
-    <map>
-      <key>Comment</key>
-      <string>Whether or not Event Recorder menu choices - Start / Stop event recording should appear in the (currently) Develop menu</string>
-      <key>Persist</key>
-      <integer>0</integer>
       <key>Type</key>
       <string>Boolean</string>
       <key>Value</key>
@@ -13360,7 +13371,7 @@
       <key>Type</key>
       <string>S32</string>
       <key>Value</key>
-      <real>3</real>
+      <integer>3</integer>
     </map>
     <key>HUDScaleFactor</key>
     <map>
@@ -16757,6 +16768,17 @@
       <string>U32</string>
       <key>Value</key>
       <integer>0</integer>
+    </map>
+    <key>GPUBenchmarkResult</key>
+    <map>
+      <key>Comment</key>
+      <string>Cached GPU benchmark bandwidth in GB/sec (-1 for failure), with the GPU vendor, raw renderer and full OpenGL driver version. Reset to rerun the benchmark.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>LLSD</string>
+      <key>Value</key>
+      <map />
     </map>
     <key>SkipBenchmark</key>
     <map>

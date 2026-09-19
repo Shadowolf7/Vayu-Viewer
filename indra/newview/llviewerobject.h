@@ -30,6 +30,7 @@
 #include <map>
 #include <boost/unordered_map.hpp>
 
+#include "almotionpredictor.h"
 #include "llassetstorage.h"
 //#include "llhudicon.h"
 #include "llinventory.h"
@@ -344,7 +345,7 @@ public:
     const LLQuaternion getRotationRegion() const;
     const LLQuaternion getRotationEdit() const;
     const LLQuaternion getRenderRotation() const;
-    virtual const LLMatrix4 getRenderMatrix() const;
+    virtual const LLMatrix4a& getRenderMatrix() const;
 
     void setPosition(const LLVector3 &pos, bool damped = false);
     void setPositionGlobal(const LLVector3d &position, bool damped = false);
@@ -354,7 +355,7 @@ public:
     void setPositionParent(const LLVector3 &pos_parent, bool damped = false);
     void setPositionAbsoluteGlobal( const LLVector3d &pos_global, bool damped = false );
 
-    virtual const LLMatrix4& getWorldMatrix(LLXformMatrix* xform) const     { return xform->getWorldMatrix(); }
+    virtual const LLMatrix4a& getWorldMatrix(LLXformMatrix* xform) const    { return xform->getWorldMatrix(); }
 
     inline void setRotation(const F32 x, const F32 y, const F32 z, bool damped = false);
     inline void setRotation(const LLQuaternion& quat, bool damped = false);
@@ -934,6 +935,7 @@ protected:
     F64Seconds      mLastMessageUpdateSecs;         // Last update from a message from the simulator
     TPACKETID       mLatestRecvPacketID;            // Latest time stamp on message from simulator
     F64SecondsImplicit mRegionCrossExpire;      // frame time we detected region crossing in + wait time
+    ALMotionPredictor mMotionPredictor;         // this object's own update rate, and what to do with it
 
     // extra data sent from the sim...currently only used for tree species info
     U8* mData;
@@ -1018,9 +1020,13 @@ protected:
     mutable LLVector3       mPositionRegion;
     mutable LLVector3       mPositionAgent;
 
-    static void setPhaseOutUpdateInterpolationTime(F32 value)   { sPhaseOutUpdateInterpolationTime = (F64Seconds) value;    }
-    static void setMaxUpdateInterpolationTime(F32 value)        { sMaxUpdateInterpolationTime = (F64Seconds) value; }
+    static void setPhaseOutUpdateInterpolationTime(F32 value)   { sPredictionTuning.mPhaseOutTime = value;  }
+    static void setMaxUpdateInterpolationTime(F32 value)        { sPredictionTuning.mMaxTime = value;      }
     static void setMaxRegionCrossingInterpolationTime(F32 value)        { sMaxRegionCrossingInterpolationTime = (F64Seconds) value; }
+
+    static void setPredictionCadenceAware(bool value)   { sPredictionTuning.mCadenceAware = value;  }
+    static void setPredictionCadenceFactor(F32 value)   { sPredictionTuning.mCadenceFactor = value; }
+    static void setPredictionMaxFrameStep(F32 value)    { sPredictionTuning.mMaxFrameStep = value;  }
 
     static void setVelocityInterpolate(bool value)      { sVelocityInterpolate = value; }
     static void setPingInterpolate(bool value)          { sPingInterpolate = value; }
@@ -1028,8 +1034,9 @@ protected:
 private:
     static S32 sNumObjects;
 
-    static F64Seconds sPhaseOutUpdateInterpolationTime; // For motion interpolation
-    static F64Seconds sMaxUpdateInterpolationTime;          // For motion interpolation
+    // How prediction behaves, shared by every object. The per-object half of the decision -- how
+    // often this particular object actually sends updates -- lives in mMotionPredictor.
+    static ALMotionPredictor::Tuning sPredictionTuning;
     static F64Seconds sMaxRegionCrossingInterpolationTime;          // For motion interpolation
 
     static bool sVelocityInterpolate;

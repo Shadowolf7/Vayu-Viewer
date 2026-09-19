@@ -71,6 +71,7 @@ using namespace llsd;
 #   include <sys/types.h>
 #   include <mach/mach_init.h>
 #elif LL_LINUX
+#   include <cstdio>
 #   include <errno.h>
 #   include <sys/utsname.h>
 #   include <unistd.h>
@@ -579,6 +580,10 @@ LLCPUInfo::LLCPUInfo()
     mHasAVX = proc.hasAVX();
     mHasAVX2 = proc.hasAVX2();
     mHasAVX512F = proc.hasAVX512F();
+    mHasNEON = proc.hasNEON();
+    mHasNEONDotProd = proc.hasNEONDotProd();
+    mHasNEONFP16 = proc.hasNEONFP16();
+    mHasSVE = proc.hasSVE();
     mHasAltivec = proc.hasAltivec();
     mCPUMHz = (F64)proc.getCPUFrequency();
     mFamily = proc.getCPUFamilyName();
@@ -631,6 +636,22 @@ LLCPUInfo::LLCPUInfo()
     if (mHasAVX512F)
     {
         mSIMDVersions.append("AVX-512F");
+    }
+    if (mHasNEON)
+    {
+        mSIMDVersions.append("NEON");
+    }
+    if (mHasNEONDotProd)
+    {
+        mSIMDVersions.append("NEON DotProd");
+    }
+    if (mHasNEONFP16)
+    {
+        mSIMDVersions.append("NEON FP16");
+    }
+    if (mHasSVE)
+    {
+        mSIMDVersions.append("SVE");
     }
 }
 
@@ -687,6 +708,26 @@ bool LLCPUInfo::hasAVX2() const
 bool LLCPUInfo::hasAVX512F() const
 {
     return mHasAVX512F;
+}
+
+bool LLCPUInfo::hasNEON() const
+{
+    return mHasNEON;
+}
+
+bool LLCPUInfo::hasNEONDotProd() const
+{
+    return mHasNEONDotProd;
+}
+
+bool LLCPUInfo::hasNEONFP16() const
+{
+    return mHasNEONFP16;
+}
+
+bool LLCPUInfo::hasSVE() const
+{
+    return mHasSVE;
 }
 
 F64 LLCPUInfo::getMHz() const
@@ -805,23 +846,28 @@ U32Kilobytes LLMemoryInfo::getHardwareMemSize()
 
 U32Kilobytes LLMemoryInfo::getPhysicalMemoryKB() const
 {
+    // Installed RAM does not change while we are running, so pay for it once.
+    static const U32Kilobytes sPhysicalMemoryKB = []
+    {
 #if LL_WINDOWS
-    MEMORYSTATUSEX state = {};
-    state.dwLength = sizeof(state);
-    GlobalMemoryStatusEx(&state);
-    return LLMemoryAdjustKBResult(U64Bytes(state.ullTotalPhys));
+        MEMORYSTATUSEX state = {};
+        state.dwLength = sizeof(state);
+        GlobalMemoryStatusEx(&state);
+        return LLMemoryAdjustKBResult(U64Bytes(state.ullTotalPhys));
 #elif LL_DARWIN
-    return getHardwareMemSize();
+        return getHardwareMemSize();
 
 #elif LL_LINUX
-    U64 phys = 0;
-    phys = (U64)(getpagesize()) * (U64)(get_phys_pages());
-    return U64Bytes(phys);
+        U64 phys = (U64)(getpagesize()) * (U64)(get_phys_pages());
+        return U32Kilobytes::convert(U64Bytes(phys));
 
 #else
-    return 0;
+        return U32Kilobytes(0);
 
 #endif
+    }();
+
+    return sPhysicalMemoryKB;
 }
 
 //static
@@ -829,9 +875,36 @@ void LLMemoryInfo::updateAvailableMemory()
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_MEMORY;
 #if LL_WINDOWS
-    // On windows loadStatsMap will fill sAvailPhysicalMemInKB,
-    // sAvailCommitMemInMB, sAllocatedMemInKB and sAllocatedPageSizeInKB
-    loadStatsMap();
+    MEMORYSTATUSEX state = {};
+    state.dwLength = sizeof(state);
+    if (GlobalMemoryStatusEx(&state))
+    {
+        LLMemory::sAvailPhysicalMemInKB = U32Kilobytes::convert(U64Bytes(state.ullAvailPhys));
+
+        // Despite the confusing naming "PageFile", this is the committed memory
+        // limit for the system or the current process, whichever is smaller.
+        LLMemory::sAvailCommitMemInMB = U32Megabytes::convert(U64Bytes(state.ullAvailPageFile));
+    }
+    else
+    {
+        // no figure is better than stack garbage read as one
+        LLMemory::sAvailPhysicalMemInKB = U32Kilobytes(U32_MAX);
+        LLMemory::sAvailCommitMemInMB = U32Megabytes(U32_MAX);
+    }
+
+    PROCESS_MEMORY_COUNTERS_EX pmem;
+    pmem.cb = sizeof(pmem);
+    // See loadStatsMap() for why this pointer is cast.
+    if (GetProcessMemoryInfo(GetCurrentProcess(), (PROCESS_MEMORY_COUNTERS*)&pmem, sizeof(pmem)))
+    {
+        LLMemory::sAllocatedMemInKB = U32Kilobytes::convert(U64Bytes(pmem.WorkingSetSize));
+        LLMemory::sAllocatedPageSizeInKB = U32Kilobytes::convert(U64Bytes(pmem.PagefileUsage));
+    }
+    else
+    {
+        LLMemory::sAllocatedMemInKB = U32Kilobytes(0);
+        LLMemory::sAllocatedPageSizeInKB = U32Kilobytes(0);
+    }
 
 #elif LL_DARWIN
     // use host_statistics64 to get memory info
@@ -851,33 +924,27 @@ void LLMemoryInfo::updateAvailableMemory()
     }
 
 #elif LL_LINUX
-    bool found_available = false;
-    LLFILE* fp = LLFile::fopen(MEMINFO_FILE, LLFILE_MODE("rb"));
-    if (fp)
+    // MemAvailable is the kernel's own estimate of what can be had without
+    // swapping, page cache included. The free page count leaves the cache
+    // out, and reads as scarcity on any desktop that has been up for an hour.
+    unsigned long long avail_kb = 0;
+    if (FILE* meminfo = fopen("/proc/meminfo", "r"))
     {
-        char buff[2048];
-        size_t nbytes = fread(buff, 1, sizeof(buff) - 1, fp);
-        buff[nbytes] = '\0';
-        fclose(fp);
-
-        char* memp = strstr(buff, "MemAvailable:");
-        if (memp)
+        char line[128];
+        while (fgets(line, sizeof(line), meminfo))
         {
-            unsigned long long mem_avail_kb = 0;
-            if (sscanf(memp, "MemAvailable: %llu", &mem_avail_kb) == 1)
+            if (sscanf(line, "MemAvailable: %llu kB", &avail_kb) == 1)
             {
-                LLMemory::sAvailPhysicalMemInKB = U32Kilobytes(mem_avail_kb);
-                found_available = true;
+                break;
             }
         }
+        fclose(meminfo);
     }
-
-    if (!found_available)
+    if (avail_kb == 0)
     {
-        // Fallback for pre-3.14 kernels or container environments without MemAvailable
-        U64 phys = U64(getpagesize()) * U64(get_avphys_pages());
-        LLMemory::sAvailPhysicalMemInKB = U64Bytes(phys);
+        avail_kb = (unsigned long long)getpagesize() * (unsigned long long)get_avphys_pages() / 1024ULL;
     }
+    LLMemory::sAvailPhysicalMemInKB = U32Kilobytes((U32)llmin(avail_kb, (unsigned long long)U32_MAX - 1));
 #else
     //do not know how to collect available memory info for other systems.
     //leave it blank here for now.
@@ -969,9 +1036,6 @@ LLSD LLMemoryInfo::loadStatsMap()
     stats.add("Total Virtual MB", state.ullTotalVirtual/mb_div);  // ~134 million MB
     stats.add("Avail Virtual MB", state.ullAvailVirtual/mb_div);
 
-    LLMemory::sAvailPhysicalMemInKB = U32Kilobytes::convert(U64Bytes(state.ullAvailPhys));
-    LLMemory::sAvailCommitMemInMB = U32Megabytes::convert(U64Bytes(state.ullAvailPageFile));
-
     // SL-12122 - Call to GetPerformanceInfo() was removed here. Took
     // on order of 10 ms, causing unacceptable frame time spike every
     // second, and results were never used. If this is needed in the
@@ -988,9 +1052,6 @@ LLSD LLMemoryInfo::loadStatsMap()
     // pointer.
     if (GetProcessMemoryInfo(GetCurrentProcess(), (PROCESS_MEMORY_COUNTERS*)&pmem, sizeof(pmem)))
     {
-        LLMemory::sAllocatedMemInKB = U32Kilobytes::convert(U64Bytes(pmem.WorkingSetSize));
-        LLMemory::sAllocatedPageSizeInKB = U32Kilobytes::convert(U64Bytes(pmem.PagefileUsage));
-
         stats.add("Page Fault Count", pmem.PageFaultCount);
         stats.add("PeakWorkingSetSize KB", pmem.PeakWorkingSetSize / div);
         stats.add("WorkingSetSize KB", pmem.WorkingSetSize / div);
@@ -1004,9 +1065,6 @@ LLSD LLMemoryInfo::loadStatsMap()
     }
     else
     {
-        LLMemory::sAllocatedMemInKB = U32Kilobytes(0);
-        LLMemory::sAllocatedPageSizeInKB = U32Kilobytes(0);
-
         stats.add("Page Fault Count", 0);
         stats.add("PeakWorkingSetSize KB", 0);
         stats.add("WorkingSetSize KB", 0);

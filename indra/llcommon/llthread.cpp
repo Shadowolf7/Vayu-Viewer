@@ -47,6 +47,8 @@
 #include <pthread.h>
 #endif
 
+#include "alsimd.h"
+
 
 #ifdef LL_WINDOWS
 
@@ -88,6 +90,31 @@ void set_thread_name(const char* threadName)
 #endif
 }
 
+// Denormals flushed to zero on the way in and out, rounding to nearest. On
+// x86-64 those are three fields of MXCSR; on aarch64 the FZ bit of FPCR
+// covers both directions and RMode of zero is nearest.
+void set_thread_fp_mode()
+{
+#if AL_SIMD_X86
+    _MM_SET_FLUSH_ZERO_MODE(_MM_FLUSH_ZERO_ON);
+    _MM_SET_DENORMALS_ZERO_MODE(_MM_DENORMALS_ZERO_ON);
+    _MM_SET_ROUNDING_MODE(_MM_ROUND_NEAREST);
+#else
+    constexpr uint64_t FPCR_FZ = 1ull << 24;
+    constexpr uint64_t FPCR_RMODE = 3ull << 22;
+    #if defined(_MSC_VER)
+    uint64_t fpcr = static_cast<uint64_t>(_ReadStatusReg(ARM64_FPCR));
+    fpcr = (fpcr | FPCR_FZ) & ~FPCR_RMODE;
+    _WriteStatusReg(ARM64_FPCR, static_cast<__int64>(fpcr));
+    #else
+    uint64_t fpcr;
+    __asm__ volatile("mrs %0, fpcr" : "=r"(fpcr));
+    fpcr = (fpcr | FPCR_FZ) & ~FPCR_RMODE;
+    __asm__ volatile("msr fpcr, %0" : : "r"(fpcr));
+    #endif
+#endif
+}
+
 //----------------------------------------------------------------------------
 // Usage:
 // void run_func(LLThread* thread)
@@ -126,7 +153,7 @@ namespace
 
     U32 exception_filter(U32 code, struct _EXCEPTION_POINTERS* exception_infop)
     {
-        if (LLApp::instance()->reportCrashToBugsplat((void*)exception_infop))
+        if (LLApp::instance()->reportCrash((void*)exception_infop))
         {
             // Handled
             return EXCEPTION_CONTINUE_SEARCH;
@@ -234,6 +261,7 @@ void setThreadLocalSlot(size_t slot, void* value)
 void LLThread::threadRun()
 {
     set_thread_name(mName.c_str());
+    set_thread_fp_mode();
     LL_PROFILER_SET_THREAD_NAME( mName.c_str() );
 
     // this is the first point at which we're actually running in the new thread
@@ -277,7 +305,6 @@ void LLThread::tryRun()
     {
         LL_WARNS("THREAD") << "ContinueException on thread '" << mName <<
             "'. Error what is: '" << e.what() << "'" << LL_ENDL;
-        LLError::LLCallStacks::print();
 
         LOG_UNHANDLED_EXCEPTION("LLThread");
     }

@@ -35,6 +35,7 @@
 #include "lldir.h"
 #include "llsingleton.h"
 #include "llheteromap.h"
+#include "alviewtype.h"
 
 class LLView;
 void deleteView(LLView*); // Inside LLView.cpp, avoid having to potentially delete an incomplete type here.
@@ -70,14 +71,84 @@ class LLWidgetNameRegistry
     LLSINGLETON_EMPTY_CTOR(LLWidgetNameRegistry);
 };
 
-// lookup function for generating empty param block by widget type
-// this is used for schema generation
-//typedef const LLInitParam::BaseBlock& (*empty_param_block_func_t)();
-//class LLDefaultParamBlockRegistry
-//: public LLRegistrySingleton<std::type_index, empty_param_block_func_t, LLDefaultParamBlockRegistry>
-//{
-//  LLSINGLETON(LLDefaultParamBlockRegistry);
-//};
+// lookup a widget's tag by its view type; a class registered under no tag
+// is looked up through its bases by LLUICtrlFactory::widgetTag
+class LLWidgetTagRegistry
+:   public LLRegistrySingleton<const ALViewType*, std::string, LLWidgetTagRegistry>
+{
+    LLSINGLETON_EMPTY_CTOR(LLWidgetTagRegistry);
+};
+
+// A block's parameter table is built by constructing one, so a widget type
+// nothing has ever created has an empty table. The schema wants every tag,
+// including the ones a session never reached, and this is how it gets them:
+// the default block, built the first time it is asked for.
+typedef const LLInitParam::BaseBlock& (*empty_param_block_func_t)();
+
+template <typename PARAM_BLOCK>
+const LLInitParam::BaseBlock& get_empty_param_block()
+{
+    static const PARAM_BLOCK sBlock;
+    return sBlock;
+}
+
+// lookup a widget's default parameter block by its tag
+class LLWidgetBlockRegistry
+:   public LLRegistrySingleton<std::string, empty_param_block_func_t, LLWidgetBlockRegistry>
+{
+    LLSINGLETON_EMPTY_CTOR(LLWidgetBlockRegistry);
+};
+
+// The same block with the widget's own template read into it, and its base
+// blocks' templates under that. A file that writes nothing about an element
+// still gets these: they are what the element carries, where the block above
+// is only what C++ declared. Built the first time it is asked for, since it
+// reads skin files and the registration happens before there are any.
+template <typename WIDGET>
+const LLInitParam::BaseBlock& get_default_param_block();
+
+class LLWidgetDefaultsRegistry
+:   public LLRegistrySingleton<std::string, empty_param_block_func_t, LLWidgetDefaultsRegistry>
+{
+    LLSINGLETON_EMPTY_CTOR(LLWidgetDefaultsRegistry);
+};
+
+// The two things the schema reads about a tag: the block it builds from and
+// the tags valid below it. A widget in a child registry records them where
+// it registers. A root has no such moment -- a floater is never below
+// anything, so no child registry names it -- and says so here instead.
+template <typename T>
+void registerWidgetSchema(const char* tag)
+{
+    if (!LLWidgetBlockRegistry::instance().exists(tag))
+    {
+        LLWidgetBlockRegistry::instance().defaultRegistrar()
+            .add(tag, &get_empty_param_block<typename T::Params>);
+        LLWidgetDefaultsRegistry::instance().defaultRegistrar()
+            .add(tag, &get_default_param_block<T>);
+        LLChildRegistryRegistry::instance().defaultRegistrar()
+            .add(tag, &T::child_registry_t::instance());
+    }
+
+    // And the tag a built view answers to. Without it a floater is looked
+    // up through its bases and comes back as a panel, so every parameter
+    // only a floater has reads as one no widget of that name declares.
+    if constexpr (ALViewTypeOf<T>::declared)
+    {
+        if (!LLWidgetTagRegistry::instance().exists(&T::sViewType))
+        {
+            LLWidgetTagRegistry::instance().defaultRegistrar().add(&T::sViewType, tag);
+        }
+    }
+}
+
+// One of these as a file-scope static is how a root tag registers.
+template <typename T>
+class LLWidgetSchemaRegistrar
+{
+public:
+    explicit LLWidgetSchemaRegistrar(const char* tag) { registerWidgetSchema<T>(tag); }
+};
 
 // Build time optimization, generate this once in .cpp file
 #ifndef LLUICTRLFACTORY_CPP
@@ -130,6 +201,16 @@ public:
     std::string getCurFileName();
     void pushFileName(const std::string& name);
     void popFileName();
+
+    // Forget every widget's cached defaults, so the next widget of each
+    // type reads its template again. A skin or language switch needs this:
+    // the cache is keyed by parameter block type, not by where the
+    // template came from.
+    void flushDefaults();
+
+    // The tag a view type is built from, or the nearest base's, or null
+    // when no base is registered either.
+    static const std::string* widgetTag(const ALViewType* type);
 
     // For a caller building many widgets from one template: merge the defaults
     // into the template once and come here, rather than have create() derive
@@ -184,7 +265,7 @@ public:
             LLView* view = getInstance()->createFromXML(root_node, parent, filename, registry);
             if (view)
             {
-                widget = dynamic_cast<T*>(view);
+                widget = ALViewType::as<T>(view);
                 // not of right type, so delete it
                 if (!widget)
                 {
@@ -220,6 +301,7 @@ private:
 
     // helper function for adding widget type info to various registries
     static void registerWidget(std::type_index widget_type, std::type_index param_block_type, const std::string& tag);
+    static void registerWidgetTag(const ALViewType* type, const std::string& tag);
 
     static void loadWidgetTemplate(const std::string& widget_tag, LLInitParam::BaseBlock& block);
 
@@ -323,7 +405,13 @@ private:
     LLHeteroMap mParamDefaultsMap;
 };
 
-template <typename PARAM_BLOCK, int DUMMY>
+template <typename WIDGET>
+const LLInitParam::BaseBlock& get_default_param_block()
+{
+    return LLUICtrlFactory::getDefaultParams<WIDGET>();
+}
+
+template<typename PARAM_BLOCK, int DUMMY>
 LLUICtrlFactory::ParamDefaults<PARAM_BLOCK, DUMMY>::ParamDefaults()
 {
     // look up template file for this param block...
@@ -356,11 +444,17 @@ LLChildRegistry<DERIVED>::Register<T>::Register(const char* tag, LLWidgetCreator
     }
     // add this widget to various registries
     LLUICtrlFactory::instance().registerWidget(typeid(T), typeid(typename T::Params), tag);
+    // A class that declared no type of its own would register its base's
+    if constexpr (ALViewTypeOf<T>::declared)
+    {
+        LLUICtrlFactory::registerWidgetTag(&T::sViewType, tag);
+    }
 
-    // since registry_t depends on T, do this in line here
-    // TODO: uncomment this for schema generation
-    //typedef typename T::child_registry_t registry_t;
-    //LLChildRegistryRegistry::instance().defaultRegistrar().add(typeid(T), registry_t::instance());
+    // What the schema reads, recorded here because this is the last place T
+    // is known. A widget registered under more than one registry answers to
+    // the same tag each time, so the first registration is the one that
+    // stands.
+    registerWidgetSchema<T>(tag);
 }
 
 #endif //LLUICTRLFACTORY_H

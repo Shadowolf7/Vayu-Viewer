@@ -163,9 +163,9 @@ bool LLEditingMotion::onActivate()
 //-----------------------------------------------------------------------------
 bool LLEditingMotion::onUpdate(F32 time, U8* joint_mask)
 {
-    LL_PROFILE_ZONE_SCOPED;
+    LL_PROFILE_ZONE_SCOPED_CATEGORY_AVATAR;
     LLVector3 focus_pt;
-    LLVector3* pointAtPt = (LLVector3*)mCharacter->getAnimationData("PointAtPoint");
+    LLVector3* pointAtPt = (LLVector3*)mCharacter->getAnimationData(LLCharacter::ANIM_CHANNEL_POINT_AT_POINT);
 
 
     bool result = true;
@@ -247,8 +247,7 @@ bool LLEditingMotion::onUpdate(F32 time, U8* joint_mask)
         mWristState->setRotation(LLQuaternion::DEFAULT);
     }
 
-    mCharacter->setAnimationData("Hand Pose", &sHandPose);
-    mCharacter->setAnimationData("Hand Pose Priority", &sHandPosePriority);
+    mCharacter->requestHandPose(sHandPose, sHandPosePriority);
     return result;
 }
 

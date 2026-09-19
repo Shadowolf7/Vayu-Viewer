@@ -146,8 +146,9 @@ private:
 
 };
 
-struct MainPanel : public LLPanel
+struct MainPanel final : public LLPanel
 {
+    AL_VIEW_TYPE(MainPanel, LLPanel);
 };
 
 static const U32 MAX_SNAPSHOT_IMAGE_SIZE = 7680; // max snapshot image size 7680 * 7680 UHDTV2
@@ -229,12 +230,12 @@ public:
                 void handleMouseDragged(LLWindow *window,  LLCoordGL pos, MASK mask);
     /*virtual*/ void handleMouseLeave(LLWindow *window);
     /*virtual*/ void handleResize(LLWindow *window,  S32 x,  S32 y);
+    /*virtual*/ void handleRequestResolutionUpdate(LLWindow* window);
     /*virtual*/ void handleFocus(LLWindow *window);
     /*virtual*/ void handleFocusLost(LLWindow *window);
     /*virtual*/ bool handleActivate(LLWindow *window, bool activated);
     /*virtual*/ bool handleActivateApp(LLWindow *window, bool activating);
     /*virtual*/ void handleMenuSelect(LLWindow *window,  S32 menu_item);
-    /*virtual*/ bool handlePaint(LLWindow *window,  S32 x,  S32 y,  S32 width,  S32 height);
     /*virtual*/ void handleScrollWheel(LLWindow *window,  LLScrollDelta delta);
     /*virtual*/ void handleScrollHWheel(LLWindow *window,  LLScrollDelta delta);
     /*virtual*/ bool handleDoubleClick(LLWindow *window,  LLCoordGL pos, MASK mask);

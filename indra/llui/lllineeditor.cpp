@@ -290,7 +290,10 @@ void LLLineEditor::onFocusLost()
         gEditMenuHandler = NULL;
     }
 
-    getWindow()->showCursorFromMouseMove();
+    if (LLWindow* window = getWindow())
+    {
+        window->showCursorFromMouseMove();
+    }
 
     LLUICtrl::onFocusLost();
 }
@@ -420,12 +423,12 @@ void LLLineEditor::updateTextPadding()
 }
 
 
-void LLLineEditor::setText(const LLStringExplicit &new_text)
+void LLLineEditor::setText(ALStringViewExplicit new_text)
 {
     setText(new_text, true);
 }
 
-void LLLineEditor::setText(const LLStringExplicit &new_text, bool use_size_limit)
+void LLLineEditor::setText(ALStringViewExplicit new_text, bool use_size_limit)
 {
     // If new text is identical, don't copy and don't move insertion point
     if (mText.getString() == new_text)
@@ -443,7 +446,7 @@ void LLLineEditor::setText(const LLStringExplicit &new_text, bool use_size_limit
     // also consider entire string selected when mSelectAllonFocusReceived is set on an empty, focused line editor
     all_selected = all_selected || (len == 0 && hasFocus() && mSelectAllonFocusReceived);
 
-    std::string truncated_utf8 = new_text;
+    std::string truncated_utf8(new_text);
     // Whatever the caller was handed -- an object name off the wire, a value
     // out of an asset -- and nothing promises it is UTF-8. The conversion into
     // the UTF-32 this field used to hold ran simdutf and replaced what it
@@ -976,8 +979,8 @@ bool LLLineEditor::handleMouseDown(S32 x, S32 y, MASK mask)
     // delay cursor flashing
     mKeystrokeTimer.reset();
 
-    if (mMouseDownSignal)
-        (*mMouseDownSignal)(this,x,y,mask);
+    if (mouse_signal_t* signal = mouseDownSignal())
+        (*signal)(this,x,y,mask);
 
     return true;
 }
@@ -1104,8 +1107,8 @@ bool LLLineEditor::handleMouseUp(S32 x, S32 y, MASK mask)
     }
 
     // We won't call LLUICtrl::handleMouseUp to avoid double calls of  childrenHandleMouseUp().Just invoke the signal manually.
-    if (mMouseUpSignal)
-        (*mMouseUpSignal)(this,x,y, mask);
+    if (mouse_signal_t* signal = mouseUpSignal())
+        (*signal)(this,x,y, mask);
     return handled;
 }
 
@@ -1266,7 +1269,10 @@ void LLLineEditor::addChar(const llwchar uni_char)
         }
     }
 
-    getWindow()->hideCursorUntilMouseMove();
+    if (LLWindow* window = getWindow())
+    {
+        window->hideCursorUntilMouseMove();
+    }
 }
 
 // Extends the selection box to the new cursor position
@@ -2152,6 +2158,18 @@ void LLLineEditor::draw()
         }
     }
 
+    // Name the text about to be drawn. These buffers cannot compare the text
+    // they are handed, and they are also asked for widths through textWidth()
+    // against whatever mText holds at the time -- which is not always this
+    // string. A password field has just swapped mText for bullets above, so
+    // outside draw() they measure the password and inside it they draw the
+    // bullets: two strings through one cache, and the width slots are keyed on
+    // the span rather than the bytes.
+    const U32 text_generation = mText.getGeneration();
+    mFontBufferPreSelection.setSource(&mText, text_generation);
+    mFontBufferSelection.setSource(&mText, text_generation);
+    mFontBufferPostSelection.setSource(&mText, text_generation);
+
     S32 rendered_text = 0;
     F32 rendered_pixels_right = (F32)mTextLeftEdge;
 
@@ -2366,7 +2384,10 @@ void LLLineEditor::draw()
 
                 ime_pos.mX = (S32) (ime_pos.mX * LLUI::getScaleFactor().mV[VX]);
                 ime_pos.mY = (S32) (ime_pos.mY * LLUI::getScaleFactor().mV[VY]);
-                getWindow()->setLanguageTextInput( ime_pos );
+                if (LLWindow* window = getWindow())
+                {
+                    window->setLanguageTextInput(ime_pos);
+                }
             }
         }
 
@@ -2401,6 +2422,12 @@ void LLLineEditor::draw()
         // draw label if no text provided
         if (0 == mText.lengthBytes())
         {
+            // The label is named to its buffer the way the text is named to
+            // the other three. A caller that changes a placeholder while the
+            // field is on screen -- and one that never changes it is only the
+            // common case, not the contract -- would otherwise have the
+            // buffer replay the label it recorded first.
+            mFontBufferLabel.setSource(&mLabel, mLabel.getGeneration());
             mFontBufferLabel.renderBytes(mGLFont,
                             mLabel.getString(), 0,
                             (F32)mTextLeftEdge, (F32)text_bottom,
@@ -2533,9 +2560,11 @@ void LLLineEditor::setFocus( bool new_state )
 {
     bool old_state = hasFocus();
 
-    if (!new_state)
+    // Language input is the window's to allow, where there is one.
+    LLWindow* window = getWindow();
+    if (!new_state && window)
     {
-        getWindow()->allowLanguageTextInput(this, false);
+        window->allowLanguageTextInput(this, false);
     }
 
 
@@ -2570,14 +2599,14 @@ void LLLineEditor::setFocus( bool new_state )
 
     LLUICtrl::setFocus( new_state );
 
-    if (new_state)
+    if (new_state && window)
     {
         // Allow Language Text Input only when this LineEditor has
         // no prevalidate function attached.  This criterion works
         // fine on 1.15.0.2, since all prevalidate func reject any
         // non-ASCII characters.  I'm not sure on future versions,
         // however.
-        getWindow()->allowLanguageTextInput(this, !mPrevalidator);
+        window->allowLanguageTextInput(this, !mPrevalidator);
     }
 }
 

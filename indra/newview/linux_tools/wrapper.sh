@@ -68,13 +68,6 @@ cd "${RUN_PATH}" || exit
 # user moving/upgrading an installed copy in place), that should be a
 # deliberate opt-in for that scenario, not the default for every launch.
 
-## Before we mess with LD_LIBRARY_PATH, save the old one to restore for
-##  subprocesses that care.
-export SAVED_LD_LIBRARY_PATH="${LD_LIBRARY_PATH}"
-
-# Add our library directory
-export LD_LIBRARY_PATH="$PWD/lib:${LD_LIBRARY_PATH}"
-
 # Copy "$@" to ARGS array specifically to delete the --skip-gridargs switch.
 # The gridargs.dat file is no more, but we still want to avoid breaking
 # scripts that invoke this one with --skip-gridargs.

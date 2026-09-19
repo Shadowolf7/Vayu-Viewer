@@ -123,9 +123,10 @@ public:
 };
 LLObjectIMHandler gObjectIMHandler;
 
-class LLChatHistoryHeader: public LLPanel
+class LLChatHistoryHeader final: public LLPanel
 {
 public:
+    AL_VIEW_TYPE(LLChatHistoryHeader, LLPanel);
     LLChatHistoryHeader()
     :   LLPanel(),
         mInfoCtrl(NULL),
@@ -175,7 +176,7 @@ public:
         }
     }
 
-    bool handleMouseUp(S32 x, S32 y, MASK mask)
+    bool handleMouseUp(S32 x, S32 y, MASK mask) override
     {
         return LLPanel::handleMouseUp(x,y,mask);
     }
@@ -662,7 +663,7 @@ public:
         return false;
     }
 
-    bool postBuild()
+    bool postBuild() override
     {
         setDoubleClickCallback(boost::bind(&LLChatHistoryHeader::showInspector, this));
 
@@ -704,7 +705,7 @@ public:
         return  child->pointInView(local_x, local_y);
     }
 
-    bool handleRightMouseDown(S32 x, S32 y, MASK mask)
+    bool handleRightMouseDown(S32 x, S32 y, MASK mask) override
     {
         if(pointInChild("avatar_icon",x,y) || pointInChild("user_name",x,y))
         {
@@ -738,7 +739,7 @@ public:
     {
         if (!info_ctrl) return;
 
-        LLChatHistoryHeader* header = dynamic_cast<LLChatHistoryHeader*>(info_ctrl->getParent());
+        LLChatHistoryHeader* header = info_ctrl->getParentAs<LLChatHistoryHeader>();
         if (!header) return;
 
         header->showInspector();
@@ -927,7 +928,7 @@ public:
         }
     }
 
-    /*virtual*/ void draw()
+    /*virtual*/ void draw() override
     {
         LLTextBox* user_name = mUserNameTextBox; //getChild<LLTextBox>("user_name");
         LLTextBox* time_box = mTimeBoxTextBox; //getChild<LLTextBox>("time_box");
@@ -1697,7 +1698,7 @@ void LLChatHistory::appendMessage(const LLChat& chat, const LLSD &args, const LL
                 // Note: it might be better to simply add a "pending offer" flag somewhere
                 for (auto& panel : LLToastNotifyPanel::instance_snapshot())
                 {
-                    LLIMToastNotifyPanel * imtoastp = dynamic_cast<LLIMToastNotifyPanel *>(&panel);
+                    LLIMToastNotifyPanel * imtoastp = panel.as<LLIMToastNotifyPanel>();
                     const std::string& notification_name = panel.getNotificationName();
                     if (notification_name == "OfferFriendship"
                         && panel.isControlPanelEnabled()
