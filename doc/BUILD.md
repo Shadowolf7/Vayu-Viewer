@@ -162,16 +162,18 @@ rustup default stable
 
 ## Clone and bootstrap
 
-Vayu vendors the [Dullahan](https://github.com/AlchemyViewer/dullahan) CEF wrapper — used by the in-world web media plugin — as a git submodule under `indra/dullahan`. It builds from source as part of the tree, so the submodule must be present before you configure. Clone with `--recurse-submodules`, then set up the Python venv and .NET tools:
+Vayu vendors the [Dullahan](https://github.com/AlchemyViewer/dullahan) CEF wrapper — used by the in-world web media plugin — as a git submodule under `indra/dullahan`. It builds from source as part of the tree, so the submodule must be present before you configure. Clone with `--recurse-submodules`:
 
 ```
 git clone --recurse-submodules https://github.com/Shadowolf7/Vayu-Viewer.git vayu-viewer
 cd vayu-viewer
-python3 -m venv .venv
-# Windows: .\.venv\Scripts\Activate.ps1
-# Unix:    source .venv/bin/activate
+dotnet tool restore        # Velopack installers only
+```
+
+Optional: To run the unit tests that spawn a Python peer (`llleap`, `llprocess`, `llsdserialize`, `llcorehttp`), set up a virtual environment for the `llsd` peer runner:
+```
+python3 -m venv .venv && source .venv/bin/activate   # Windows: .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-dotnet tool restore        # packaging only
 ```
 
 Already cloned without `--recurse-submodules`? Fetch the submodules before configuring:
@@ -254,21 +256,14 @@ See `workflowPresets` in the generator files under `indra/cmake/presets/` for th
 
 After configuring, build with CMake or your IDE.
 
-> [!IMPORTANT]
-> **Always activate `.venv` for full viewer builds**:
-> The project virtual environment (`source .venv/bin/activate` on Unix, `.\.venv\Scripts\Activate.ps1` on Windows) must be active whenever building full viewer binaries or packages (e.g. `vayu-bin`). Post-build staging scripts (`viewer_manifest.py`) and packaging utilities require the venv's Python environment and installed packages (`requirements.txt`).
-
 ### From the command line
 
 ```bash
-# Activate the virtual environment
-source .venv/bin/activate
-
 # Multi-config generators (VS, Xcode, Ninja Multi-Config)
 cmake --build <build-dir> --config Release
 
-# Or using Ninja Multi-Config directly
-ninja -C build-Linux-ninja-perf -f build-Release.ninja vayu-bin:Release
+# Or using Ninja Multi-Config directly (Linux canonical)
+ninja -C build-Linux-ninja-perf -f build-Release.ninja vayu-bin
 
 # Or use a build preset
 cmake --build --preset ninja-os-release

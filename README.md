@@ -21,9 +21,7 @@ Vayu uses CMake with vcpkg for dependency management. Platform setup, presets, b
 ```
 git clone --recurse-submodules https://github.com/Shadowolf7/Vayu-Viewer.git vayu-viewer
 cd vayu-viewer
-python3 -m venv .venv && source .venv/bin/activate   # Windows: .\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-dotnet tool restore                                  # packaging only
+dotnet tool restore                                  # Velopack installers only
 cmake -S indra --preset <preset>                     # see BUILD.md for presets
 cmake --build build-<OS>-<preset> --config Release
 ```
