@@ -313,6 +313,7 @@ if(AL_BUILD_VIEWER)
     lleventpoll.cpp
     llexpandabletextbox.cpp
     llexperiencelog.cpp
+    llexternaleditor.cpp
     llface.cpp
     llfavoritesbar.cpp
     llfeaturemanager.cpp
@@ -1106,6 +1107,7 @@ if(AL_BUILD_VIEWER)
     lleventpoll.h
     llexpandabletextbox.h
     llexperiencelog.h
+    llexternaleditor.h
     llface.h
     llfavoritesbar.h
     llfeaturemanager.h

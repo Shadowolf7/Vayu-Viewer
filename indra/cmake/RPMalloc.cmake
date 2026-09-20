@@ -14,6 +14,7 @@ include_guard()
 if (USE_RPMALLOC)
   add_library(rpmalloc STATIC ${INDRA_SOURCE_DIR}/externals/rpmalloc/rpmalloc/rpmalloc.c)
   target_include_directories(rpmalloc SYSTEM PUBLIC ${INDRA_SOURCE_DIR}/externals/rpmalloc/rpmalloc)
+  target_link_libraries(rpmalloc PRIVATE al::flags)
   target_compile_definitions(rpmalloc PRIVATE ENABLE_OVERRIDE=1)
 
   # llcommon.cpp defines its own operator new/delete when Tracy profiling is

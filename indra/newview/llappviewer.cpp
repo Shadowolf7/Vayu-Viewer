@@ -106,7 +106,7 @@
 #include "llurlmatch.h"
 #include "lltextutil.h"
 #include "lllogininstance.h"
-#include "llvvmquery.h"
+//#include "llvvmquery.h"
 
 #if LL_VELOPACK
 #include "llvelopack.h"

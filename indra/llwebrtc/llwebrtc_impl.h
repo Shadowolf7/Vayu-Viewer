@@ -42,7 +42,9 @@
 #include "alaudiodevicenotifier.h"
 #include "alaudioechobuffer.h"
 #include <cstdint>
+#include <cstddef>
 #include <memory>
+using std::nullptr_t;
 // WebRTC Includes
 #ifdef WEBRTC_WIN
 #pragma warning(push)

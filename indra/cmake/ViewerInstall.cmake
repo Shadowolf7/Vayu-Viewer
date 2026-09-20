@@ -438,7 +438,7 @@ install(
   FILES_MATCHING
   PATTERN "*.ini"
   PATTERN "*.xml"
-  PATTERN "alchemy_logo.png"
+  PATTERN "*logo.png"
   PATTERN "shaders" EXCLUDE
   PATTERN "camera" EXCLUDE
   PATTERN "windlight" EXCLUDE
@@ -580,7 +580,7 @@ endif()
 
 if(DARWIN)
   install(
-    FILES "${BRANDING_SOURCE_DIR}/viewer/icons/${ICON_PATH}/alchemy.icns"
+    FILES "${BRANDING_SOURCE_DIR}/viewer/icons/${ICON_PATH}/vayu.icns"
     DESTINATION "${AL_INSTALL_DATADIR}"
     COMPONENT viewer
   )
@@ -641,7 +641,13 @@ endif()
 if(LINUX)
   install(
     PROGRAMS "${al_newview_dir}/linux_tools/wrapper.sh"
-    RENAME alchemy
+    RENAME vayu
+    DESTINATION .
+    COMPONENT viewer
+  )
+  install(
+    PROGRAMS "${al_newview_dir}/linux_tools/wrapper-zink.sh"
+    RENAME vayu-zink
     DESTINATION .
     COMPONENT viewer
   )
@@ -657,8 +663,8 @@ if(LINUX)
   )
   install(DIRECTORY "${al_newview_dir}/res-sdl" DESTINATION . COMPONENT viewer)
   install(
-    FILES "${BRANDING_SOURCE_DIR}/viewer/icons/${ICON_PATH}/alchemy_256.png"
-    RENAME alchemy_icon.png
+    FILES "${BRANDING_SOURCE_DIR}/viewer/icons/${ICON_PATH}/vayu_256.png"
+    RENAME vayu_icon.png
     DESTINATION .
     COMPONENT viewer
   )

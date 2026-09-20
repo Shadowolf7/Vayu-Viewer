@@ -7851,18 +7851,22 @@ void LLPipeline::generateLensFlareState(LLRenderTarget* src)
         }
     }
     const LLVector4 light_dir = sun_up ? mSunDir : mMoonDir;
-    const glm::vec4 sun_clip = get_current_projection() * get_current_modelview() * glm::vec4(light_dir.mV[0], light_dir.mV[1], light_dir.mV[2], 0.0f);
+    LLVector4a sun_eye4a, sun_clip4a;
+    LLViewerCamera::getCurrent().getModelview().rotate(
+        LLVector4a(light_dir.mV[0], light_dir.mV[1], light_dir.mV[2], 0.f), sun_eye4a);
+    LLViewerCamera::getCurrent().getProjection().transform4(sun_eye4a, sun_clip4a);
     F32 edge_fade = 0.f;
-    if (sun_clip.w > 0.f)
+    if (sun_clip4a[3] > 0.f)
     {
-        const glm::vec2 sun_uv = glm::vec2(sun_clip.x, sun_clip.y) / sun_clip.w * 0.5f + 0.5f;
+        const LLVector2 sun_uv(sun_clip4a[0] / sun_clip4a[3] * 0.5f + 0.5f,
+                               sun_clip4a[1] / sun_clip4a[3] * 0.5f + 0.5f);
         constexpr F32 margin = 0.2f;
-        edge_fade = llclamp((sun_uv.x + margin) / margin, 0.f, 1.f)
-                  * llclamp(((1.f + margin) - sun_uv.x) / margin, 0.f, 1.f)
-                  * llclamp((sun_uv.y + margin) / margin, 0.f, 1.f)
-                  * llclamp(((1.f + margin) - sun_uv.y) / margin, 0.f, 1.f);
-        mLensFlareSunUV.mV[VX] = sun_uv.x;
-        mLensFlareSunUV.mV[VY] = sun_uv.y;
+        edge_fade = llclamp((sun_uv.mV[0] + margin) / margin, 0.f, 1.f)
+                  * llclamp(((1.f + margin) - sun_uv.mV[0]) / margin, 0.f, 1.f)
+                  * llclamp((sun_uv.mV[1] + margin) / margin, 0.f, 1.f)
+                  * llclamp(((1.f + margin) - sun_uv.mV[1]) / margin, 0.f, 1.f);
+        mLensFlareSunUV.mV[VX] = sun_uv.mV[0];
+        mLensFlareSunUV.mV[VY] = sun_uv.mV[1];
     }
 
     // Probe radius as a fraction of screen height: the body's own angular
@@ -8153,7 +8157,6 @@ void LLPipeline::colorCorrect(LLRenderTarget* src, LLRenderTarget* dst, bool app
                 F32 starburst_falloff = 4.f / (starburst_length + 0.05f);
                 shader->uniform1f(LLShaderMgr::LENS_FLARE_STARBURST_FALLOFF, starburst_falloff);
 
-                const bool sun_up = LLEnvironment::instance().getIsSunUp();
                 LLColor4 light_color = linearColor3(sun_up ? mSunDiffuse : mMoonDiffuse);
                 shader->uniform3f(LLShaderMgr::LENS_FLARE_LIGHT_COLOR, light_color.mV[0], light_color.mV[1], light_color.mV[2]);
             }

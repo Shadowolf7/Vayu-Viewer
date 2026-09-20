@@ -184,7 +184,7 @@ struct lluuid_less
     }
 };
 
-typedef safe_hset<LLUUID> uuid_list_t;
+typedef std::set<LLUUID, lluuid_less> uuid_list_t;
 /*
  * Sub-classes for keeping transaction IDs and asset IDs
  * straight.

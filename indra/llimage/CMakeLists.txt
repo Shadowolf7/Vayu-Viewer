@@ -36,7 +36,6 @@ target_sources(
     llimagedimensionsinfo.cpp
     llimagedxt.cpp
     llimagefilter.cpp
-    llimageformattype.cpp
     llimagej2c.cpp
     llimagejpeg.cpp
     llimagepng.cpp

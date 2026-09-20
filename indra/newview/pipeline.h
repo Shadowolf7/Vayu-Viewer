@@ -1004,6 +1004,8 @@ public:
     LLVector4           mTransformedSunDir;
     LLVector4           mTransformedMoonDir;
 
+    F32                 mLensFlareSunVisibility = 0.f;
+
     // Sun (or moon) on screen this frame in UV, from generateLensFlareState.
     LLVector2           mLensFlareSunUV = LLVector2(0.5f, 0.5f);
 
