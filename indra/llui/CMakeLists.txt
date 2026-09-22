@@ -5,6 +5,10 @@ add_library(llui STATIC)
 target_sources(
   llui
   PRIVATE
+    alangledial.cpp
+    alcornerfield.cpp
+    aloffsetpad.cpp
+    alpanefolds.cpp
     fsvirtualtrackpad.cpp
     hbexternaleditor.cpp
     llaccordionctrl.cpp
@@ -112,17 +116,21 @@ target_sources(
     llxuiparser.cpp
     alcanvasview.cpp
     alcolorfield.cpp
+    alcolortablepanel.cpp
     alcolorsheet.cpp
     aldeferredrebuild.cpp
     aldockpanel.cpp
     alemptystate.cpp
     alflagsfield.cpp
     alhistorylist.cpp
+    alimagefield.cpp
     aljumpbar.cpp
     alpopover.cpp
     alquickopen.cpp
     alscopebar.cpp
+    alsettingrow.cpp
     alspecimenlist.cpp
+    alstudiofloater.cpp
     altabstrip.cpp
     alfollowscontrol.cpp
     alfontfield.cpp
@@ -146,6 +154,10 @@ target_sources(
   PUBLIC
     FILE_SET HEADERS
       FILES
+        alangledial.h
+        alcornerfield.h
+        aloffsetpad.h
+        alpanefolds.h
         altextcaret.h
         alviewtype.h
         fsvirtualtrackpad.h
@@ -269,17 +281,22 @@ target_sources(
         llxuiparser.h
         alcanvasview.h
         alcolorfield.h
+        alcolortablepanel.h
         alcolorsheet.h
         aldeferredrebuild.h
         aldockpanel.h
         alemptystate.h
         alflagsfield.h
         alhistorylist.h
+        alimagefield.h
         aljumpbar.h
         alpopover.h
         alquickopen.h
         alscopebar.h
+        alsettingrow.h
         alspecimenlist.h
+        alstudiofloater.h
+        alundostack.h
         alstringmatch.h
         altabstrip.h
         alfollowscontrol.h
@@ -405,6 +422,8 @@ if(AL_BUILD_TESTS)
     llfloater
     alpropertygrid
     alcolorfield
+    alcolortablepanel
+    alimagefield
     alcolorpicker
     alfontfield
     alflagsfield
@@ -412,6 +431,9 @@ if(AL_BUILD_TESTS)
     alfollowscontrol
     alcanvasview
     aldockpanel
+    alpanefolds
+    alangledial
+    aloffsetpad
     alemptystate
     alxuifill
     alviewtype
@@ -431,8 +453,10 @@ if(AL_BUILD_TESTS)
     alxuiselection
     alxuisourcemap
     alxuitreemodel
+    alsettingrow
     alcolorsheet
     lluicolortable
+    alundostack
   )
     al_add_test(
       ${test}

@@ -232,6 +232,10 @@ Third-party dependencies are managed by [vcpkg](https://vcpkg.io) in manifest mo
 
 This repo handles it for you: `BootstrapVcpkg.cmake` auto-selects the `x64-linux-alchemy-clang` triplet (chainloads Clang for vcpkg's own port builds) whenever `CMAKE_CXX_COMPILER` matches `clang`, so the Clang flags below are safe as-is. The catch — **switching compilers on an already-configured tree forces a full vcpkg rebuild.** The triplet name is part of vcpkg's binary-cache key, so none of the ~300 already-built packages carry over; budget the same 30–60+ minutes as a from-scratch configure.
 
+An optional [R2 binary cache](VCPKG-R2.md) can restore matching dependencies.
+The setup guide covers pipeline environment variables, read-only developer
+access, retention, and rollout checks.
+
 #### Platform notes
 
 - **macOS** — `xcode-os` and `ninja-os` (no arch suffix) pick the host architecture. Use the explicit `-arm64` / `-x64` preset to cross-build (e.g. an arm64 bundle from an Intel Mac).
