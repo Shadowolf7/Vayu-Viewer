@@ -61,6 +61,8 @@ indra/newview/dbghelp.dll
 indra/newview/filters.xml
 indra/newview/fmod.dll
 indra/newview/fmod.log
+/fmodstudioapi20314linux/
+/.build-tmp/
 indra/newview/fonts
 indra/newview/mozilla-theme
 indra/newview/mozilla-universal-darwin.tgz
@@ -115,3 +117,4 @@ AGENTS.md
 GEMINI.md
 CLAUDE.md
 
+compile_commands.json

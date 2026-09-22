@@ -217,39 +217,30 @@ bool ImageRequest::processRequest()
             std::vector<U8> cache_buffer;
             if (VayuBCTextureCache::instance().readEntry(mID, discard, cache_header, cache_buffer))
             {
-                // Stale cache guard: if this job expects linear BC7/BC5/BC4 but the on-disk cache
-                // entry was recorded under legacy BC1, treat as a cache miss to re-encode properly.
-                const bool stale_bc1 = (cache_header.mFormat == (U8)EVayuBlockCompressionFormat::BC1) &&
-                                       (mTextureJob == EVayuTextureJob::MetallicRoughness ||
-                                        mTextureJob == EVayuTextureJob::Normal ||
-                                        mTextureJob == EVayuTextureJob::SingleChannelMask);
-                if (!stale_bc1)
-                {
-                    auto comp_res = std::make_shared<VayuBlockCompressionResult>();
-                    comp_res->mFormat = (EVayuBlockCompressionFormat)cache_header.mFormat;
-                    comp_res->mPreset = (EVayuBlockCompressionPreset)cache_header.mPreset;
-                    comp_res->mIsMask = (cache_header.mIsMask != 0);
-                    comp_res->mGLInternalFormat = cache_header.mGLInternalFormat;
-                    comp_res->mGLPrimaryFormat = cache_header.mGLPrimaryFormat;
-                    comp_res->mWidth = cache_header.mWidth;
-                    comp_res->mHeight = cache_header.mHeight;
-                    comp_res->mMipLevels = cache_header.mMipLevels;
-                    comp_res->mComponents = cache_header.mComponents;
-                    comp_res->mBuffer = std::move(cache_buffer);
+                auto comp_res = std::make_shared<VayuBlockCompressionResult>();
+                comp_res->mFormat = (EVayuBlockCompressionFormat)cache_header.mFormat;
+                comp_res->mPreset = (EVayuBlockCompressionPreset)cache_header.mPreset;
+                comp_res->mIsMask = (cache_header.mIsMask != 0);
+                comp_res->mGLInternalFormat = cache_header.mGLInternalFormat;
+                comp_res->mGLPrimaryFormat = cache_header.mGLPrimaryFormat;
+                comp_res->mWidth = cache_header.mWidth;
+                comp_res->mHeight = cache_header.mHeight;
+                comp_res->mMipLevels = cache_header.mMipLevels;
+                comp_res->mComponents = cache_header.mComponents;
+                comp_res->mBuffer = std::move(cache_buffer);
 
-                    if (mDecodedImageRaw.isNull())
-                    {
-                        mDecodedImageRaw = new LLImageRaw(cache_header.mWidth,
-                                                          cache_header.mHeight,
-                                                          cache_header.mComponents);
-                    }
-                    mDecodedImageRaw->setTextureJob(mTextureJob);
-                    mDecodedImageRaw->setBlockCompressionResult(comp_res);
-                    mFormattedImage->setDiscardLevel(discard);
-                    mDecodedRaw = true;
-                    done = true;
-                    cache_hit = true;
+                if (mDecodedImageRaw.isNull())
+                {
+                    mDecodedImageRaw = new LLImageRaw(cache_header.mWidth,
+                                                      cache_header.mHeight,
+                                                      cache_header.mComponents);
                 }
+                mDecodedImageRaw->setTextureJob(mTextureJob);
+                mDecodedImageRaw->setBlockCompressionResult(comp_res);
+                mFormattedImage->setDiscardLevel(discard);
+                mDecodedRaw = true;
+                done = true;
+                cache_hit = true;
             }
         }
 

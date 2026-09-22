@@ -452,7 +452,7 @@ void pump_idle_startup_network(void)
 //
 void update_texture_fetch()
 {
-    LLAppViewer::getTextureCache()->update(1); // unpauses the texture cache thread
+    LLAppViewer::getTextureCache()->update();
     LLAppViewer::getImageDecodeThread()->update(1); // unpauses the image thread
     LLAppViewer::getTextureFetch()->update(1); // unpauses the texture fetch thread
     gTextureList.updateImages(0.10f);

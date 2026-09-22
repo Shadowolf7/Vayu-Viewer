@@ -167,7 +167,6 @@ private:
     F32  updateImagesCreateTextures(F32 max_time);
     F32  updateImagesFetchTextures(F32 max_time);
     void updateImagesUpdateStats();
-    F32  updateImagesLoadingFastCache(F32 max_time);
 
     void addImage(LLViewerFetchedTexture *image, ETexListType tex_type);
     void deleteImage(LLViewerFetchedTexture *image);
@@ -205,7 +204,7 @@ private:
     LLImageRaw* getRawImageFromMemory(const U8* data, U32 size, std::string_view mimetype);
     LLViewerFetchedTexture* getImageFromMemory(const U8* data, U32 size, std::string_view mimetype);
 
-    LLViewerFetchedTexture* createImage(const LLUUID &image_id,
+    LLPointer<LLViewerFetchedTexture> createImage(const LLUUID &image_id,
                                      FTType f_type,
                                      bool usemipmap = true,
                                      LLViewerTexture::EBoostLevel boost_priority = LLGLTexture::BOOST_NONE,     // Get the requested level immediately upon creation.
@@ -232,9 +231,6 @@ public:
     image_queue_t mDownScaleQueue;
 
     image_list_t mCallbackList;
-
-    // new textures waiting for their first look in the fast cache, oldest first
-    std::deque<LLPointer<LLViewerFetchedTexture>> mFastCacheList;
 
     bool mForceResetTextureStats;
 

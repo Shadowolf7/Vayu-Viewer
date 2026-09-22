@@ -372,7 +372,6 @@ void LLViewerTextureList::shutdown()
         mCreateTextureList.front()->mCreatePending = false;
         mCreateTextureList.pop();
     }
-    mFastCacheList.clear();
 
     mImages.clear();
 
@@ -636,7 +635,7 @@ LLViewerFetchedTexture* LLViewerTextureList::getImage(const LLUUID &image_id,
 
 // Builds a texture for getImage to insert; the caller owns the reference and
 // the table entry, so this touches neither.
-LLViewerFetchedTexture* LLViewerTextureList::createImage(const LLUUID &image_id,
+LLPointer<LLViewerFetchedTexture> LLViewerTextureList::createImage(const LLUUID &image_id,
                                                    FTType f_type,
                                                    bool usemipmaps,
                                                    LLViewerTexture::EBoostLevel boost_priority,
@@ -692,9 +691,6 @@ LLViewerFetchedTexture* LLViewerTextureList::createImage(const LLUUID &image_id,
         //if this texture should be set to NO_DELETE, call setNoDelete() afterwards.
         imagep->forceActive() ;
     }
-
-    mFastCacheList.push_back(imagep);
-    imagep->setInFastCacheList(true);
 
     return imagep ;
 }
@@ -787,7 +783,6 @@ void LLViewerTextureList::updateImages(F32 max_time)
     LL_PROFILE_PLOT("TextureList: creates", (int64_t)sCreateCount);
     LL_PROFILE_PLOT("TextureList: deletes", (int64_t)sDeleteCount);
     LL_PROFILE_PLOT("TextureList: callback textures", (int64_t)mCallbackList.size());
-    LL_PROFILE_PLOT("TextureList: fast cache pending", (int64_t)mFastCacheList.size());
     LL_PROFILE_PLOT("TextureList: visits", (int64_t)sVisitCount);
     LL_PROFILE_PLOT("TextureList: visits boosted", (int64_t)sVisitBoostedCount);
     LL_PROFILE_PLOT("TextureList: visits faceless", (int64_t)sVisitFacelessCount);
@@ -833,10 +828,6 @@ void LLViewerTextureList::updateImages(F32 max_time)
     // make sure each call below gets at least its "fair share" of time
     F32 min_time = max_time * 0.33f;
     F32 remaining_time = max_time;
-
-    //loading from fast cache
-    remaining_time -= updateImagesLoadingFastCache(remaining_time);
-    remaining_time = llmax(remaining_time, min_time);
 
     //dispatch to texture fetch threads
     remaining_time -= updateImagesFetchTextures(remaining_time);
@@ -1141,10 +1132,6 @@ void LLViewerTextureList::updateImageDecodePriority(LLViewerFetchedTexture* imag
     {
         return;
     }
-    if (imagep->isInFastCacheList())
-    {
-        return; //wait for loading from the fast cache.
-    }
 
     imagep->processTextureStats();
 }
@@ -1249,47 +1236,6 @@ F32 LLViewerTextureList::updateImagesCreateTextures(F32 max_time)
     }
 
     return create_timer.getElapsedTimeF32();
-}
-
-F32 LLViewerTextureList::updateImagesLoadingFastCache(F32 max_time)
-{
-    LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
-    if (gGLManager.mIsDisabled) return 0.0f;
-    if(mFastCacheList.empty())
-    {
-        return 0.f;
-    }
-
-    //
-    // loading texture raw data from the fast cache directly.
-    //
-
-    LLTimer timer;
-    size_t loaded = 0;
-    {
-        // Prelock fast cache mutex to avoid waiting multiple times.
-        LLMutexTrylock fast_cache_lock(LLAppViewer::getTextureCache()->getFastCacheMutex());
-        if (!fast_cache_lock.isLocked())
-        {
-            // Cache is busy, skip this update cycle to avoid blocking the main thread.
-            //
-            // Generally fast cache operations are brief and rare in comparison to writing
-            // main texture body, but if disk is busy, it can get stuck for multiple
-            // seconds, waiting for that long is not practical.
-            // But some variant of a timed try lock for 0.1ms or less might be optimal.
-            return 0.0f;
-        }
-        // oldest first; the ones not reached wait at the front for the next call
-        for (const LLPointer<LLViewerFetchedTexture>& imagep : mFastCacheList)
-        {
-            imagep->loadFromFastCache();
-            ++loaded;
-            if (timer.getElapsedTimeF32() > max_time)
-                break;
-        }
-    }
-    mFastCacheList.erase(mFastCacheList.begin(), mFastCacheList.begin() + loaded);
-    return timer.getElapsedTimeF32();
 }
 
 void LLViewerTextureList::forceImmediateUpdate(LLViewerFetchedTexture* imagep)
@@ -1409,9 +1355,6 @@ void LLViewerTextureList::decodeAllImages(F32 max_time)
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
     LLTimer timer;
 
-    //loading from fast cache
-    max_time -= updateImagesLoadingFastCache(max_time);
-
     // Update texture stats and priorities
     for (image_table_t::const_iterator iter = mImages.begin();
          iter != mImages.end(); )
@@ -1432,7 +1375,7 @@ void LLViewerTextureList::decodeAllImages(F32 max_time)
     size_t fetch_pending = 0;
     while (1)
     {
-        LLAppViewer::instance()->getTextureCache()->update(1); // unpauses the texture cache thread
+        LLAppViewer::instance()->getTextureCache()->update();
         LLAppViewer::instance()->getImageDecodeThread()->update(1); // unpauses the image thread
         fetch_pending = LLAppViewer::instance()->getTextureFetch()->update(1); // unpauses the texture fetch thread
 

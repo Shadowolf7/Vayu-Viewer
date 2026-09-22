@@ -354,6 +354,8 @@ FMOD isn't fetched by vcpkg — it's a separately-downloaded SDK. Set `FMODSTUDI
 cmake -S indra --preset ninja-os -DUSE_FMODSTUDIO=ON -DFMODSTUDIO_SDK_DIR=/path/to/fmodstudioapi20314linux
 ```
 
+In this project the Linux SDK lives inside the Vayu checkout at `fmodstudioapi20314linux/` (Vayu-owned; **gitignored**, never commit or push it). The local performance preset (`indra/CMakeUserPresets.json`, untracked) points `AL_FMODSTUDIO_SDK_DIR` there.
+
 Without it, configure fails late — after vcpkg's dependency install completes — with `CMake Error at cmake/FMODSTUDIO.cmake:59 ... The "optimized" argument must be followed by a library.` (`indra/cmake/FMODSTUDIO.cmake` falls back to a Windows registry lookup that doesn't exist on Linux/macOS, leaving the library path empty.) On Windows only, an installed FMOD Studio SDK is found automatically via the registry.
 
 ### Profiling

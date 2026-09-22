@@ -1,0 +1,14 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "lsp": true,
+  "permission": {
+    "lsp": "allow"
+  },
+  "mcp": {
+    "github": {
+      "type": "local",
+      "command": ["bash", "-c", "gh auth token >/dev/null 2>&1 && export GITHUB_PERSONAL_ACCESS_TOKEN=\"$(gh auth token)\"; exec docker run -i --rm -e GITHUB_PERSONAL_ACCESS_TOKEN ghcr.io/github/github-mcp-server"],
+      "enabled": true
+    }
+  }
+}

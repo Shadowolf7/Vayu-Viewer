@@ -1171,7 +1171,6 @@ void LLViewerFetchedTexture::init(bool firstinit)
     mRequestDeltaTime = 0.f;
     mForSculpt = false;
     mIsFetched = false;
-    mInFastCacheList = false;
 
     mSavedRawImage = NULL;
     mForceToSaveRawImage  = false;
@@ -1230,76 +1229,6 @@ void LLViewerFetchedTexture::cleanup()
     destroyRawImage();
     mSavedRawImage = NULL;
     mSavedRawDiscardLevel = -1;
-}
-
-//access the fast cache
-void LLViewerFetchedTexture::loadFromFastCache()
-{
-    LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
-    if(!mInFastCacheList)
-    {
-        return; //no need to access the fast cache.
-    }
-    mInFastCacheList = false;
-
-    add(LLTextureFetch::sCacheAttempt, 1.0);
-
-    LLTimer fastCacheTimer;
-    mRawImage = LLAppViewer::getTextureCache()->readFromFastCache(getID(), mRawDiscardLevel);
-    if(mRawImage.notNull())
-    {
-        F32 cachReadTime = fastCacheTimer.getElapsedTimeF32();
-
-        add(LLTextureFetch::sCacheHit, 1.0);
-        record(LLTextureFetch::sCacheHitRate, LLUnits::Ratio::fromValue(1));
-        sample(LLTextureFetch::sCacheReadLatency, cachReadTime);
-
-        mFullWidth = mRawImage->getWidth() << mRawDiscardLevel;
-        mFullHeight = mRawImage->getHeight() << mRawDiscardLevel;
-        setTexelsPerImage();
-
-        if(mFullWidth > MAX_IMAGE_SIZE || mFullHeight > MAX_IMAGE_SIZE)
-        {
-            //discard all oversized textures.
-            destroyRawImage();
-            LL_WARNS() << "oversized, setting as missing" << LL_ENDL;
-            setIsMissingAsset();
-            mRawDiscardLevel = INVALID_DISCARD_LEVEL;
-        }
-        else
-        {
-            if (mBoostLevel == LLGLTexture::BOOST_ICON)
-            {
-                // Shouldn't do anything usefull since texures in fast cache are 16x16,
-                // it is here in case fast cache changes.
-                S32 expected_width = mKnownDrawWidth > 0 ? mKnownDrawWidth : DEFAULT_ICON_DIMENSIONS;
-                S32 expected_height = mKnownDrawHeight > 0 ? mKnownDrawHeight : DEFAULT_ICON_DIMENSIONS;
-                if (mRawImage && (mRawImage->getWidth() > expected_width || mRawImage->getHeight() > expected_height))
-                {
-                    // scale oversized icon, no need to give more work to gl
-                    mRawImage->scale(expected_width, expected_height);
-                }
-            }
-
-            if (mBoostLevel == LLGLTexture::BOOST_THUMBNAIL)
-            {
-                if (mRawImage && (mRawImage->getWidth() > DEFAULT_THUMBNAIL_DIMENSIONS || mRawImage->getHeight() > DEFAULT_THUMBNAIL_DIMENSIONS))
-                {
-                    // Scale oversized thumbnail
-                    // thumbnails aren't supposed to go over DEFAULT_THUMBNAIL_DIMENSIONS
-                    mRawImage->scale(DEFAULT_THUMBNAIL_DIMENSIONS, DEFAULT_THUMBNAIL_DIMENSIONS);
-                }
-            }
-
-            mRequestedDiscardLevel = mDesiredDiscardLevel + 1;
-            mIsRawImageValid = true;
-            addToCreateTexture();
-        }
-    }
-    else
-    {
-        record(LLTextureFetch::sCacheHitRate, LLUnits::Ratio::fromValue(0));
-    }
 }
 
 void LLViewerFetchedTexture::setForSculpt()
@@ -2097,11 +2026,6 @@ bool LLViewerFetchedTexture::updateFetch()
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_TEXTURE("vftuf - callback pending");
         return false; // process any raw image data in callbacks before replacing
-    }
-    if (mInFastCacheList)
-    {
-        LL_PROFILE_ZONE_NAMED_CATEGORY_TEXTURE("vftuf - in fast cache");
-        return false;
     }
     if (mGLTexturep.isNull())
     { // fix for crash inside getCurrentDiscardLevelForFetching (shouldn't happen but appears to be happening)

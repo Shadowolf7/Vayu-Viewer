@@ -1254,7 +1254,8 @@ bool LLAppViewer::init()
 
     gGLActive = false;
 
-    // Launch update check
+#if 0
+    // Launch VVM update check
     if (!gSavedSettings.getBOOL("CmdLineSkipUpdater") && !gNonInteractive)
     {
         initVVMUpdateCheck();
@@ -1263,6 +1264,7 @@ bool LLAppViewer::init()
     {
         LL_WARNS("InitInfo") << "Skipping updater check." << LL_ENDL;
     }
+#endif
 
     {
         // Iterate over --leap command-line options. But this is a bit tricky: if
@@ -1642,7 +1644,6 @@ bool LLAppViewer::doFrame()
             if (gNonInteractive)
             {
                 S32 non_interactive_ms_sleep_time = 100;
-                LLAppViewer::getTextureCache()->pause();
                 ms_sleep(non_interactive_ms_sleep_time);
             }
 
@@ -1669,8 +1670,6 @@ bool LLAppViewer::doFrame()
                 {
                     LLPerfStats::RecordSceneTime T ( LLPerfStats::StatType_t::RENDER_SLEEP );
                     ms_sleep(milliseconds_to_sleep);
-                    // also pause worker threads during this wait period
-                    LLAppViewer::getTextureCache()->pause();
                 }
             }
 
@@ -1738,7 +1737,6 @@ bool LLAppViewer::doFrame()
             if(!total_work_pending) //pause texture fetching threads if nothing to process.
             {
                 LL_PROFILE_ZONE_NAMED_CATEGORY_APP("df getTextureCache");
-                LLAppViewer::getTextureCache()->pause();
                 LLAppViewer::getTextureFetch()->pause();
             }
             if(!total_io_pending) //pause file threads if nothing to process.
@@ -1806,7 +1804,7 @@ S32 LLAppViewer::updateTextureThreads(F32 max_time)
     size_t work_pending = 0;
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_APP("Texture Cache");
-        work_pending += LLAppViewer::getTextureCache()->update(max_time); // unpauses the texture cache thread
+        work_pending += LLAppViewer::getTextureCache()->update();
     }
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_APP("Image Decode");
@@ -1815,6 +1813,10 @@ S32 LLAppViewer::updateTextureThreads(F32 max_time)
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_APP("Image Fetch");
         work_pending += LLAppViewer::getTextureFetch()->update(max_time); // unpauses the texture fetch thread
+    }
+    {
+        LL_PROFILE_ZONE_NAMED_CATEGORY_APP("BC Texture Cache");
+        work_pending += VayuBCTextureCache::instance().update(max_time * 1000.f); // time-sliced purge
     }
     return static_cast<S32>(work_pending);
 }
@@ -2145,7 +2147,7 @@ bool LLAppViewer::cleanup()
     while(1)
     {
         S32 pending = 0;
-        pending += static_cast<S32>(LLAppViewer::getTextureCache()->update(1)); // unpauses the worker thread
+        pending += static_cast<S32>(LLAppViewer::getTextureCache()->update());
         pending += static_cast<S32>(LLAppViewer::getImageDecodeThread()->update(1)); // unpauses the image thread
         pending += static_cast<S32>(LLAppViewer::getTextureFetch()->update(1)); // unpauses the texture fetch thread
         pending += LLLFSThread::updateClass(0);
@@ -2379,7 +2381,7 @@ bool LLAppViewer::initThreads()
 
     // Image decoding
     LLAppViewer::sImageDecodeThread = new LLImageDecodeThread(enable_threads && true);
-    LLAppViewer::sTextureCache = new LLTextureCache(enable_threads && true);
+    LLAppViewer::sTextureCache = new LLTextureCache();
     LLAppViewer::sTextureFetch = new LLTextureFetch(LLAppViewer::getTextureCache(),
                                                     enable_threads && true,
                                                     app_metrics_qa_mode);
@@ -4996,11 +4998,10 @@ void LLAppViewer::applyBCTextureCacheBudgets()
     static const S64 MB = 1024 * 1024;
 
     const S64 bc_texture_cache_size = S64(gSavedSettings.getU32("VayuBCTextureCacheMaxSize")) * MB;
-    const bool read_only = LLAppViewer::instance() ? LLAppViewer::instance()->isSecondInstance() : false;
 
     VayuBCTextureCache::instance().initCache(
         std::filesystem::path(gDirUtilp->getExpandedFilename(LL_PATH_CACHE, "bccache")),
-        bc_texture_cache_size, read_only);
+        bc_texture_cache_size);
 }
 
 bool LLAppViewer::initCache()
@@ -5027,11 +5028,9 @@ bool LLAppViewer::initCache()
     const uintmax_t disk_cache_size = uintmax_t(cache_total_size * disk_cache_percent / 100);
     const bool enable_cache_debug_info = gSavedSettings.getBOOL("EnableDiskCacheDebugInfo");
 
-    bool texture_cache_mismatch = false;
     bool remove_vfs_files = false;
     if (gSavedSettings.getS32("LocalCacheVersion") != LLAppViewer::getTextureCacheVersion())
     {
-        texture_cache_mismatch = true;
         if (!read_only)
         {
             gSavedSettings.setS32("LocalCacheVersion", LLAppViewer::getTextureCacheVersion());
@@ -5051,7 +5050,6 @@ bool LLAppViewer::initCache()
             gSavedSettings.setBOOL("PurgeCacheOnNextStartup", false);
             mPurgeCache = true;
             // STORM-1141 force purgeAllTextures to get called to prevent a crash here. -brad
-            texture_cache_mismatch = true;
         }
 
         // We have moved the location of the cache directory over time.
@@ -5087,10 +5085,14 @@ bool LLAppViewer::initCache()
     {
         if (gSavedSettings.getU32("VayuBCTextureCacheVersion") != VayuBCTextureCache::kFormatVersion)
         {
-            LL_INFOS("Texture") << "Vayu BC cache version mismatch ("
+            LL_INFOS("Texture") << "Vayu cache version mismatch ("
                                 << gSavedSettings.getU32("VayuBCTextureCacheVersion")
                                 << " != " << VayuBCTextureCache::kFormatVersion
-                                << "): invalidating legacy cache on upgrade" << LL_ENDL;
+                                << "): invalidating the JPEG2000 and BC texture caches on version bump" << LL_ENDL;
+            // Entire dual-cache invalidation on a single version bump: wipe the
+            // JPEG2000 (j2c) texture cache and the BC texture cache together so
+            // both stay dumb and are rebuilt from scratch after the bump.
+            LLAppViewer::getTextureCache()->purgeCache(LL_PATH_CACHE);
             VayuBCTextureCache::instance().clear();
             gSavedSettings.setU32("VayuBCTextureCacheVersion", VayuBCTextureCache::kFormatVersion);
         }
@@ -5115,7 +5117,7 @@ bool LLAppViewer::initCache()
         {
             // request background purge without stalling startup
             LLDiskCache::threadedPurge();
-            VayuBCTextureCache::instance().threadedPurge();
+            VayuBCTextureCache::instance().requestPurge();
         }
     }
 
@@ -5125,7 +5127,7 @@ bool LLAppViewer::initCache()
     // Allocate the remaining percent which is not allocated to the disk cache
     const S64 texture_cache_size = S64(cache_total_size * texture_cache_percent / 100);
 
-    LLAppViewer::getTextureCache()->initCache(LL_PATH_CACHE, texture_cache_size, texture_cache_mismatch);
+    LLAppViewer::getTextureCache()->initCache(LL_PATH_CACHE, texture_cache_size);
 
     const U32 CACHE_NUMBER_OF_REGIONS_FOR_OBJECTS = 128;
     LLVOCache::getInstance()->initCache(LL_PATH_CACHE, CACHE_NUMBER_OF_REGIONS_FOR_OBJECTS, getObjectCacheVersion());
@@ -5247,7 +5249,7 @@ void LLAppViewer::purgeCache()
 void LLAppViewer::purgeCacheImmediate()
 {
     LL_INFOS("AppCache") << "Purging Object Cache and Texture Cache immediately..." << LL_ENDL;
-    LLAppViewer::getTextureCache()->purgeCache(LL_PATH_CACHE, false);
+    LLAppViewer::getTextureCache()->purgeCache(LL_PATH_CACHE);
     LLDiskCache::clear();
     VayuBCTextureCache::instance().clear();
     if (LLVOCache::instanceExists())
@@ -6288,7 +6290,6 @@ void LLAppViewer::outOfMemorySoftQuit()
         // Todo:
         // Find a way to free at least some memory to make it safer
         // Pause decoding and mesh repositorie
-        getTextureCache()->pause();
         getTextureFetch()->pause();
         LLLFSThread::sLocal->pause();
         gLogoutTimer.reset();

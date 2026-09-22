@@ -1103,9 +1103,6 @@ public:
     // Sun (or moon) on screen this frame in UV, from generateLensFlareState.
     LLVector2           mLensFlareSunUV = LLVector2(0.5f, 0.5f);
 
-    // Sun (or moon) on screen this frame in UV, from generateLensFlareState.
-    LLVector2           mLensFlareSunUV = LLVector2(0.5f, 0.5f);
-
     bool                    mInitialized;
     bool                    mShadersLoaded;
 

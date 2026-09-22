@@ -1663,7 +1663,7 @@
     <key>VayuBCTextureCacheVersion</key>
     <map>
       <key>Comment</key>
-      <string>Format version of the Vayu BC texture cache (aligned with VayuBCTextureCache::kFormatVersion). Mismatch triggers a one-time purge of bccache on upgrade.</string>
+      <string>Format version of the Vayu BC texture cache (aligned with VayuBCTextureCache::kFormatVersion). Mismatch triggers a one-time purge of both the JPEG2000 and BC texture caches on version bump.</string>
       <key>Persist</key>
       <integer>1</integer>
       <key>Type</key>
@@ -1780,6 +1780,17 @@
       <string>Boolean</string>
       <key>Value</key>
       <boolean>0</boolean>
+    </map>
+    <key>CachePurgeTimeSliced</key>
+    <map>
+      <key>Comment</key>
+      <string>Purge the texture cache in several 0.1s max time slices, instead of in a monolithic second(s)-lasting way.</string>
+      <key>Persist</key>
+      <integer>1</integer>
+      <key>Type</key>
+      <string>Boolean</string>
+      <key>Value</key>
+      <boolean>1</boolean>
     </map>
     <key>CacheValidateCounter</key>
     <map>

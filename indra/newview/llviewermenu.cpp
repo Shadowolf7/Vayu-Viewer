@@ -2504,7 +2504,7 @@ class LLAdvancedPurgeDiskCache : public view_listener_t
     bool handleEvent(const LLSD& userdata) override
     {
         LLDiskCache::threadedPurge();
-        VayuBCTextureCache::instance().threadedPurge();
+        VayuBCTextureCache::instance().requestPurge();
         return true;
     }
 };

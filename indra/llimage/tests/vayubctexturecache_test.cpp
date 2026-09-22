@@ -70,6 +70,9 @@ namespace tut
 
         VayuBCTextureCache::instance().writeEntry(id, 0, header, make_buffer(buffer));
 
+        // Writes are asynchronous on the cache's writer pool; flush before reading.
+        VayuBCTextureCache::instance().waitForPendingWrites();
+
         VayuBCCacheEntryHeader read_header;
         std::vector<U8> read_buffer;
         bool ok = VayuBCTextureCache::instance().readEntry(id, 0, read_header, read_buffer);
@@ -115,6 +118,9 @@ namespace tut
         VayuBCCacheEntryHeader header = make_header(3, 1 /* Fast */);
         std::vector<U8> buffer = { 9, 9, 9 };
         VayuBCTextureCache::instance().writeEntry(id, 0, header, make_buffer(buffer));
+
+        // Writes are asynchronous on the cache's writer pool; flush before reading.
+        VayuBCTextureCache::instance().waitForPendingWrites();
 
         VayuBCCacheEntryHeader out_header;
         std::vector<U8> out_buffer;
@@ -224,6 +230,10 @@ namespace tut
         {
             w.join();
         }
+
+        // Threads only posted their writes to the cache's writer pool; flush
+        // before verifying anything on disk.
+        VayuBCTextureCache::instance().waitForPendingWrites();
 
         // Verify all concurrently written entries were persisted intact without drops
         size_t verified = 0;

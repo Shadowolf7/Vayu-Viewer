@@ -10,10 +10,9 @@
 #include "llapp.h"
 #include "lldiriterator.h"
 #include "llfile.h"
-#include "llrand.h"
-#include "llthread.h"
 #include "lltimer.h"
 #include "llprofiler.h"
+#include "threadpool.h"
 
 #include <fmt/format.h>
 #include <algorithm>
@@ -40,21 +39,6 @@ namespace
         U64 mBufferSize = 0;
     };
 }
-
-class VayuBCCachePurgeThread final : public LLThread
-{
-public:
-    inline VayuBCCachePurgeThread()
-    :   LLThread("BC cache purging thread")
-    {
-        start();
-    }
-
-    void run() override
-    {
-        VayuBCTextureCache::instance().purge();
-    }
-};
 
 VayuBCTextureCache& VayuBCTextureCache::instance()
 {
@@ -130,22 +114,28 @@ bool VayuBCTextureCache::ensureDirectoriesExist()
     return ok;
 }
 
-void VayuBCTextureCache::initCache(const std::filesystem::path& cache_dir, S64 max_size_bytes,
-                                   bool second_instance)
+void VayuBCTextureCache::initCache(const std::filesystem::path& cache_dir, S64 max_size_bytes)
 {
     std::lock_guard<std::mutex> lock(mMutex);
 
     mNominalSizeBytes = (U64)max_size_bytes;
     mMaxSizeBytes = 15UL * mNominalSizeBytes / 10UL;
-    if (second_instance)
-    {
-        mMaxSizeBytes += (50UL + 5UL * U64(ll_frand(20.f))) * 1048576UL;
-    }
 
     std::string cache_dir_str = cache_dir.string();
     if (!cache_dir_str.empty() && cache_dir_str.back() != LL_DIR_DELIM_CHR)
     {
         cache_dir_str += LL_DIR_DELIM_CHR;
+    }
+
+    // Own single-writer pool for cache-fill writes: the producing decode
+    // workers post and return instead of blocking on disk. FIFO order on the
+    // one writer preserves per-(id, discard) ordering. auto_shutdown=false:
+    // shutdown() drains and closes it at a controlled point (llappviewer.cpp),
+    // and tests may re-init after shutdown (which re-creates the pool here).
+    if (!mWritePool)
+    {
+        mWritePool = std::make_unique<LL::ThreadPool>("VayuBCTextureCacheWrite", 1, 1024 * 1024, false);
+        mWritePool->start();
     }
 
     if (mCacheValid && mCacheDir == cache_dir_str && LLFile::isdir(mCacheDir))
@@ -194,16 +184,6 @@ void VayuBCTextureCache::initCache(const std::filesystem::path& cache_dir, S64 m
         }
     }
 
-#if LL_WINDOWS
-    if (!second_instance)
-    {
-        LL_INFOS("Texture") << "VayuBCTextureCache: nominal size: " << mNominalSizeBytes
-                            << " bytes. Max size: " << mMaxSizeBytes
-                            << " bytes. Cache directory: " << mCacheDir << LL_ENDL;
-        return;
-    }
-#endif
-
     mCurrentSizeBytes = cacheDirSize();
     LL_INFOS("Texture") << "VayuBCTextureCache: nominal size: " << mNominalSizeBytes
                         << " bytes. Max size: " << mMaxSizeBytes
@@ -236,20 +216,18 @@ U64 VayuBCTextureCache::cacheDirSize()
 
 void VayuBCTextureCache::clear()
 {
+    // Rebuild the cache directory tree from a cold start rather than walking
+    // and unlinking every entry: remove_all() is a handful of syscalls no
+    // matter how many files the cache holds, whereas a per-file loop is one
+    // unlink syscall per entry (hundreds of thousands for a full cache).
+    std::error_code ec;
+    if (!mCacheDir.empty())
+    {
+        std::filesystem::remove_all(mCacheDir, ec);
+    }
+
     ensureDirectoriesExist();
 
-    if (LLFile::isdir(mCacheDir))
-    {
-        std::string subdir;
-        for (U32 i = 0; i < 16; ++i)
-        {
-            subdir = mCacheDir + sDigits[i];
-            if (LLFile::isdir(subdir))
-            {
-                LLDirIterator::deleteFilesInDir(subdir);
-            }
-        }
-    }
     mCurrentSizeBytes = 0;
     mEntryCount = 0;
     LL_INFOS("Texture") << "VayuBCTextureCache: the entire BC texture cache is cleared." << LL_ENDL;
@@ -259,103 +237,187 @@ void VayuBCTextureCache::purge()
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
 
-    if (!LLFile::isdir(mCacheDir))
+    if (!purgeBegin())
     {
-        LL_INFOS("Texture") << "VayuBCTextureCache: no cache directory: nothing to purge." << LL_ENDL;
         return;
     }
 
-    mPurging = true;
-
-    typedef std::pair<time_t, std::pair<U64, std::string>> file_info_t;
-    std::vector<file_info_t> file_info;
-
-    LLTimer purge_timer;
-    purge_timer.reset();
-
-    std::string subdir, filename;
-    for (U32 i = 0; i < 16; ++i)
+    // Synchronous completion (test path).
+    while (purgeProgress())
     {
-        if (LLApp::isQuitting())
-        {
-            mPurging = false;
-            return;
-        }
+    }
+}
 
-        subdir = mCacheDir + sDigits[i];
-        if (!LLFile::isdir(subdir))
-        {
-            continue;
-        }
-        LLDirIterator iter(subdir, NULL, DI_ISFILE | DI_SIZE | DI_TIMESTAMP);
-        while (iter.next(filename))
-        {
-            if (iter.isFile())
-            {
-                file_info.emplace_back(iter.getTimeStamp(),
-                                       std::make_pair(iter.getSize(),
-                                                      iter.getPath() + filename));
-            }
-        }
+S32 VayuBCTextureCache::update(F32 max_time_ms)
+{
+    LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
+
+    if (!mCacheValid)
+    {
+        return 0;
+    }
+    if (!mPurging && !mPurgeRequested)
+    {
+        return 0;
+    }
+    if (!mPurging && !purgeBegin())
+    {
+        return 0;
     }
 
-    std::sort(file_info.begin(), file_info.end(),
-              [](const file_info_t& x, const file_info_t& y)
-              {
-                  return x.first > y.first;
-              });
-
-    size_t count = file_info.size();
-    LL_INFOS("Texture") << "VayuBCTextureCache: " << count
-                        << " files found in cache. Checking total size and purging old files..."
-                        << LL_ENDL;
-
-    U64 files_size_total = 0;
-    U64 removed_bytes = 0;
-    U32 purged_files = 0;
-    for (size_t i = 0; i < count; ++i)
+    // Advance the purge within the per-frame budget. purgeProgress() does one
+    // whole hex subdir's scan or one file removal per call, so progress is
+    // guaranteed even if the budget was already exceeded this frame.
+    const F32 time_slice = (max_time_ms > 0.f) ? (max_time_ms / 1000.f) : 0.f;
+    LLTimer slice_timer;
+    slice_timer.reset();
+    do
     {
-        if (LLApp::isQuitting())
+        if (!purgeProgress())
         {
             break;
         }
+    } while (slice_timer.getElapsedTimeF32() < time_slice);
 
-        const file_info_t& entry = file_info[i];
-        files_size_total += entry.second.first;
-        bool removed = files_size_total > mNominalSizeBytes;
-        if (removed)
+    return mPurging ? 1 : 0;
+}
+
+void VayuBCTextureCache::requestPurge()
+{
+    if (!mCacheValid)
+    {
+        return;
+    }
+    mPurgeRequested = true;
+}
+
+bool VayuBCTextureCache::purgeBegin()
+{
+    if (mPurging)
+    {
+        return false;
+    }
+
+    if (!LLFile::isdir(mCacheDir))
+    {
+        LL_INFOS("Texture") << "VayuBCTextureCache: no cache directory: nothing to purge." << LL_ENDL;
+        mPurgeRequested = false;
+        return false;
+    }
+
+    mPurging = true;
+    mPurgeTimer.reset();
+    mPurgeScanSubdir = 0;
+    mPurgeFilesScannedAll = false;
+    mPurgeFiles.clear();
+    mPurgeRemoveIndex = 0;
+    mPurgeAccumulatedSize = 0;
+    mPurgeRemovedBytes = 0;
+    mPurgeRemovedCount = 0;
+    return true;
+}
+
+bool VayuBCTextureCache::purgeProgress()
+{
+    if (!mPurgeFilesScannedAll)
+    {
+        // Phase A: scan one whole hex subdir per call. LLDirIterator is
+        // recreated each call, so never stop halfway through a subdir or the
+        // rescan would duplicate entries.
+        while (mPurgeScanSubdir < 16)
         {
-            try
+            if (LLApp::isQuitting())
             {
-                if (boost::filesystem::last_write_time(entry.second.second) <= entry.first)
+                purgeFinish();
+                return false;
+            }
+
+            const U32 i = mPurgeScanSubdir++;
+            const std::string subdir = mCacheDir + sDigits[i];
+            if (!LLFile::isdir(subdir))
+            {
+                continue;
+            }
+            LLDirIterator iter(subdir, NULL, DI_ISFILE | DI_SIZE | DI_TIMESTAMP);
+            std::string filename;
+            while (iter.next(filename))
+            {
+                if (iter.isFile())
                 {
-                    boost::filesystem::remove(entry.second.second);
-                    ++purged_files;
-                    removed_bytes += entry.second.first;
-                }
-                else
-                {
-                    removed = false;
+                    mPurgeFiles.emplace_back(iter.getTimeStamp(),
+                                             std::make_pair(iter.getSize(),
+                                                            iter.getPath() + filename));
                 }
             }
-            catch (const boost::filesystem::filesystem_error& e)
+            break;
+        }
+
+        if (mPurgeScanSubdir >= 16)
+        {
+            std::sort(mPurgeFiles.begin(), mPurgeFiles.end(),
+                      [](const purge_file_info_t& x, const purge_file_info_t& y)
+                      {
+                          return x.first > y.first;
+                      });
+            mPurgeFilesScannedAll = true;
+            LL_INFOS("Texture") << "VayuBCTextureCache: " << mPurgeFiles.size()
+                                << " files found in cache. Checking total size and purging old files..."
+                                << LL_ENDL;
+        }
+        return true;
+    }
+
+    if (LLApp::isQuitting())
+    {
+        purgeFinish();
+        return false;
+    }
+
+    // Phase B: remove one file per call. The list is sorted newest-first, so
+    // the file that tips the running total over the nominal budget, and every
+    // older file after it, gets removed - mirroring the original synchronous
+    // purge's LRU behavior.
+    if (mPurgeRemoveIndex >= mPurgeFiles.size())
+    {
+        purgeFinish();
+        return false;
+    }
+
+    const purge_file_info_t& entry = mPurgeFiles[mPurgeRemoveIndex++];
+    mPurgeAccumulatedSize += entry.second.first;
+    if (mPurgeAccumulatedSize > mNominalSizeBytes)
+    {
+        try
+        {
+            // Skip files touched since they were scanned.
+            if (boost::filesystem::last_write_time(entry.second.second) <= entry.first)
             {
-                removed = false;
-                LL_WARNS("Texture") << "VayuBCTextureCache: failure to remove \"" << entry.second.second
-                                    << "\". Reason: " << e.what() << LL_ENDL;
+                boost::filesystem::remove(entry.second.second);
+                ++mPurgeRemovedCount;
+                mPurgeRemovedBytes += entry.second.first;
             }
+        }
+        catch (const boost::filesystem::filesystem_error& e)
+        {
+            LL_WARNS("Texture") << "VayuBCTextureCache: failure to remove \"" << entry.second.second
+                                << "\". Reason: " << e.what() << LL_ENDL;
         }
     }
 
-    mPurging = false;
-    mCurrentSizeBytes = files_size_total - removed_bytes;
-    mEntryCount = count - purged_files;
+    return true;
+}
 
-    U32 ms = (U32)(purge_timer.getElapsedTimeF32() * 1000.f);
-    if (purged_files)
+void VayuBCTextureCache::purgeFinish()
+{
+    mPurging = false;
+    mCurrentSizeBytes = mPurgeAccumulatedSize - mPurgeRemovedBytes;
+    mEntryCount = mPurgeFiles.size() - mPurgeRemovedCount;
+
+    const U32 ms = (U32)(mPurgeTimer.getElapsedTimeF32() * 1000.f);
+    if (mPurgeRemovedCount)
     {
         LL_INFOS("Texture") << "VayuBCTextureCache: cache purge took " << ms << "ms to execute. "
-                            << purged_files << " purged files and " << removed_bytes
+                            << mPurgeRemovedCount << " purged files and " << mPurgeRemovedBytes
                             << " bytes removed. " << mCurrentSizeBytes.load()
                             << " bytes now in cache." << LL_ENDL;
     }
@@ -364,45 +426,32 @@ void VayuBCTextureCache::purge()
         LL_INFOS("Texture") << "VayuBCTextureCache: cache check took " << ms << "ms. Cache size: "
                             << mCurrentSizeBytes.load() << " bytes." << LL_ENDL;
     }
-}
 
-void VayuBCTextureCache::threadedPurge()
-{
-    if (!mCacheValid)
-    {
-        return;
-    }
-
-    if (mPurgeThread)
-    {
-        if (mPurgeThread->isStopped())
-        {
-            delete mPurgeThread;
-            mPurgeThread = nullptr;
-        }
-        else
-        {
-            return;
-        }
-    }
-
-    mPurgeThread = new VayuBCCachePurgeThread;
+    mPurgeRequested = false;
+    mPurgeScanSubdir = 0;
+    mPurgeFilesScannedAll = false;
+    mPurgeRemoveIndex = 0;
+    mPurgeFiles.clear();
 }
 
 void VayuBCTextureCache::shutdown()
 {
     mCacheValid = false;
 
-    if (mPurgeThread)
+    // Drop any not-yet-started purge and forget in-flight purge state; the
+    // main-thread update() tick won't run again once the app is exiting.
+    mPurgeRequested = false;
+    mPurging = false;
+
+    // Drain in-flight cache fills, then join the single writer thread at this
+    // controlled point (see the writer-pool comment in llappviewer.cpp). The
+    // pool is destroyed so any write posted afterwards takes the synchronous
+    // fallback path and still persists.
+    if (mWritePool)
     {
-        U32 loops = 0;
-        while (loops++ < 100 && !mPurgeThread->isStopped())
-        {
-            ms_sleep(10);
-        }
-        delete mPurgeThread;
-        mPurgeThread = nullptr;
-        mPurging = false;
+        waitForPendingWrites();
+        mWritePool->close();
+        mWritePool.reset();
     }
 }
 
@@ -453,8 +502,8 @@ void VayuBCTextureCache::addBytesWritten(S64 bytes)
         }
     }
 
-    // If not called by the main thread, or a threaded purging is in progress,
-    // bail out now. Mirroring CoolVL LLDiskCache::addBytesWritten.
+    // If not called by the main thread, or a purge is in progress, bail out now.
+    // Mirroring CoolVL LLDiskCache::addBytesWritten.
     if (!is_main_thread() || mPurging)
     {
         return;
@@ -462,7 +511,7 @@ void VayuBCTextureCache::addBytesWritten(S64 bytes)
 
     if (mCurrentSizeBytes.load() > mMaxSizeBytes)
     {
-        threadedPurge();
+        requestPurge();
     }
 }
 
@@ -569,6 +618,45 @@ void VayuBCTextureCache::writeEntry(const LLUUID& id, S32 discard_level,
     if (!mCacheValid && !ensureDirectoriesExist())
         return;
 
+    // Not initialized, or already shut down (shutdown() drains and removes the
+    // pool): fall back to a synchronous write so nothing is ever dropped.
+    if (!mWritePool)
+    {
+        writeEntrySync(id, discard_level, header, buffer);
+        return;
+    }
+
+    ++mPendingWrites;
+    auto job = [this, id, discard_level, header, buffer]()
+    {
+        writeEntrySync(id, discard_level, header, buffer);
+        if (--mPendingWrites == 0)
+        {
+            std::lock_guard<std::mutex> lock(mWriteCVLock);
+            mWriteCV.notify_all();
+        }
+    };
+    if (!mWritePool->getQueue().post(std::move(job)))
+    {
+        --mPendingWrites;
+        writeEntrySync(id, discard_level, header, buffer);
+    }
+}
+
+void VayuBCTextureCache::waitForPendingWrites()
+{
+    if (!mWritePool)
+    {
+        return;
+    }
+    std::unique_lock<std::mutex> lock(mWriteCVLock);
+    mWriteCV.wait(lock, [this]() { return mPendingWrites.load() == 0; });
+}
+
+void VayuBCTextureCache::writeEntrySync(const LLUUID& id, S32 discard_level,
+                                        const VayuBCCacheEntryHeader& header,
+                                        const std::shared_ptr<const std::vector<U8>>& buffer)
+{
     VayuBCCacheEntryHeader local_header = header;
     local_header.mDiscardLevel = static_cast<U8>(std::clamp(discard_level, 0, 255));
 
@@ -614,12 +702,16 @@ void VayuBCTextureCache::writeEntry(const LLUUID& id, S32 discard_level,
         }
     }
 
-    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    // Write to a sibling temp file, then rename over the target: the swap is
+    // atomic, so lockless readers and crash recovery never observe a torn entry.
+    // A stale temp left by a crash is picked up and purged like any other file.
+    const std::string tmp_path = path + ".tmp";
+    std::ofstream out(tmp_path, std::ios::binary | std::ios::trunc);
     if (!out.good())
     {
         ensureDirectoriesExist();
         out.clear();
-        out.open(path, std::ios::binary | std::ios::trunc);
+        out.open(tmp_path, std::ios::binary | std::ios::trunc);
     }
 
     if (out.good())
@@ -632,12 +724,21 @@ void VayuBCTextureCache::writeEntry(const LLUUID& id, S32 discard_level,
         out.write(reinterpret_cast<const char*>(buffer->data()), (std::streamsize)buffer->size());
         out.close();
 
-        S64 new_size = static_cast<S64>(sizeof(file_header) + buffer->size());
-        S64 delta = new_size - old_file_size;
-        addBytesWritten(delta);
-        if (old_file_size == 0)
+        if (LLFile::rename(tmp_path, path) == 0)
         {
-            ++mEntryCount;
+            S64 new_size = static_cast<S64>(sizeof(file_header) + buffer->size());
+            S64 delta = new_size - old_file_size;
+            addBytesWritten(delta);
+            if (old_file_size == 0)
+            {
+                ++mEntryCount;
+            }
+        }
+        else
+        {
+            LLFile::remove(tmp_path);
+            LL_WARNS_ONCE("Texture") << "VayuBCTextureCache: failed to commit cache entry \""
+                                     << path << "\"" << LL_ENDL;
         }
     }
     else
