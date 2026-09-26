@@ -18,3 +18,11 @@ repos:
       - id: mixed-line-ending
       - id: trailing-whitespace
         files: \.(cpp|c|m|mm|h|inl|py|glsl|cmake|yaml|sh)$
+  - repo: local
+    hooks:
+      - id: alsimd-intrinsic-check
+        name: SIMD Intrinsic & GLM Check
+        entry: cmake -DSOURCE_DIR=indra -P indra/cmake/AlIntrinsicCheck.cmake
+        language: system
+        pass_filenames: false
+        always_run: true

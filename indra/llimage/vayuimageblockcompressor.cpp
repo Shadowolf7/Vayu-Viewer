@@ -668,68 +668,32 @@ bool VayuImageBlockCompressor::analyzeAlphaMask(
 
 static uint8_t scan_min_alpha_4ch(const uint8_t* src_data, size_t total_px)
 {
-    uint8_t min_a = 255;
-    size_t vec_px = 0;
+    const uint32_t alpha_mask = 0xFF000000u;
+    const uint32_t* ptr32 = reinterpret_cast<const uint32_t*>(src_data);
+    const size_t chunks = total_px / 16;
 
-#if defined(__AVX2__)
-    const __m256i alpha_mask = _mm256_set1_epi32((int)0xFF000000);
-    vec_px = (total_px / 32) * 32;
-    for (size_t i = 0; i < vec_px; i += 32)
+    for (size_t i = 0; i < chunks; i++)
     {
-        __m256i p0 = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(src_data + (i + 0) * 4));
-        __m256i p1 = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(src_data + (i + 8) * 4));
-        __m256i p2 = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(src_data + (i + 16) * 4));
-        __m256i p3 = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(src_data + (i + 24) * 4));
+        const uint32_t* p = ptr32 + i * 16;
+        uint32_t a0 = p[0] & p[1] & p[2] & p[3];
+        uint32_t a1 = p[4] & p[5] & p[6] & p[7];
+        uint32_t a2 = p[8] & p[9] & p[10] & p[11];
+        uint32_t a3 = p[12] & p[13] & p[14] & p[15];
 
-        __m256i a01 = _mm256_and_si256(p0, p1);
-        __m256i a23 = _mm256_and_si256(p2, p3);
-        __m256i a = _mm256_and_si256(a01, a23);
-
-        __m256i alphas = _mm256_and_si256(a, alpha_mask);
-        __m256i cmp = _mm256_cmpeq_epi32(alphas, alpha_mask);
-        if ((uint32_t)_mm256_movemask_epi8(cmp) != 0xFFFFFFFF)
+        if (((a0 & a1 & a2 & a3) & alpha_mask) != alpha_mask)
         {
-            min_a = 0;
-            break;
+            return 0;
         }
     }
-#elif defined(__SSE2__) || defined(_M_X64) || (defined(_M_IX86_FP) && _M_IX86_FP >= 2)
-    const __m128i alpha_mask = _mm_set1_epi32((int)0xFF000000);
-    vec_px = (total_px / 16) * 16;
-    for (size_t i = 0; i < vec_px; i += 16)
+
+    for (size_t i = chunks * 16; i < total_px; i++)
     {
-        __m128i p0 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(src_data + (i + 0) * 4));
-        __m128i p1 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(src_data + (i + 4) * 4));
-        __m128i p2 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(src_data + (i + 8) * 4));
-        __m128i p3 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(src_data + (i + 12) * 4));
-
-        __m128i a01 = _mm_and_si128(p0, p1);
-        __m128i a23 = _mm_and_si128(p2, p3);
-        __m128i a = _mm_and_si128(a01, a23);
-
-        __m128i alphas = _mm_and_si128(a, alpha_mask);
-        __m128i cmp = _mm_cmpeq_epi32(alphas, alpha_mask);
-        if (_mm_movemask_epi8(cmp) != 0xFFFF)
+        if (src_data[i * 4 + 3] < 255)
         {
-            min_a = 0;
-            break;
+            return src_data[i * 4 + 3];
         }
     }
-#endif
-
-    if (min_a == 255)
-    {
-        for (size_t i = vec_px; i < total_px; i++)
-        {
-            uint8_t a = src_data[i * 4 + 3];
-            if (a < 255)
-            {
-                min_a = a;
-                break;
-            }
-        }
-    }
-    return min_a;
+    return 255;
 }
 
 bool VayuImageBlockCompressor::encode(const U8* src_data, U32 width, U32 height, S32 components,
@@ -1049,17 +1013,6 @@ bool VayuImageBlockCompressor::encode(const U8* src_data, U32 width, U32 height,
                     }
                     else if (components == 3)
                     {
-#if defined(__SSSE3__) || defined(__AVX2__)
-                        const __m128i rgb_shuf = _mm_setr_epi8(0, 1, 2, -1, 3, 4, 5, -1, 6, 7, 8, -1, 9, 10, 11, -1);
-                        const __m128i alpha_or = _mm_set1_epi32((int)0xFF000000);
-                        for (uint32_t py = 0; py < 4; py++)
-                        {
-                            const uint8_t* row = block_src + py * row_stride;
-                            __m128i raw = _mm_loadu_si128(reinterpret_cast<const __m128i*>(row));
-                            __m128i rgba = _mm_or_si128(_mm_shuffle_epi8(raw, rgb_shuf), alpha_or);
-                            _mm_storeu_si128(reinterpret_cast<__m128i*>(block_rgba + py * 16), rgba);
-                        }
-#else
                         for (uint32_t py = 0; py < 4; py++)
                         {
                             const uint8_t* row = block_src + py * row_stride;
@@ -1072,21 +1025,9 @@ bool VayuImageBlockCompressor::encode(const U8* src_data, U32 width, U32 height,
                                 dst[px * 4 + 3] = 255;
                             }
                         }
-#endif
                     }
                     else if (components == 2)
                     {
-#if defined(__SSSE3__) || defined(__AVX2__)
-                        const __m128i rg_shuf = _mm_setr_epi8(0, 1, -1, -1, 2, 3, -1, -1, 4, 5, -1, -1, 6, 7, -1, -1);
-                        const __m128i rg_alpha_or = _mm_set1_epi32((int)0xFF000000);
-                        for (uint32_t py = 0; py < 4; py++)
-                        {
-                            const uint8_t* row = block_src + py * row_stride;
-                            __m128i raw = _mm_loadl_epi64(reinterpret_cast<const __m128i*>(row));
-                            __m128i rgba = _mm_or_si128(_mm_shuffle_epi8(raw, rg_shuf), rg_alpha_or);
-                            _mm_storeu_si128(reinterpret_cast<__m128i*>(block_rgba + py * 16), rgba);
-                        }
-#else
                         for (uint32_t py = 0; py < 4; py++)
                         {
                             const uint8_t* row = block_src + py * row_stride;
@@ -1099,23 +1040,9 @@ bool VayuImageBlockCompressor::encode(const U8* src_data, U32 width, U32 height,
                                 dst[px * 4 + 3] = 255;
                             }
                         }
-#endif
                     }
                     else if (components == 1)
                     {
-#if defined(__SSSE3__) || defined(__AVX2__)
-                        const __m128i g_shuf = _mm_setr_epi8(0, 0, 0, -1, 1, 1, 1, -1, 2, 2, 2, -1, 3, 3, 3, -1);
-                        const __m128i g_alpha_or = _mm_set1_epi32((int)0xFF000000);
-                        for (uint32_t py = 0; py < 4; py++)
-                        {
-                            const uint8_t* row = block_src + py * row_stride;
-                            uint32_t raw_val;
-                            memcpy(&raw_val, row, 4);
-                            __m128i raw = _mm_cvtsi32_si128(raw_val);
-                            __m128i rgba = _mm_or_si128(_mm_shuffle_epi8(raw, g_shuf), g_alpha_or);
-                            _mm_storeu_si128(reinterpret_cast<__m128i*>(block_rgba + py * 16), rgba);
-                        }
-#else
                         for (uint32_t py = 0; py < 4; py++)
                         {
                             const uint8_t* row = block_src + py * row_stride;
@@ -1129,7 +1056,6 @@ bool VayuImageBlockCompressor::encode(const U8* src_data, U32 width, U32 height,
                                 dst[px * 4 + 3] = 255;
                             }
                         }
-#endif
                     }
                 }
                 else

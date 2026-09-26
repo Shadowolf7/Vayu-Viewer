@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Git pre-commit hook to verify SIMD intrinsic and GLM policy in Vayu-Viewer.
+
+set -e
+
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+
+if ! command -v cmake >/dev/null 2>&1; then
+    echo "Warning: cmake not found; skipping SIMD intrinsic check." >&2
+    exit 0
+fi
+
+INTRINSIC_SCRIPT="${REPO_ROOT}/indra/cmake/AlIntrinsicCheck.cmake"
+if [ -f "${INTRINSIC_SCRIPT}" ]; then
+    echo "Running SIMD intrinsic check (AlIntrinsicCheck.cmake)..."
+    if ! cmake -DSOURCE_DIR="${REPO_ROOT}/indra" -P "${INTRINSIC_SCRIPT}"; then
+        echo "" >&2
+        echo "Error: Pre-commit check failed. Direct SIMD intrinsics or GLM references detected outside ops layer." >&2
+        echo "Refer to indra/llcommon/alsimd.h and indra/llmath/alsimdkernels.inl." >&2
+        exit 1
+    fi
+fi
+
+exit 0

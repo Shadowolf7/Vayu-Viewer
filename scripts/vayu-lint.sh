@@ -6,8 +6,12 @@ Runs clang-tidy on specified files (or all git-modified C++ files if none specif
 without colliding with CMake precompiled headers (PCH).
 
 Usage:
-    scripts/vayu-lint.sh [file1.cpp file2.h ...]
+    scripts/vayu-lint.sh [options] [file1.cpp file2.h ...]
     scripts/vayu-lint.sh --help
+
+Options:
+    --cppcheck               Run cppcheck analysis in addition to clang-tidy
+    --skip-intrinsic-check   Skip SIMD/vector intrinsic check (AlIntrinsicCheck.cmake)
 """
 
 import sys
@@ -66,6 +70,33 @@ def strip_pch_flags(cmd_str):
         cleaned.append(p)
     return " ".join(cleaned)
 
+def run_intrinsic_check():
+    indra_dir = os.path.abspath("indra")
+    script_path = os.path.join(indra_dir, "cmake", "AlIntrinsicCheck.cmake")
+    if not os.path.exists(script_path):
+        return 0
+    cmake_bin = shutil.which("cmake")
+    if not cmake_bin:
+        print("Warning: cmake not found; skipping SIMD intrinsic check.", file=sys.stderr)
+        return 0
+
+    print("Checking for raw SIMD intrinsics and GLM usage (AlIntrinsicCheck)...")
+    res = subprocess.run(
+        [cmake_bin, f"-DSOURCE_DIR={indra_dir}", "-P", script_path],
+        capture_output=True,
+        text=True
+    )
+    if res.returncode != 0:
+        print("\n--- SIMD Intrinsic Check Failed ---", file=sys.stderr)
+        if res.stderr.strip():
+            print(res.stderr.strip(), file=sys.stderr)
+        if res.stdout.strip():
+            print(res.stdout.strip(), file=sys.stderr)
+        return res.returncode
+
+    print("SIMD intrinsic check passed cleanly.")
+    return 0
+
 def main():
     if "--help" in sys.argv or "-h" in sys.argv:
         print(__doc__.strip())
@@ -93,10 +124,20 @@ def main():
             cmd_map[f_norm] = entry
 
     do_cppcheck = False
+    skip_intrinsic_check = False
     raw_args = sys.argv[1:]
     if "--cppcheck" in raw_args:
         do_cppcheck = True
         raw_args.remove("--cppcheck")
+    if "--skip-intrinsic-check" in raw_args:
+        skip_intrinsic_check = True
+        raw_args.remove("--skip-intrinsic-check")
+
+    if not skip_intrinsic_check:
+        intrinsic_rc = run_intrinsic_check()
+        if intrinsic_rc != 0:
+            print("Linting aborted due to SIMD intrinsic violations.", file=sys.stderr)
+            sys.exit(intrinsic_rc)
 
     target_files = []
     if raw_args:

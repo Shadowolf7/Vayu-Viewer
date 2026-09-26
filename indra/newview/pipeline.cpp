@@ -13812,7 +13812,7 @@ void LLPipeline::generateImpostor(LLVOAvatar* avatar, bool preview_avatar, bool 
         // to zero in one or both axes (collapsed extents, extreme distance, or a
         // lookAt singularity when the avatar is directly above/below the camera).
         // fov==0 or non-finite aspect both produce an unusable projection matrix
-        // and assert-crash inside glm::perspectiveRH_NO.
+        // and assert-crash inside projection matrix construction.
         if (fov <= 0.f || !std::isfinite(aspect) || aspect <= 0.f)
         {
             LL_WARNS_ONCE("AvatarRenderPipeline") << "generateImpostor: degenerate fov/aspect for avatar "
