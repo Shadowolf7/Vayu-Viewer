@@ -11,6 +11,7 @@ Usage:
 
 Options:
     --cppcheck               Run cppcheck analysis in addition to clang-tidy
+    --ast-grep               Run ast-grep architectural rules check
     --skip-intrinsic-check   Skip SIMD/vector intrinsic check (AlIntrinsicCheck.cmake)
 """
 
@@ -97,6 +98,25 @@ def run_intrinsic_check():
     print("SIMD intrinsic check passed cleanly.")
     return 0
 
+def run_ast_grep(target_files):
+    ast_grep_bin = shutil.which("ast-grep")
+    if not ast_grep_bin:
+        print("Warning: ast-grep not installed or not in PATH.", file=sys.stderr)
+        return 0
+    if not os.path.exists("sgconfig.yml"):
+        print("Warning: sgconfig.yml not found.", file=sys.stderr)
+        return 0
+
+    cpp_targets = [f for f in target_files if f.endswith((".cpp", ".c", ".h", ".hpp", ".inl"))]
+    if not cpp_targets:
+        return 0
+
+    print(f"\n--- Running ast-grep architectural rules on {len(cpp_targets)} file(s) ---")
+    res = subprocess.run([ast_grep_bin, "scan"] + cpp_targets)
+    if res.returncode == 0:
+        print("ast-grep: all files passed architectural rules cleanly.")
+    return res.returncode
+
 def main():
     if "--help" in sys.argv or "-h" in sys.argv:
         print(__doc__.strip())
@@ -124,11 +144,15 @@ def main():
             cmd_map[f_norm] = entry
 
     do_cppcheck = False
+    do_ast_grep = False
     skip_intrinsic_check = False
     raw_args = sys.argv[1:]
     if "--cppcheck" in raw_args:
         do_cppcheck = True
         raw_args.remove("--cppcheck")
+    if "--ast-grep" in raw_args:
+        do_ast_grep = True
+        raw_args.remove("--ast-grep")
     if "--skip-intrinsic-check" in raw_args:
         skip_intrinsic_check = True
         raw_args.remove("--skip-intrinsic-check")
@@ -153,6 +177,12 @@ def main():
     if not target_files:
         print("No target files found to lint.")
         sys.exit(0)
+
+    if do_ast_grep:
+        ast_rc = run_ast_grep(target_files)
+        if ast_rc != 0:
+            print("Linting aborted due to ast-grep architectural rule violations.", file=sys.stderr)
+            sys.exit(ast_rc)
 
     print(f"Running clang-tidy on {len(target_files)} file(s)...")
 

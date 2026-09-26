@@ -1,0 +1,8 @@
+id: no-glm-namespace
+message: "GLM is retired in Vayu and Alchemy; use the native llmath types (LLMatrix4a, LLVector4a, etc.)."
+severity: error
+language: cpp
+rule:
+  any:
+    - pattern: glm::$IDENT
+    - pattern: glm::$FUNC($$$ARGS)

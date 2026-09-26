@@ -1,0 +1,12 @@
+id: no-range-loop-copy
+message: "Ranged-for loop copies elements by value. Use 'const auto&' or 'auto&' to avoid accidental copies."
+severity: warning
+language: cpp
+rule:
+  pattern: "for (auto $VAR : $CONTAINER) { $$$BODY }"
+  not:
+    any:
+      - pattern: "for (auto& $VAR : $CONTAINER) { $$$BODY }"
+      - pattern: "for (const auto& $VAR : $CONTAINER) { $$$BODY }"
+      - pattern: "for (auto&& $VAR : $CONTAINER) { $$$BODY }"
+      - pattern: "for (const auto $VAR : $CONTAINER) { $$$BODY }"

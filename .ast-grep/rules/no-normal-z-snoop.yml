@@ -1,0 +1,14 @@
+id: no-normal-z-snoop
+message: "Zero Runtime Format Snooping Invariant: Texture format must be determined by the owning material slot, not by dynamic channel inspection (e.g. checking normal.z == 0)."
+severity: warning
+language: cpp
+rule:
+  any:
+    - pattern: $NORM.z == 0.0
+    - pattern: $NORM.z == 0.0f
+    - pattern: $NORM.z == 0.f
+    - pattern: $NORM.z == 0
+    - pattern: $NORM[2] == 0.0
+    - pattern: $NORM[2] == 0.0f
+    - pattern: $NORM[2] == 0.f
+    - pattern: $NORM[2] == 0

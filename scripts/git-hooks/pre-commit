@@ -1,18 +1,89 @@
 #!/usr/bin/env bash
-# Git pre-commit hook to verify SIMD intrinsic and GLM policy in Vayu-Viewer.
+# Git pre-commit hook with diff-focused checkers for Vayu-Viewer.
 
 set -e
 
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+cd "${REPO_ROOT}"
 
-if ! command -v cmake >/dev/null 2>&1; then
-    echo "Warning: cmake not found; skipping SIMD intrinsic check." >&2
-    exit 0
+echo "==> Running diff-focused pre-commit checks..."
+
+# 1. Trailing whitespace and merge conflict markers on staged lines
+if ! git diff --check --cached >/dev/null 2>&1; then
+    echo "" >&2
+    echo "Error: Whitespace errors or unresolved merge conflict markers detected in staged changes:" >&2
+    git diff --check --cached >&2
+    exit 1
 fi
 
+STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACM)
+
+if [ -n "${STAGED_FILES}" ]; then
+    # 2. Hard tabs check in staged C++ and CMake files (enforce 4 spaces)
+    STAGED_CODE=$(echo "${STAGED_FILES}" | rg '\.(cpp|c|h|hpp|inl|cmake)$' || true)
+    if [ -n "${STAGED_CODE}" ]; then
+        if git diff --cached -U0 -- ${STAGED_CODE} | rg '^\+[^\+]' | rg -q '\t'; then
+            echo "" >&2
+            echo "Error: Hard tabs detected in staged C++/CMake code (indent with 4 spaces):" >&2
+            git diff --cached -U0 -- ${STAGED_CODE} | rg '^\+[^\+]*\t' >&2 || true
+            exit 1
+        fi
+    fi
+
+    # 3. XML & LLSD syntax validation on staged XML/LLSD files
+    STAGED_XML=$(echo "${STAGED_FILES}" | rg '\.(xml|llsd)$' || true)
+    if [ -n "${STAGED_XML}" ]; then
+        echo "Validating staged XML/LLSD files..."
+        python3 -c '
+import sys, xml.etree.ElementTree as ET
+files = sys.argv[1:]
+failed = False
+for f in files:
+    try:
+        ET.parse(f)
+    except Exception as e:
+        print(f"XML Error in {f}: {e}", file=sys.stderr)
+        failed = True
+if failed:
+    sys.exit(1)
+' ${STAGED_XML}
+    fi
+
+    # 4. Diff-focused clang-format check
+    if command -v git-clang-format >/dev/null 2>&1 && [ -f ".clang-format" ]; then
+        STAGED_CPP=$(echo "${STAGED_FILES}" | rg '\.(cpp|c|h|hpp|inl)$' || true)
+        if [ -n "${STAGED_CPP}" ]; then
+            FORMAT_DIFF=$(git clang-format --diff --staged --extensions cpp,c,h,hpp,inl -- ${STAGED_CPP} 2>/dev/null || true)
+            if echo "${FORMAT_DIFF}" | rg -q '^diff --git'; then
+                echo "" >&2
+                echo "Notice: clang-format detected code formatting differences in staged lines:" >&2
+                echo "${FORMAT_DIFF}" | head -n 30 >&2
+                echo "" >&2
+                echo "Tip: Run 'git clang-format --staged' to apply project formatting, or commit with '--no-verify' to bypass." >&2
+                exit 1
+            fi
+        fi
+    fi
+
+    # 5. ast-grep architectural rules check
+    if command -v ast-grep >/dev/null 2>&1 && [ -f "sgconfig.yml" ]; then
+        STAGED_CPP=$(echo "${STAGED_FILES}" | rg '\.(cpp|c|h|hpp|inl)$' || true)
+        if [ -n "${STAGED_CPP}" ]; then
+            echo "Running ast-grep architectural rules on staged C++ files..."
+            if ! ast-grep scan ${STAGED_CPP}; then
+                echo "" >&2
+                echo "Error: ast-grep architectural rule violation detected in staged files." >&2
+                echo "Refer to .ast-grep/rules/ for details." >&2
+                exit 1
+            fi
+        fi
+    fi
+fi
+
+# 6. SIMD intrinsic and GLM policy check
 INTRINSIC_SCRIPT="${REPO_ROOT}/indra/cmake/AlIntrinsicCheck.cmake"
-if [ -f "${INTRINSIC_SCRIPT}" ]; then
-    echo "Running SIMD intrinsic check (AlIntrinsicCheck.cmake)..."
+if [ -f "${INTRINSIC_SCRIPT}" ] && command -v cmake >/dev/null 2>&1; then
+    echo "Checking SIMD intrinsic & GLM policy (AlIntrinsicCheck)..."
     if ! cmake -DSOURCE_DIR="${REPO_ROOT}/indra" -P "${INTRINSIC_SCRIPT}"; then
         echo "" >&2
         echo "Error: Pre-commit check failed. Direct SIMD intrinsics or GLM references detected outside ops layer." >&2
@@ -21,4 +92,5 @@ if [ -f "${INTRINSIC_SCRIPT}" ]; then
     fi
 fi
 
+echo "==> All diff-focused pre-commit checks passed cleanly."
 exit 0

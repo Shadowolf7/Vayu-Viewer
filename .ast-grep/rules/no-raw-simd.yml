@@ -1,0 +1,14 @@
+id: no-raw-simd
+message: "Direct SIMD intrinsics detected outside the ops layer. Use alsimd:: or batch kernels instead."
+severity: error
+language: cpp
+files:
+  - "!indra/llcommon/alsimd.h"
+  - "!indra/llmath/alsimdkernels.inl"
+  - "!indra/llmath/alsimdkernels.cpp"
+  - "!indra/llcommon/tests/**"
+  - "!indra/llmath/tests/**"
+  - "!indra/externals/**"
+rule:
+  pattern: $FUNC($$$ARGS)
+  regex: "^_mm(256|512)?_"

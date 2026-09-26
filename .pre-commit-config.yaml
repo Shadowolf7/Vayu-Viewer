@@ -26,3 +26,8 @@ repos:
         language: system
         pass_filenames: false
         always_run: true
+      - id: clang-format-diff
+        name: Clang-Format Diff Check
+        entry: git-clang-format --diff --staged --extensions cpp,c,h,hpp,inl
+        language: system
+        pass_filenames: false
