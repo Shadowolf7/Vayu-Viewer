@@ -1,0 +1,96 @@
+rules:
+  - id: vayu-no-raw-simd
+    message: "Direct SIMD intrinsics detected outside the ops layer. Use alsimd:: or batch kernels instead."
+    severity: ERROR
+    languages: [c, cpp]
+    paths:
+      exclude:
+        - "**/indra/llcommon/alsimd.h"
+        - "**/indra/llmath/alsimdkernels.inl"
+        - "**/indra/llmath/alsimdkernels.cpp"
+        - "**/indra/llcommon/tests/**"
+        - "**/indra/llmath/tests/**"
+        - "**/indra/externals/**"
+    patterns:
+      - pattern-either:
+          - pattern: $FUNC(...)
+      - metavariable-regex:
+          metavariable: $FUNC
+          regex: "^_mm(256|512)?_"
+
+  - id: vayu-no-range-loop-copy
+    message: "Ranged-for loop copies elements by value. Use 'const auto&' or 'auto&' to prevent expensive copies."
+    severity: WARNING
+    languages: [cpp]
+    patterns:
+      - pattern: "for (auto $VAR : $CONTAINER) { ... }"
+      - pattern-not: "for (auto& $VAR : $CONTAINER) { ... }"
+      - pattern-not: "for (const auto& $VAR : $CONTAINER) { ... }"
+      - pattern-not: "for (auto&& $VAR : $CONTAINER) { ... }"
+      - pattern-not: "for (const auto $VAR : $CONTAINER) { ... }"
+
+  - id: vayu-no-glm-namespace
+    message: "GLM is retired in Vayu and Alchemy; use the native llmath types (LLMatrix4a, LLVector4a, etc.)."
+    severity: ERROR
+    languages: [c, cpp]
+    pattern-either:
+      - pattern: glm::$IDENT
+      - pattern: glm::$FUNC(...)
+
+  - id: vayu-no-normal-z-snoop
+    message: "Zero Runtime Format Snooping Invariant: Texture format must be determined by the owning material slot, not dynamic normal Z inspection."
+    severity: WARNING
+    languages: [c, cpp]
+    pattern-either:
+      - pattern: $NORM.z == 0.0
+      - pattern: $NORM.z == 0.0f
+      - pattern: $NORM.z == 0.f
+      - pattern: $NORM.z == 0
+      - pattern: $NORM[2] == 0.0
+      - pattern: $NORM[2] == 0.0f
+      - pattern: $NORM[2] == 0.f
+      - pattern: $NORM[2] == 0
+
+  - id: vayu-format-string-literal
+    message: "Format string vulnerability: passing non-literal string as format argument. Use a string literal with format specifiers (e.g. \"%s\")."
+    severity: ERROR
+    languages: [c, cpp]
+    paths:
+      exclude:
+        - "**/indra/externals/**"
+        - "**/indra/llcommon/tests/**"
+    patterns:
+      - pattern-either:
+          - pattern: printf($STR)
+          - pattern: sprintf($BUF, $STR)
+          - pattern: snprintf($BUF, $SIZE, $STR)
+      - pattern-not: printf("...", ...)
+      - pattern-not: sprintf($BUF, "...", ...)
+      - pattern-not: snprintf($BUF, $SIZE, "...", ...)
+
+  - id: vayu-unbounded-strcpy
+    message: "Unbounded string copy: strcpy/strcat can lead to buffer overflows. Prefer snprintf, safe string utilities, or std::string."
+    severity: WARNING
+    languages: [c, cpp]
+    paths:
+      exclude:
+        - "**/indra/externals/**"
+    pattern-either:
+      - pattern: strcpy($DST, $SRC)
+      - pattern: strcat($DST, $SRC)
+
+  - id: vayu-malloc-integer-overflow
+    message: "Potential integer overflow in allocation size computation. Validate bounds before multiplication in malloc."
+    severity: WARNING
+    languages: [c, cpp]
+    paths:
+      exclude:
+        - "**/indra/externals/**"
+    patterns:
+      - pattern: malloc($N * $SIZE)
+      - metavariable-regex:
+          metavariable: $N
+          regex: "^[a-zA-Z_][a-zA-Z0-9_]*$"
+      - metavariable-regex:
+          metavariable: $SIZE
+          regex: "^(sizeof\\(.*\\)|[a-zA-Z_][a-zA-Z0-9_]*)$"

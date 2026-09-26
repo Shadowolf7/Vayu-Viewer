@@ -12,6 +12,9 @@ Usage:
 Options:
     --cppcheck               Run cppcheck analysis in addition to clang-tidy
     --ast-grep               Run ast-grep architectural rules check
+    --semgrep                Run semgrep architectural rules check (.semgrep.yml)
+    --community              Include official Semgrep community rules (p/cpp) with --semgrep
+    --skip-clang-tidy        Skip clang-tidy analysis
     --skip-intrinsic-check   Skip SIMD/vector intrinsic check (AlIntrinsicCheck.cmake)
 """
 
@@ -117,34 +120,43 @@ def run_ast_grep(target_files):
         print("ast-grep: all files passed architectural rules cleanly.")
     return res.returncode
 
+def run_semgrep(target_files, use_community=False):
+    semgrep_bin = shutil.which("semgrep")
+    if not semgrep_bin:
+        print("Warning: semgrep not installed or not in PATH.", file=sys.stderr)
+        return 0
+
+    cpp_targets = [f for f in target_files if f.endswith((".cpp", ".c", ".h", ".hpp", ".inl"))]
+    if not cpp_targets:
+        return 0
+
+    configs = []
+    if os.path.exists(".semgrep.yml"):
+        configs.extend(["--config", ".semgrep.yml"])
+    if use_community:
+        configs.extend(["--config", "p/cpp"])
+
+    if not configs:
+        print("Warning: No semgrep configuration found.", file=sys.stderr)
+        return 0
+
+    mode_str = "with community p/cpp rules" if use_community else "with .semgrep.yml"
+    print(f"\n--- Running semgrep on {len(cpp_targets)} file(s) ({mode_str}) ---")
+    res = subprocess.run([semgrep_bin, "scan"] + configs + cpp_targets)
+    if res.returncode == 0:
+        print("semgrep: all files passed rules cleanly.")
+    return res.returncode
+
 def main():
     if "--help" in sys.argv or "-h" in sys.argv:
         print(__doc__.strip())
         sys.exit(0)
 
-    clang_tidy_bin = shutil.which("clang-tidy")
-    if not clang_tidy_bin:
-        print("Error: clang-tidy is not installed or not in PATH.", file=sys.stderr)
-        sys.exit(1)
-
-    cc_path = find_compile_commands()
-    if not cc_path:
-        print("Error: compile_commands.json not found.", file=sys.stderr)
-        sys.exit(1)
-
-    with open(cc_path, "r") as f:
-        all_commands = json.load(f)
-
-    # Command lookup by normalized file path
-    cmd_map = {}
-    for entry in all_commands:
-        f_norm = os.path.abspath(entry.get("file", ""))
-        # Prefer Release target if multiple targets exist
-        if f_norm not in cmd_map or "Release" in entry.get("command", ""):
-            cmd_map[f_norm] = entry
-
     do_cppcheck = False
     do_ast_grep = False
+    do_semgrep = False
+    use_community = False
+    skip_clang_tidy = False
     skip_intrinsic_check = False
     raw_args = sys.argv[1:]
     if "--cppcheck" in raw_args:
@@ -153,6 +165,16 @@ def main():
     if "--ast-grep" in raw_args:
         do_ast_grep = True
         raw_args.remove("--ast-grep")
+    if "--semgrep" in raw_args:
+        do_semgrep = True
+        raw_args.remove("--semgrep")
+    if "--community" in raw_args:
+        do_semgrep = True
+        use_community = True
+        raw_args.remove("--community")
+    if "--skip-clang-tidy" in raw_args:
+        skip_clang_tidy = True
+        raw_args.remove("--skip-clang-tidy")
     if "--skip-intrinsic-check" in raw_args:
         skip_intrinsic_check = True
         raw_args.remove("--skip-intrinsic-check")
@@ -183,6 +205,37 @@ def main():
         if ast_rc != 0:
             print("Linting aborted due to ast-grep architectural rule violations.", file=sys.stderr)
             sys.exit(ast_rc)
+
+    if do_semgrep:
+        sg_rc = run_semgrep(target_files, use_community=use_community)
+        if sg_rc != 0:
+            print("Linting aborted due to semgrep rule violations.", file=sys.stderr)
+            sys.exit(sg_rc)
+
+    if skip_clang_tidy:
+        print("\nAll requested pre-compilation checks passed cleanly.")
+        sys.exit(0)
+
+    clang_tidy_bin = shutil.which("clang-tidy")
+    if not clang_tidy_bin:
+        print("Error: clang-tidy is not installed or not in PATH.", file=sys.stderr)
+        sys.exit(1)
+
+    cc_path = find_compile_commands()
+    if not cc_path:
+        print("Error: compile_commands.json not found.", file=sys.stderr)
+        sys.exit(1)
+
+    with open(cc_path, "r") as f:
+        all_commands = json.load(f)
+
+    # Command lookup by normalized file path
+    cmd_map = {}
+    for entry in all_commands:
+        f_norm = os.path.abspath(entry.get("file", ""))
+        # Prefer Release target if multiple targets exist
+        if f_norm not in cmd_map or "Release" in entry.get("command", ""):
+            cmd_map[f_norm] = entry
 
     print(f"Running clang-tidy on {len(target_files)} file(s)...")
 
