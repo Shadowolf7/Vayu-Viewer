@@ -813,14 +813,14 @@ S32 LLImageRaw::sRawImageCount = 0;
 
 LLImageRaw::LLImageRaw()
     : LLImageBase(),
-      mTextureJob(EVayuTextureJob::Default)
+      mTextureJob(EVayuTextureJob::Unknown)
 {
     ++sRawImageCount;
 }
 
 LLImageRaw::LLImageRaw(U16 width, U16 height, S8 components)
     : LLImageBase(),
-      mTextureJob(EVayuTextureJob::Default)
+      mTextureJob(EVayuTextureJob::Unknown)
 {
     //llassert( S32(width) * S32(height) * S32(components) <= MAX_IMAGE_DATA_SIZE );
     allocateDataSize(width, height, components);
@@ -829,7 +829,7 @@ LLImageRaw::LLImageRaw(U16 width, U16 height, S8 components)
 
 LLImageRaw::LLImageRaw(const U8* data, U16 width, U16 height, S8 components)
     : LLImageBase(),
-      mTextureJob(EVayuTextureJob::Default)
+      mTextureJob(EVayuTextureJob::Unknown)
 {
     if (allocateDataSize(width, height, components))
     {
@@ -839,7 +839,7 @@ LLImageRaw::LLImageRaw(const U8* data, U16 width, U16 height, S8 components)
 
 LLImageRaw::LLImageRaw(U8 *data, U16 width, U16 height, S8 components, bool no_copy)
     : LLImageBase(),
-      mTextureJob(EVayuTextureJob::Default)
+      mTextureJob(EVayuTextureJob::Unknown)
 {
     if(no_copy)
     {

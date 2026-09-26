@@ -16,6 +16,7 @@
 
 #include <fmt/format.h>
 #include <algorithm>
+#include <chrono>
 #include <cstring>
 #include <fstream>
 
@@ -48,15 +49,15 @@ VayuBCTextureCache& VayuBCTextureCache::instance()
 
 VayuBCTextureCache::~VayuBCTextureCache() = default;
 
-std::string VayuBCTextureCache::getFilePath(const LLUUID& id) const
+std::string VayuBCTextureCache::getFilePath(const LLUUID& id, const std::string& ext) const
 {
-    std::string filename = id.asString() + ".bc";
+    std::string filename = id.asString() + ext;
     return ((mCacheDir + filename[0]) + LL_DIR_DELIM_STR) + filename;
 }
 
-std::string VayuBCTextureCache::getFilePath(const LLUUID& id, S32 discard_level) const
+std::string VayuBCTextureCache::getFilePath(const LLUUID& id, S32 discard_level, const std::string& ext) const
 {
-    std::string filename = id.asString() + "_" + std::to_string(discard_level) + ".bc";
+    std::string filename = id.asString() + "_" + std::to_string(discard_level) + ext;
     return ((mCacheDir + filename[0]) + LL_DIR_DELIM_STR) + filename;
 }
 
@@ -171,7 +172,14 @@ void VayuBCTextureCache::initCache(const std::filesystem::path& cache_dir, S64 m
         std::string loose_file;
         while (iter.next(loose_file))
         {
-            if (loose_file.size() > 3 && loose_file.compare(loose_file.size() - 3, 3, ".bc") == 0)
+            const size_t dot = loose_file.rfind('.');
+            std::string ext = (dot != std::string::npos) ? loose_file.substr(dot) : std::string();
+            if (!ext.empty() && ext.back() == 'n')
+            {
+                ext.pop_back();
+            }
+            if (ext == ".bc" || ext == ".bc1" || ext == ".bc3" ||
+                ext == ".bc4" || ext == ".bc5" || ext == ".bc7")
             {
                 char hex = loose_file[0];
                 if ((hex >= '0' && hex <= '9') || (hex >= 'a' && hex <= 'f'))
@@ -216,6 +224,22 @@ U64 VayuBCTextureCache::cacheDirSize()
 
 void VayuBCTextureCache::clear()
 {
+    // A purge pass may be mid-scan/removal on the writer pool thread. Cancel
+    // it and wait (bounded) for the queued/running pass to drain before we
+    // remove_all() the very directory it is walking; otherwise the pass would
+    // race the wipe and its purgeFinish() would clobber the size accounting we
+    // reset below. A pass slice is ~0.1s plus at most one whole subdir scan.
+    mPurgeRequested.store(false);
+    mPurgeCancelPending.store(true);
+    if (mPurging.load() || mPurgePassQueued.load())
+    {
+        for (U32 i = 0; i < 300 && mPurgePassQueued.load(); ++i)
+        {
+            ms_sleep(10);
+        }
+    }
+    mPurgeCancelPending.store(false);
+
     // Rebuild the cache directory tree from a cold start rather than walking
     // and unlinking every entry: remove_all() is a handful of syscalls no
     // matter how many files the cache holds, whereas a per-file loop is one
@@ -230,6 +254,7 @@ void VayuBCTextureCache::clear()
 
     mCurrentSizeBytes = 0;
     mEntryCount = 0;
+    mPurging.store(false);
     LL_INFOS("Texture") << "VayuBCTextureCache: the entire BC texture cache is cleared." << LL_ENDL;
 }
 
@@ -248,27 +273,32 @@ void VayuBCTextureCache::purge()
     }
 }
 
-S32 VayuBCTextureCache::update(F32 max_time_ms)
+void VayuBCTextureCache::purgePassJob()
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
 
-    if (!mCacheValid)
+    // Single time-sliced pass on the writer pool thread. The flag is kept set
+    // until this job returns so update() can't pile up passes; it decides when
+    // the next one is due (>=2s gap, mirroring purgeTextureFilesTimeSliced).
+    if (mPurgeCancelPending.load() || LLApp::isQuitting())
     {
-        return 0;
-    }
-    if (!mPurging && !mPurgeRequested)
-    {
-        return 0;
-    }
-    if (!mPurging && !purgeBegin())
-    {
-        return 0;
+        mPurgePassQueued.store(false);
+        return;
     }
 
-    // Advance the purge within the per-frame budget. purgeProgress() does one
-    // whole hex subdir's scan or one file removal per call, so progress is
-    // guaranteed even if the budget was already exceeded this frame.
-    const F32 time_slice = (max_time_ms > 0.f) ? (max_time_ms / 1000.f) : 0.f;
+    if (!mPurging.load())
+    {
+        if (!mPurgeRequested.load() || !purgeBegin())
+        {
+            mPurgePassQueued.store(false);
+            return;
+        }
+    }
+
+    // One bounded slice. purgeProgress() does one whole hex subdir's scan or
+    // one file removal per call, so progress is guaranteed even if the slice
+    // is already spent, at most one subdir's worth of overshoot.
+    constexpr F32 time_slice = 0.1f;
     LLTimer slice_timer;
     slice_timer.reset();
     do
@@ -279,7 +309,45 @@ S32 VayuBCTextureCache::update(F32 max_time_ms)
         }
     } while (slice_timer.getElapsedTimeF32() < time_slice);
 
-    return mPurging ? 1 : 0;
+    mPurgePassQueued.store(false);
+}
+
+S32 VayuBCTextureCache::update(F32 max_time_ms)
+{
+    LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
+    (void)max_time_ms; // per-pass budget is fixed (0.1s) inside purgePassJob()
+
+    if (!mCacheValid)
+    {
+        return 0;
+    }
+    if (!mPurging.load() && !mPurgeRequested.load())
+    {
+        return 0;
+    }
+
+    // Cheap poll: schedule a purge pass on the writer pool when one isn't
+    // already queued/running and the >=2s gap since the previous pass has
+    // elapsed. No disk I/O happens here.
+    static constexpr F64 kMinBetweenPasses = 2.0;
+    if (mWritePool &&
+        !mPurgePassQueued.load() &&
+        mPurgeLastPassTimer.getElapsedTimeF32() >= (F32)kMinBetweenPasses)
+    {
+        if (!mPurgePassQueued.exchange(true))
+        {
+            mPurgeLastPassTimer.reset();
+            if (!mWritePool->getQueue().post([this]() { purgePassJob(); }))
+            {
+                mPurgePassQueued.store(false);
+            }
+        }
+    }
+
+    // Purge work is pending if a purge is requested, mid-scan, or a pass is
+    // queued/running - nonzero even during the >=2s gap between passes so the
+    // frame scheduler keeps counting us as busy until the purge actually ends.
+    return (mPurgeRequested.load() || mPurging.load() || mPurgePassQueued.load()) ? 1 : 0;
 }
 
 void VayuBCTextureCache::requestPurge()
@@ -288,12 +356,17 @@ void VayuBCTextureCache::requestPurge()
     {
         return;
     }
-    mPurgeRequested = true;
+    mPurgeRequested.store(true);
 }
 
 bool VayuBCTextureCache::purgeBegin()
 {
-    if (mPurging)
+    if (mPurging.load())
+    {
+        return false;
+    }
+
+    if (mPurgeCancelPending.load())
     {
         return false;
     }
@@ -301,11 +374,11 @@ bool VayuBCTextureCache::purgeBegin()
     if (!LLFile::isdir(mCacheDir))
     {
         LL_INFOS("Texture") << "VayuBCTextureCache: no cache directory: nothing to purge." << LL_ENDL;
-        mPurgeRequested = false;
+        mPurgeRequested.store(false);
         return false;
     }
 
-    mPurging = true;
+    mPurging.store(true);
     mPurgeTimer.reset();
     mPurgeScanSubdir = 0;
     mPurgeFilesScannedAll = false;
@@ -326,7 +399,7 @@ bool VayuBCTextureCache::purgeProgress()
         // rescan would duplicate entries.
         while (mPurgeScanSubdir < 16)
         {
-            if (LLApp::isQuitting())
+            if (LLApp::isQuitting() || mPurgeCancelPending.load())
             {
                 purgeFinish();
                 return false;
@@ -367,7 +440,7 @@ bool VayuBCTextureCache::purgeProgress()
         return true;
     }
 
-    if (LLApp::isQuitting())
+    if (LLApp::isQuitting() || mPurgeCancelPending.load())
     {
         purgeFinish();
         return false;
@@ -409,7 +482,7 @@ bool VayuBCTextureCache::purgeProgress()
 
 void VayuBCTextureCache::purgeFinish()
 {
-    mPurging = false;
+    mPurging.store(false);
     mCurrentSizeBytes = mPurgeAccumulatedSize - mPurgeRemovedBytes;
     mEntryCount = mPurgeFiles.size() - mPurgeRemovedCount;
 
@@ -427,7 +500,7 @@ void VayuBCTextureCache::purgeFinish()
                             << mCurrentSizeBytes.load() << " bytes." << LL_ENDL;
     }
 
-    mPurgeRequested = false;
+    mPurgeRequested.store(false);
     mPurgeScanSubdir = 0;
     mPurgeFilesScannedAll = false;
     mPurgeRemoveIndex = 0;
@@ -438,10 +511,22 @@ void VayuBCTextureCache::shutdown()
 {
     mCacheValid = false;
 
-    // Drop any not-yet-started purge and forget in-flight purge state; the
-    // main-thread update() tick won't run again once the app is exiting.
-    mPurgeRequested = false;
-    mPurging = false;
+    // A purge pass may be queued/running on the writer pool thread. Ask it to
+    // stop promptly, then let it unwind so it never touches purge state after
+    // we close the pool. Queued-but-not-started passes are dropped by close();
+    // a running pass aborts on the cancel flag and its slot is forgotten.
+    mPurgeRequested.store(false);
+    mPurgeCancelPending.store(true);
+    if (mPurging.load() || mPurgePassQueued.load())
+    {
+        for (U32 i = 0; i < 300 && mPurgePassQueued.load(); ++i)
+        {
+            ms_sleep(10);
+        }
+    }
+    mPurgeCancelPending.store(false);
+    mPurging.store(false);
+    mPurgePassQueued.store(false);
 
     // Drain in-flight cache fills, then join the single writer thread at this
     // controlled point (see the writer-pool comment in llappviewer.cpp). The
@@ -515,18 +600,73 @@ void VayuBCTextureCache::addBytesWritten(S64 bytes)
     }
 }
 
-bool VayuBCTextureCache::readEntry(const LLUUID& id, S32 discard_level,
-                                   VayuBCCacheEntryHeader& header, std::vector<U8>& buffer)
+std::string VayuBCTextureCache::formatExtension(U8 format, U8 role)
 {
-    std::string file_path = getFilePath(id);
+    const std::string base =
+        (format == kFormatBC1) ? ".bc1" :
+        (format == kFormatBC3) ? ".bc3" :
+        (format == kFormatBC4) ? ".bc4" :
+        (format == kFormatBC5) ? ".bc5" :
+        (format == kFormatBC7) ? ".bc7" : ".bc";
+    return (role == kRoleNormal) ? (base + "n") : base;
+}
+
+bool VayuBCTextureCache::readEntry(const LLUUID& id, S32 discard_level,
+                                   VayuBCCacheEntryHeader& header, std::vector<U8>& buffer,
+                                   const std::string& ext,
+                                   U8 expected_format,
+                                   U8 expected_role)
+{
+    // (format, role)-aware lookup: with an expected format we only ever probe the
+    // file named for that exact pair, so a color .bc1 entry can never be served to
+    // a normal slot and vice versa, no matter what the header fields say.
+    std::vector<std::string> candidates;
+    if (expected_format != 0)
+    {
+        candidates.push_back(formatExtension(expected_format, expected_role));
+    }
+    else if (!ext.empty() && ext != ".bc")
+    {
+        // Explicit non-generic override (e.g. tests probing a single name).
+        candidates.push_back(ext);
+    }
+    else
+    {
+        // Format-agnostic color probe: try every per-format color name, first hit
+        // wins. Normal entries live under .bcNn and are only reached by normal-role
+        // callers that pass an expected format, so this list never mis-serves them.
+        // The legacy generic .bc name is deliberately not probed here so stale
+        // pre-per-format entries are ignored rather than mis-served.
+        candidates.push_back(".bc1");
+        candidates.push_back(".bc3");
+        candidates.push_back(".bc4");
+        candidates.push_back(".bc5");
+        candidates.push_back(".bc7");
+    }
+
+    for (const std::string& candidate : candidates)
+    {
+        if (readEntryExt(id, discard_level, header, buffer, candidate))
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool VayuBCTextureCache::readEntryExt(const LLUUID& id, S32 discard_level,
+                                      VayuBCCacheEntryHeader& header, std::vector<U8>& buffer,
+                                      const std::string& ext)
+{
+    std::string file_path = getFilePath(id, ext);
     if (!LLFile::isfile(file_path))
     {
-        file_path = getFilePath(id, 0);
+        file_path = getFilePath(id, 0, ext);
         if (!LLFile::isfile(file_path))
         {
             if (discard_level > 0)
             {
-                file_path = getFilePath(id, discard_level);
+                file_path = getFilePath(id, discard_level, ext);
                 if (!LLFile::isfile(file_path))
                 {
                     return false;
@@ -555,6 +695,29 @@ bool VayuBCTextureCache::readEntry(const LLUUID& id, S32 discard_level,
             if (mEntryCount > 0) --mEntryCount;
         }
         LLFile::remove(file_path);
+        return false;
+    }
+
+    // The extension is authoritative: reject a header whose stored format does
+    // not match the extension it was read from (defensive; writeEntrySync keys
+    // the name off the same header). Left in place rather than removed, like
+    // the version check above, since a mismatched name implies a rename race.
+    const U8 implied_format =
+        (ext == ".bc1") ? kFormatBC1 :
+        (ext == ".bc3") ? kFormatBC3 :
+        (ext == ".bc4") ? kFormatBC4 :
+        (ext == ".bc5") ? kFormatBC5 :
+        (ext == ".bc7") ? kFormatBC7 : 0;
+    if (implied_format != 0 && file_header.mMeta.mFormat != implied_format)
+    {
+        return false;
+    }
+
+    // The filename also encodes the role (trailing "n" = normal). Reject an
+    // entry whose stored role disagrees, mirroring the format check above.
+    const bool suffixed = !ext.empty() && ext.back() == 'n';
+    if (suffixed != (file_header.mMeta.mRole == kRoleNormal))
+    {
         return false;
     }
 
@@ -632,7 +795,9 @@ void VayuBCTextureCache::writeEntry(const LLUUID& id, S32 discard_level,
         writeEntrySync(id, discard_level, header, buffer);
         if (--mPendingWrites == 0)
         {
-            std::lock_guard<std::mutex> lock(mWriteCVLock);
+            {
+                std::unique_lock<std::mutex> lock(mWriteCVLock);
+            }
             mWriteCV.notify_all();
         }
     };
@@ -660,7 +825,8 @@ void VayuBCTextureCache::writeEntrySync(const LLUUID& id, S32 discard_level,
     VayuBCCacheEntryHeader local_header = header;
     local_header.mDiscardLevel = static_cast<U8>(std::clamp(discard_level, 0, 255));
 
-    const std::string path = getFilePath(id);
+    const std::string ext = formatExtension(local_header.mFormat, local_header.mRole);
+    const std::string path = getFilePath(id, ext);
 
     S64 old_file_size = 0;
     llstat st;
@@ -683,7 +849,7 @@ void VayuBCTextureCache::writeEntrySync(const LLUUID& id, S32 discard_level,
     }
     else if (discard_level > 0)
     {
-        std::string legacy_path = getFilePath(id, 0);
+        std::string legacy_path = getFilePath(id, 0, ext);
         if (LLFile::stat(legacy_path, &st) == 0)
         {
             std::ifstream in(legacy_path, std::ios::binary);

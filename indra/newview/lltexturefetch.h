@@ -104,7 +104,8 @@ public:
     // Threads:  T* (but Tmain mostly)
     // returns discard on success, fail code otherwise; status is filled on success
     S32 createRequest(FTType f_type, const std::string& url, const LLUUID& id, const LLHost& host, F32 priority,
-                      S32 w, S32 h, S32 c, S32 discard, bool needs_aux, bool can_use_http, bool allow_compression, FetchStatus& status);
+                      S32 w, S32 h, S32 c, S32 discard, bool needs_aux, bool can_use_http, bool allow_compression, FetchStatus& status,
+                      EVayuTextureJob job = EVayuTextureJob::Unknown);
 
     // Requests that a fetch operation be deleted from the queue.
     // If @cancel is true, also stops any I/O operations pending.

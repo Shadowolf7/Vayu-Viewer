@@ -71,6 +71,10 @@ void LLDrawPoolWater::setTransparentTextures(const LLUUID& transparentTextureId,
     mWaterImagep[1] = LLViewerTextureManager::getFetchedTexture(!nextTransparentTextureId.isNull() ? nextTransparentTextureId : (!transparentTextureId.isNull() ? transparentTextureId : pwater->GetDefaultTransparentTextureAssetId()));
     mWaterImagep[0]->addTextureStats(1024.f*1024.f);
     mWaterImagep[1]->addTextureStats(1024.f*1024.f);
+    // Network-retrieved water color maps: claim as generic sRGB color so the
+    // BC cache serves them (skips J2C decode).
+    mWaterImagep[0]->setTextureJob(EVayuTextureJob::RGBA);
+    mWaterImagep[1]->setTextureJob(EVayuTextureJob::RGBA);
 }
 
 void LLDrawPoolWater::setOpaqueTexture(const LLUUID& opaqueTextureId)
@@ -78,6 +82,7 @@ void LLDrawPoolWater::setOpaqueTexture(const LLUUID& opaqueTextureId)
     LLSettingsWater::ptr_t pwater = LLEnvironment::instance().getCurrentWater();
     mOpaqueWaterImagep = LLViewerTextureManager::getFetchedTexture(opaqueTextureId);
     mOpaqueWaterImagep->addTextureStats(1024.f*1024.f);
+    mOpaqueWaterImagep->setTextureJob(EVayuTextureJob::RGBA);
 }
 
 void LLDrawPoolWater::setNormalMaps(const LLUUID& normalMapId, const LLUUID& nextNormalMapId)
@@ -87,6 +92,10 @@ void LLDrawPoolWater::setNormalMaps(const LLUUID& normalMapId, const LLUUID& nex
     mWaterNormp[1] = LLViewerTextureManager::getFetchedTexture(!nextNormalMapId.isNull() ? nextNormalMapId : (!normalMapId.isNull() ? normalMapId : pwater->GetDefaultWaterNormalAssetId()));
     mWaterNormp[0]->addTextureStats(1024.f*1024.f);
     mWaterNormp[1]->addTextureStats(1024.f*1024.f);
+    // Network-retrieved water normal map: legacy-material normal encoding
+    // (BC7 linear, RGB), so the BC cache serves it too.
+    mWaterNormp[0]->setTextureJob(EVayuTextureJob::LegacyMaterialNormal);
+    mWaterNormp[1]->setTextureJob(EVayuTextureJob::LegacyMaterialNormal);
 }
 
 void LLDrawPoolWater::prerender()

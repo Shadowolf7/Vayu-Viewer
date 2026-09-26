@@ -176,7 +176,9 @@ void main()
     frag_color = max(vec4(col, basecolor.a * vertex_color.a), vec4(0));
 #else
 
-    vec3 vNt = texture(bumpMap, normal_texcoord.xy).xyz*2.0-1.0;
+    // from mikktspace.com (2-channel reconstruction: supports BC5 RGTC, BC7, and uncompressed RGB)
+    vec2 n_xy = texture(bumpMap, normal_texcoord.xy).xy * 2.0 - 1.0;
+    vec3 vNt = vec3(n_xy, sqrt(max(0.0, 1.0 - dot(n_xy, n_xy))));
     float sign = vary_sign;
     vec3 vN = vary_normal;
     vec3 vT = vary_tangent.xyz;

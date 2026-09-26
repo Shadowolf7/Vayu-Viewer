@@ -61,6 +61,7 @@ function homedir_install()
     install_to_prefix "$HOME/.vayu-install"
     $HOME/.vayu-install/etc/refresh_desktop_app_entry.sh
     $HOME/.vayu-install/etc/register_secondlifeprotocol.sh
+    configure_firewalld
 }
 
 function root_install()
@@ -80,6 +81,32 @@ function root_install()
     mkdir -p /usr/local/share/applications
     "${install_prefix}"/etc/refresh_desktop_app_entry.sh
     "${install_prefix}"/etc/register_secondlifeprotocol.sh
+    configure_firewalld
+}
+
+function configure_firewalld()
+{
+    command -v firewall-cmd >/dev/null 2>&1 || return 0
+    systemctl is-active --quiet firewalld 2>/dev/null || return 0
+
+    if firewall-cmd --query-port=12035-13000/udp >/dev/null 2>&1; then
+        return 0
+    fi
+
+    echo
+    echo "Firewalld is active. Opening UDP ports 12035-13000 ensures smooth"
+    echo "simulator packet delivery and prevents packet loss on strict firewalls."
+
+    if [ "$UID" == "0" ]; then
+        echo " - Configuring firewalld ports (12035-13000/udp)..."
+        firewall-cmd --permanent --add-port=12035-13000/udp >/dev/null 2>&1 && firewall-cmd --reload >/dev/null 2>&1
+    elif [ -t 0 ]; then
+        prompt "Would you like to configure firewalld now using sudo? [Y/N]: "
+        if [[ $? == 1 ]]; then
+            echo " - Configuring firewalld ports via sudo (12035-13000/udp)..."
+            sudo firewall-cmd --permanent --add-port=12035-13000/udp && sudo firewall-cmd --reload
+        fi
+    fi
 }
 
 function install_to_prefix()

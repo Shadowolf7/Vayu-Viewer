@@ -140,6 +140,13 @@ void LLTerrainMaterials::boost()
         llassert(tex.notNull());
         boost_minimap_texture(tex, TERRAIN_DECODE_PRIORITY);
 
+        // Classic (non-PBR) terrain layer: this texture is sampled as an sRGB
+        // color map. Claim it so the BC cache can serve it (skips J2C decode).
+        // When a glTF material is paired with the layer, replaceLocalTexture
+        // may also claim its base color as Albedo; both resolve to the same
+        // sRGB BC1/BC7 encoding, so the claims coalesce harmlessly.
+        tex->setTextureJob(EVayuTextureJob::RGBA);
+
         LLPointer<LLFetchedGLTFMaterial>& mat = mDetailMaterials[i];
         boost_minimap_material(mat, TERRAIN_DECODE_PRIORITY);
     }
@@ -382,8 +389,24 @@ bool LLTerrainMaterials::materialTexturesReady(LLPointer<LLFetchedGLTFMaterial>&
         // that fetching behavior by setting textures of null IDs to nullptr.
         mat->mBaseColorTexture         = fetch_terrain_texture(mat->mTextureId[LLGLTFMaterial::GLTF_TEXTURE_INFO_BASE_COLOR]);
         mat->mNormalTexture            = fetch_terrain_texture(mat->mTextureId[LLGLTFMaterial::GLTF_TEXTURE_INFO_NORMAL]);
+        if (mat->mBaseColorTexture.notNull())
+        {
+            mat->mBaseColorTexture->setTextureJob(EVayuTextureJob::Albedo);
+        }
+        if (mat->mNormalTexture.notNull())
+        {
+            mat->mNormalTexture->setTextureJob(EVayuTextureJob::PBRNormal);
+        }
         mat->mMetallicRoughnessTexture = fetch_terrain_texture(mat->mTextureId[LLGLTFMaterial::GLTF_TEXTURE_INFO_METALLIC_ROUGHNESS]);
         mat->mEmissiveTexture          = fetch_terrain_texture(mat->mTextureId[LLGLTFMaterial::GLTF_TEXTURE_INFO_EMISSIVE]);
+        if (mat->mMetallicRoughnessTexture.notNull())
+        {
+            mat->mMetallicRoughnessTexture->setTextureJob(EVayuTextureJob::MetallicRoughness);
+        }
+        if (mat->mEmissiveTexture.notNull())
+        {
+            mat->mEmissiveTexture->setTextureJob(EVayuTextureJob::Emissive);
+        }
     }
 
     // *NOTE: Calls to makeTextureReady may boost textures. Do not early-return.

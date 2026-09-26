@@ -1830,7 +1830,12 @@ void LLVOVolume::regenFaces()
         facep->setTexture(getTEImage(i));
         if (facep->getTextureEntry()->getMaterialParams().notNull())
         {
-            facep->setNormalMap(getTENormalMap(i));
+            LLViewerTexture* normal_map = getTENormalMap(i);
+            if (normal_map)
+            {
+                normal_map->setTextureJob(EVayuTextureJob::LegacyMaterialNormal);
+            }
+            facep->setNormalMap(normal_map);
             facep->setSpecularMap(getTESpecularMap(i));
         }
         facep->setViewerObject(this);

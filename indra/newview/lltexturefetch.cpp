@@ -294,35 +294,40 @@ private:
 
         // Threads:  Ttf
         CacheReadResponder(LLTextureFetch* fetcher, const LLUUID& id, LLImageFormatted* image)
-            : mFetcher(fetcher), mID(id), mStartTime(0.f)
+            : mFetcher(fetcher), mID(id)
         {
             setImage(image);
         }
 
         // Threads:  Ttc
-        void started() override { mStartTime = gFrameTimeSeconds.value(); }
+        void started() override {}
 
         // Threads:  Ttc
         virtual void completed(bool success) override
         {
             LL_PROFILE_ZONE_SCOPED;
-            LLTextureFetchWorker* worker = mFetcher->getWorker(mID);
-            if (worker)
+            LLTextureFetch* fetcher = mFetcher;
+            if (!fetcher)
             {
-                worker->callbackCacheRead(success, mFormattedImage, mImageSize, mImageLocal);
+                return;
             }
+            LLUUID id = mID;
+            LLPointer<LLImageFormatted> image = mFormattedImage;
+            S32 image_size = mImageSize;
+            bool image_local = mImageLocal;
+            fetcher->post([fetcher, id, success, image, image_size, image_local]()
+            {
+                LLTextureFetchWorker* worker = fetcher->getWorker(id);
+                if (worker)
+                {
+                    worker->callbackCacheRead(success, image, image_size, image_local);
+                }
+            });
         }
 
-        bool expired() const
-        {
-            constexpr F32 read_timeout = 3.f;   // In seconds
-            return mStartTime > 0.f &&
-                   gFrameTimeSeconds.value() - mStartTime > read_timeout;
-        }
     private:
         LLTextureFetch* mFetcher;
         LLUUID mID;
-        F32 mStartTime;
     };
 
     class CacheWriteResponder : public LLTextureCache::WriteResponder
@@ -331,34 +336,36 @@ private:
 
         // Threads:  Ttf
         CacheWriteResponder(LLTextureFetch* fetcher, const LLUUID& id)
-            : mFetcher(fetcher), mID(id), mStartTime(0.f)
+            : mFetcher(fetcher), mID(id)
         {
         }
 
         // Threads:  Ttc
-        void started() override { mStartTime = gFrameTimeSeconds.value(); }
+        void started() override {}
 
         // Threads:  Ttc
         virtual void completed(bool success) override
         {
             LL_PROFILE_ZONE_SCOPED;
-            LLTextureFetchWorker* worker = mFetcher->getWorker(mID);
-            if (worker)
+            LLTextureFetch* fetcher = mFetcher;
+            if (!fetcher)
             {
-                worker->callbackCacheWrite(success);
+                return;
             }
+            LLUUID id = mID;
+            fetcher->post([fetcher, id, success]()
+            {
+                LLTextureFetchWorker* worker = fetcher->getWorker(id);
+                if (worker)
+                {
+                    worker->callbackCacheWrite(success);
+                }
+            });
         }
 
-        bool expired() const
-        {
-            constexpr F32 write_timeout = 3.f;  // In seconds
-            return mStartTime > 0.f &&
-                   gFrameTimeSeconds.value() - mStartTime > write_timeout;
-        }
     private:
         LLTextureFetch* mFetcher;
         LLUUID mID;
-        F32 mStartTime;
     };
 
     class DecodeResponder : public LLImageDecodeThread::Responder
@@ -919,7 +926,7 @@ LLTextureFetchWorker::LLTextureFetchWorker(LLTextureFetch* fetcher,
       mWritten(false),
       mNeedsAux(false),
       mAllowCompression(true),
-      mTextureJob(EVayuTextureJob::Default),
+      mTextureJob(EVayuTextureJob::Unknown),
       mHaveAllData(false),
       mInLocalCache(false),
       mInCache(false),
@@ -1190,11 +1197,52 @@ bool LLTextureFetchWorker::doWork(S32 param)
 
         // Early check: if the texture is already compressed in VayuBCTextureCache,
         // we can fulfill the request directly without network fetching or decode thread queuing.
-        if (!mNeedsAux && mAllowCompression && mID.notNull() && mDesiredDiscard >= 0)
+        // An Unknown job never probes: unclaimed textures have no compressible
+        // representation, and a stale colour/normal entry must not be resurrected.
+        if (!mNeedsAux && mAllowCompression && mTextureJob != EVayuTextureJob::Unknown && mID.notNull() && mDesiredDiscard >= 0)
         {
             VayuBCCacheEntryHeader cache_header;
             std::vector<U8> cache_buffer;
-            if (VayuBCTextureCache::instance().readEntry(mID, mDesiredDiscard, cache_header, cache_buffer))
+            bool cache_hit = false;
+            if (mTextureJob == EVayuTextureJob::PBRNormal)
+            {
+                // Dedicated BC5 normal cache entry
+                if (VayuBCTextureCache::instance().readEntry(mID, mDesiredDiscard, cache_header, cache_buffer, ".bc5", VayuBCTextureCache::kFormatBC5, VayuBCTextureCache::kRoleNormal))
+                {
+                    cache_hit = true;
+                }
+            }
+            else if (mTextureJob == EVayuTextureJob::LegacyMaterialNormal)
+            {
+                // Legacy Blinn-Phong normal map: BC7 (fallback BC3). The cache
+                // name carries format + role, so a colour .bc7 entry can never
+                // satisfy this role.
+                if (VayuBCTextureCache::instance().readEntry(mID, mDesiredDiscard, cache_header, cache_buffer, ".bc7", VayuBCTextureCache::kFormatBC7, VayuBCTextureCache::kRoleNormal) ||
+                    VayuBCTextureCache::instance().readEntry(mID, mDesiredDiscard, cache_header, cache_buffer, ".bc3", VayuBCTextureCache::kFormatBC3, VayuBCTextureCache::kRoleNormal))
+                {
+                    cache_hit = true;
+                }
+            }
+            else if (mTextureJob == EVayuTextureJob::LegacySpecular)
+            {
+                // Legacy Blinn-Phong specular map: BC7 (fallback BC3), role colour.
+                // RGB tint + alpha gloss must survive, so only the 4-channel
+                // formats qualify.
+                if (VayuBCTextureCache::instance().readEntry(mID, mDesiredDiscard, cache_header, cache_buffer, ".bc7", VayuBCTextureCache::kFormatBC7, VayuBCTextureCache::kRoleColor) ||
+                    VayuBCTextureCache::instance().readEntry(mID, mDesiredDiscard, cache_header, cache_buffer, ".bc3", VayuBCTextureCache::kFormatBC3, VayuBCTextureCache::kRoleColor))
+                {
+                    cache_hit = true;
+                }
+            }
+            else
+            {
+                if (VayuBCTextureCache::instance().readEntry(mID, mDesiredDiscard, cache_header, cache_buffer, ".bc"))
+                {
+                    cache_hit = true;
+                }
+            }
+
+            if (cache_hit)
             {
                 auto comp_res = std::make_shared<VayuBlockCompressionResult>();
                 comp_res->mFormat = (EVayuBlockCompressionFormat)cache_header.mFormat;
@@ -1211,6 +1259,7 @@ bool LLTextureFetchWorker::doWork(S32 param)
                 mRawImage = new LLImageRaw(cache_header.mWidth,
                                           cache_header.mHeight,
                                           cache_header.mComponents);
+                mRawImage->setTextureJob(mTextureJob);
                 mRawImage->setBlockCompressionResult(comp_res);
 
                 mLoadedDiscard = mDesiredDiscard;
@@ -1226,47 +1275,15 @@ bool LLTextureFetchWorker::doWork(S32 param)
                 add(LLTextureFetch::sCacheHit, 1.0);
                 record(LLTextureFetch::sCacheHitRate, LLUnits::Ratio::fromValue(1));
                 LL_DEBUGS(LOG_TXT) << mID << ": VayuBCTextureCache early hit! Discard: " << mDecodedDiscard
-                                   << " Size: " << cache_header.mWidth << "x" << cache_header.mHeight << LL_ENDL;
+                                   << " Size: " << cache_header.mWidth << "x" << cache_header.mHeight
+                                   << " Format: " << (int)cache_header.mFormat << LL_ENDL;
                 return doWork(param);
             }
         }
 
         if (mReadResponder.notNull())
         {
-            if (mReadResponder->expired())
-            {
-                // Timeout reached.
-                mLoaded = false;
-                mReadResponder = NULL;
-                if (mFetcher->mTextureCache)
-                {
-                    mFetcher->mTextureCache->removeFromCache(mID);
-                }
-                if (mUrl.compare(0, 7, "file://") == 0)
-                {
-                    // If the local file does not exist, just don't load it at
-                    // all.
-                    setState(DONE);
-                    return doWork(param);
-                }
-                else
-                {
-                    setState(LOAD_FROM_NETWORK);
-                    return doWork(param);
-                }
-            }
-
-            // Cache read(s) still in progress: keep waiting.
-            //
-            // The Cool VL Viewer calls setLowPriority()/setHighPriority()
-            // here (and in the write path) to make cache-waiting workers
-            // yield the fetch thread to higher-priority work.  We do not
-            // port that: their LLQueuedThread keeps a priority-sorted
-            // request queue, but LLQueuedThread here has been backed by
-            // LL::WorkQueue since Linden's SL-17219 overhaul (no scheduler
-            // priorities), and LLTextureFetch::update() already dispatches
-            // every worker each cycle, so waiting workers cannot starve
-            // others.  Deliberate divergence from Cool VL.
+            // Cache read in progress: wait for responder callback
             return false;
         }
 
@@ -1977,7 +1994,8 @@ bool LLTextureFetchWorker::doWork(S32 param)
                                                                        mNeedsAux,
                                                                        mAllowCompression,
                                                                        new DecodeResponder(mFetcher, mID, this),
-                                                                       mID);
+                                                                       mID,
+                                                                       mTextureJob);
         if (mDecodeHandle == 0)
         {
             // Abort, failed to put into queue.
@@ -2093,10 +2111,8 @@ bool LLTextureFetchWorker::doWork(S32 param)
             setState(DONE);
             return doWork(param);
         }
-        else if (!mFetcher->mTextureCache || mWriteResponder.isNull() || mWriteResponder->expired())
+        else if (!mFetcher->mTextureCache || mWriteResponder.isNull())
         {
-            // Possibly timed-out write.
-            LL_WARNS() << "Write to cache failed (timeout?)" << LL_ENDL;
             mWriteResponder = NULL;
             mWritten = true;
             mCacheWriteTime = mCacheWriteTimer.getElapsedTimeF32();
@@ -2647,7 +2663,8 @@ LLTextureFetch::~LLTextureFetch()
 }
 
 S32 LLTextureFetch::createRequest(FTType f_type, const std::string& url, const LLUUID& id, const LLHost& host, F32 priority,
-    S32 w, S32 h, S32 c, S32 desired_discard, bool needs_aux, bool can_use_http, bool allow_compression, FetchStatus& status)
+    S32 w, S32 h, S32 c, S32 desired_discard, bool needs_aux, bool can_use_http, bool allow_compression, FetchStatus& status,
+    EVayuTextureJob job)
 {
     LL_PROFILE_ZONE_SCOPED;
     if (mDebugPause)
@@ -2733,13 +2750,19 @@ S32 LLTextureFetch::createRequest(FTType f_type, const std::string& url, const L
         }
         worker->lockWorkMutex();                                        // +Mw
         if (worker->mState == LLTextureFetchWorker::DONE && worker->mDesiredSize == llmax(desired_size, TEXTURE_CACHE_ENTRY_SIZE) && worker->mDesiredDiscard == desired_discard) {
-            worker->unlockWorkMutex();                                  // -Mw
+            if (job == worker->mTextureJob)
+            {
+                worker->unlockWorkMutex();                                  // -Mw
 
-            return CREATE_REQUEST_ERROR_TRANSITION; // similar request has finished, failed or is in a transitional state
+                return CREATE_REQUEST_ERROR_TRANSITION; // similar request has finished, failed or is in a transitional state
+            }
+            // Role changed (e.g. was fetched under a different role, now requested under this one): re-init to fetch/encode under requested role.
+            worker->setState(LLTextureFetchWorker::INIT);
         }
         worker->mActiveCount++;
         worker->mNeedsAux = needs_aux;
         worker->mAllowCompression = allow_compression;
+        worker->mTextureJob = job;
         worker->setImagePriority(priority);
         worker->setDesiredDiscard(desired_discard, desired_size);
         worker->setCanUseHTTP(can_use_http);
@@ -2770,6 +2793,7 @@ S32 LLTextureFetch::createRequest(FTType f_type, const std::string& url, const L
         worker->mActiveCount++;
         worker->mNeedsAux = needs_aux;
         worker->mAllowCompression = allow_compression;
+        worker->mTextureJob = job;
         worker->setCanUseHTTP(can_use_http);
         worker->getStatus(status);
         worker->unlockWorkMutex();                                      // -Mw

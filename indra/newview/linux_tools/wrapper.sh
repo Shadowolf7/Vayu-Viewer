@@ -50,6 +50,12 @@ export AMD_DEBUG=lowprecision
 # Skip the system config entirely so we always get OpenSSL's built-in defaults.
 export OPENSSL_CONF=/dev/null
 
+# Suppress AAAA (IPv6) DNS queries across the entire viewer process tree
+# (including CEF, voice, and system resolver lookups). Second Life services
+# and CDNs operate on IPv4, and dual-stack lookup timeouts on Linux resolvers
+# can cause stalls.
+export RES_OPTIONS="${RES_OPTIONS:+$RES_OPTIONS }no-aaaa"
+
 SCRIPTSRC=$(readlink -f "$0" || echo "$0")
 RUN_PATH=$(dirname "${SCRIPTSRC}" || echo .)
 echo "Running from ${RUN_PATH}"

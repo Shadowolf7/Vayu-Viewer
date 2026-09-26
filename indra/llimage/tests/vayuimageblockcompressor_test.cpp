@@ -7,7 +7,10 @@
 #include "../vayuimageblockcompressor.h"
 #include "../test/lltut.h"
 #include <chrono>
+#include <cmath>
 #include <cstdio>
+#include <cstdlib>
+#include <filesystem>
 
 // Stubs for unit test harness
 const U8* LLImageBase::getData() const { return NULL; }
@@ -28,6 +31,10 @@ namespace tut
     constexpr EVayuBlockCompressionFormat kExpectedTranslucentFormat = EVayuBlockCompressionFormat::BC3;
 #else
     constexpr EVayuBlockCompressionFormat kExpectedTranslucentFormat = EVayuBlockCompressionFormat::BC7;
+#endif
+
+#ifndef GL_COMPRESSED_RG_RGTC2
+    constexpr U32 GL_COMPRESSED_RG_RGTC2 = 0x8DBD;
 #endif
 
     // Test 1: Eligibility checks
@@ -105,7 +112,7 @@ namespace tut
         ensure("Translucent RGBA resolves to translucent format", result.mFormat == kExpectedTranslucentFormat);
     }
 
-    // Test 5: Normal map compression (2-channel -> BC5)
+    // Test 5: Normal map compression (2-channel -> BC5, requires a PBRNormal claim)
     template<> template<>
     void block_compressor_object::test<5>()
     {
@@ -118,12 +125,15 @@ namespace tut
         }
 
         VayuBlockCompressionResult result;
-        bool ok = VayuImageBlockCompressor::encode(rg.data(), width, height, 2, result, EVayuBlockCompressionFormat::Auto);
+        bool ok = VayuImageBlockCompressor::encode(rg.data(), width, height, 2, result,
+                                                   EVayuBlockCompressionFormat::Auto,
+                                                   EVayuTextureJob::PBRNormal);
         ensure("Encoding 2-channel normal succeeded", ok);
         ensure("2-channel normal resolves to BC5", result.mFormat == EVayuBlockCompressionFormat::BC5);
     }
 
-    // Test 6: Grayscale mask compression (1-channel -> BC4)
+    // Test 6: 1-channel raw is refused under color jobs (SL decodes >=3 channels;
+    // no mono content exists on the wire). BC4 is only reachable via an explicit format.
     template<> template<>
     void block_compressor_object::test<6>()
     {
@@ -136,8 +146,7 @@ namespace tut
 
         VayuBlockCompressionResult result;
         bool ok = VayuImageBlockCompressor::encode(gray.data(), width, height, 1, result, EVayuBlockCompressionFormat::Auto);
-        ensure("Encoding 1-channel mask succeeded", ok);
-        ensure("1-channel mask resolves to BC4", result.mFormat == EVayuBlockCompressionFormat::BC4);
+        ensure("Unclaimed 1-channel raw is refused", !ok);
     }
 
     // Test 7: Binary 1-bit alpha cutout (0 and 255) -> must resolve to BC7 (or BC3 on macOS), not BC1
@@ -551,6 +560,237 @@ namespace tut
         ensure("Encoding gradient RGBA succeeded", ok);
         ensure("Gradient RGBA resolves to translucent format", result.mFormat == kExpectedTranslucentFormat);
         ensure("Gradient RGBA does NOT sign as mask", result.mIsMask == false);
+    }
+
+    // Test 20: Probe dump of a synthetic periodic normal map (BC7 + BC5) for
+    // the offline analyzer in scripts/perf/analyze_vayu_dump.py. Writes the
+    // unconverted pyramid + compressed buffer via VAYU_DUMP_DIR. The captured
+    // output is analyzed off-line; the assertions here only cover resolve.
+    template<> template<>
+    void block_compressor_object::test<20>()
+    {
+        const char* out = std::getenv("VAYU_DUMP_PROBE_DIR");
+        std::filesystem::path d = (out && out[0]) ? std::filesystem::path(out)
+                                                  : std::filesystem::path("/tmp/vayu_dump_probe");
+        std::filesystem::remove_all(d);
+        std::filesystem::create_directories(d);
+#ifdef _WIN32
+        _putenv_s("VAYU_DUMP_DIR", d.string().c_str());
+#else
+        setenv("VAYU_DUMP_DIR", d.string().c_str(), 1);
+#endif
+
+        const U32 W = 1024, H = 1024;
+        std::vector<U8> rgba((size_t)W * H * 4);
+        for (U32 y = 0; y < H; y++)
+        {
+            for (U32 x = 0; x < W; x++)
+            {
+                const float u = (float)x / (float)W;
+                const float v = (float)y / (float)H;
+                float nx = 0.25f * std::sin(u * 63.0f) * std::cos(v * 47.0f)
+                         + 0.10f * std::sin(u * 21.0f) * std::cos(v * 29.0f);
+                float ny = 0.25f * std::sin(v * 59.0f) * std::cos(u * 37.0f)
+                         + 0.10f * std::sin(v * 17.0f) * std::cos(u * 31.0f);
+                float nz = std::sqrt(std::max(0.0f, 1.0f - nx * nx - ny * ny));
+                size_t p = ((size_t)y * W + x) * 4;
+                rgba[p + 0] = (U8)llroundf((nx * 0.5f + 0.5f) * 255.0f);
+                rgba[p + 1] = (U8)llroundf((ny * 0.5f + 0.5f) * 255.0f);
+                rgba[p + 2] = (U8)llroundf((nz * 0.5f + 0.5f) * 255.0f);
+                rgba[p + 3] = 255;
+            }
+        }
+
+        VayuBlockCompressionResult r1;
+        ensure("RGBA normal probe encodes",
+               VayuImageBlockCompressor::encode(rgba.data(), W, H, 4, r1,
+                                                EVayuBlockCompressionFormat::Auto,
+                                                EVayuTextureJob::PBRNormal));
+        ensure("RGBA normal resolves to BC5", r1.mFormat == EVayuBlockCompressionFormat::BC5);
+
+        std::vector<U8> rg((size_t)W * H * 2);
+        for (size_t i = 0; i < (size_t)W * H; i++)
+        {
+            rg[i * 2 + 0] = rgba[i * 4 + 0];
+            rg[i * 2 + 1] = rgba[i * 4 + 1];
+        }
+        VayuBlockCompressionResult r2;
+        ensure("RG normal probe encodes",
+               VayuImageBlockCompressor::encode(rg.data(), W, H, 2, r2,
+                                                EVayuBlockCompressionFormat::Auto,
+                                                EVayuTextureJob::PBRNormal));
+        ensure("RG normal resolves to BC5", r2.mFormat == EVayuBlockCompressionFormat::BC5);
+
+        VayuBlockCompressionResult r3;
+        ensure("4ch opaque albedo encodes",
+               VayuImageBlockCompressor::encode(rgba.data(), W, H, 4, r3,
+                                                EVayuBlockCompressionFormat::Auto,
+                                                EVayuTextureJob::Albedo));
+        ensure("4ch opaque under Albedo resolves to BC1", r3.mFormat == EVayuBlockCompressionFormat::BC1);
+
+        VayuBlockCompressionResult r4;
+        ensure("3ch albedo encodes",
+               VayuImageBlockCompressor::encode(rgba.data(), W, H, 3, r4,
+                                                EVayuBlockCompressionFormat::Auto,
+                                                EVayuTextureJob::Albedo));
+        ensure("3ch under Albedo resolves to BC1", r4.mFormat == EVayuBlockCompressionFormat::BC1);
+    }
+
+    // Test 21: Verify that 3-channel and 4-channel inputs passed to
+    // VayuImageBlockCompressor::encode with EVayuTextureJob::PBRNormal resolve to
+    // EVayuBlockCompressionFormat::BC5 with is_srgb = false and 2 components.
+    template<> template<>
+    void block_compressor_object::test<21>()
+    {
+        const U32 W = 64, H = 64;
+
+        // 4-channel test
+        std::vector<U8> rgba((size_t)W * H * 4, 128);
+        for (size_t i = 0; i < (size_t)W * H; i++)
+        {
+            rgba[i * 4 + 0] = 128; // X
+            rgba[i * 4 + 1] = 128; // Y
+            rgba[i * 4 + 2] = 255; // Z
+            rgba[i * 4 + 3] = 255; // Alpha
+        }
+
+        VayuBlockCompressionResult r_4ch;
+        ensure("4-channel PBRNormal encodes successfully",
+               VayuImageBlockCompressor::encode(rgba.data(), W, H, 4, r_4ch,
+                                                EVayuBlockCompressionFormat::Auto,
+                                                EVayuTextureJob::PBRNormal));
+        ensure("4-channel PBRNormal resolves to BC5", r_4ch.mFormat == EVayuBlockCompressionFormat::BC5);
+        ensure("4-channel PBRNormal has 2 components", r_4ch.mComponents == 2);
+        ensure("4-channel PBRNormal GL internal format is GL_COMPRESSED_RG_RGTC2",
+               r_4ch.mGLInternalFormat == GL_COMPRESSED_RG_RGTC2);
+
+        // 3-channel test
+        std::vector<U8> rgb((size_t)W * H * 3, 128);
+        for (size_t i = 0; i < (size_t)W * H; i++)
+        {
+            rgb[i * 3 + 0] = 128; // X
+            rgb[i * 3 + 1] = 128; // Y
+            rgb[i * 3 + 2] = 255; // Z
+        }
+
+        VayuBlockCompressionResult r_3ch;
+        ensure("3-channel PBRNormal encodes successfully",
+               VayuImageBlockCompressor::encode(rgb.data(), W, H, 3, r_3ch,
+                                                EVayuBlockCompressionFormat::Auto,
+                                                EVayuTextureJob::PBRNormal));
+        ensure("3-channel PBRNormal resolves to BC5", r_3ch.mFormat == EVayuBlockCompressionFormat::BC5);
+        ensure("3-channel PBRNormal has 2 components", r_3ch.mComponents == 2);
+        ensure("3-channel PBRNormal GL internal format is GL_COMPRESSED_RG_RGTC2",
+               r_3ch.mGLInternalFormat == GL_COMPRESSED_RG_RGTC2);
+    }
+
+    // Test 22: Verify that EVayuTextureJob::Albedo and Emissive
+    // produce byte-identical compressed output (SC-004), and that
+    // EVayuTextureJob::LegacyMaterialNormal preserves all 4 channels (RGB + Alpha glossiness) via BC7/BC3.
+    template<> template<>
+    void block_compressor_object::test<22>()
+    {
+        const U32 W = 64, H = 64;
+
+        // Baseline: 4-channel opaque diffuse texture
+        std::vector<U8> rgba((size_t)W * H * 4);
+        for (size_t i = 0; i < (size_t)W * H; i++)
+        {
+            rgba[i * 4 + 0] = (U8)(i & 0xFF);
+            rgba[i * 4 + 1] = (U8)((i * 3) & 0xFF);
+            rgba[i * 4 + 2] = (U8)((i * 7) & 0xFF);
+            rgba[i * 4 + 3] = 255;
+        }
+
+        VayuBlockCompressionResult r_albedo;
+        ensure("Albedo job encodes",
+               VayuImageBlockCompressor::encode(rgba.data(), W, H, 4, r_albedo,
+                                                EVayuBlockCompressionFormat::Auto,
+                                                EVayuTextureJob::Albedo));
+
+        VayuBlockCompressionResult r_emissive;
+        ensure("Emissive job encodes",
+               VayuImageBlockCompressor::encode(rgba.data(), W, H, 4, r_emissive,
+                                                EVayuBlockCompressionFormat::Auto,
+                                                EVayuTextureJob::Emissive));
+
+        ensure("Emissive is byte-identical to Albedo", r_emissive.mBuffer == r_albedo.mBuffer);
+        ensure("Emissive format matches Albedo", r_emissive.mFormat == r_albedo.mFormat);
+
+        // Generic color maps (legacy diffuse, terrain, water): same sRGB
+        // encoding as Albedo, byte-identical.
+        VayuBlockCompressionResult r_rgba;
+        ensure("RGBA job encodes",
+               VayuImageBlockCompressor::encode(rgba.data(), W, H, 4, r_rgba,
+                                                EVayuBlockCompressionFormat::Auto,
+                                                EVayuTextureJob::RGBA));
+        ensure("RGBA is byte-identical to Albedo", r_rgba.mBuffer == r_albedo.mBuffer);
+        ensure("RGBA format matches Albedo", r_rgba.mFormat == r_albedo.mFormat);
+
+        // MetallicRoughness: 4-channel linear
+        VayuBlockCompressionResult r_mr;
+        ensure("MetallicRoughness job encodes",
+               VayuImageBlockCompressor::encode(rgba.data(), W, H, 4, r_mr,
+                                                EVayuBlockCompressionFormat::Auto,
+                                                EVayuTextureJob::MetallicRoughness));
+        ensure_equals("MetallicRoughness has 4 components", r_mr.mComponents, 4);
+
+        // Legacy Blinn-Phong material normal: 4-channel with gloss variation in alpha
+        std::vector<U8> normal_with_gloss = rgba;
+        normal_with_gloss[3] = 120; // texel 0 has gloss < 255
+        normal_with_gloss[7] = 200; // texel 1 has gloss < 255
+
+        VayuBlockCompressionResult r_norm_gloss;
+        ensure("LegacyMaterialNormal encodes",
+               VayuImageBlockCompressor::encode(normal_with_gloss.data(), W, H, 4, r_norm_gloss,
+                                                EVayuBlockCompressionFormat::Auto,
+                                                EVayuTextureJob::LegacyMaterialNormal));
+#if LL_DARWIN
+        ensure("LegacyMaterialNormal falls back to BC3", r_norm_gloss.mFormat == EVayuBlockCompressionFormat::BC3);
+#else
+        ensure("LegacyMaterialNormal encodes to BC7", r_norm_gloss.mFormat == EVayuBlockCompressionFormat::BC7);
+#endif
+        ensure_equals("LegacyMaterialNormal preserves 4 components", r_norm_gloss.mComponents, 4);
+
+        // Legacy Blinn-Phong specular: RGB tint + gloss in alpha, same
+        // 4-channel linear encoding as the legacy normal.
+        VayuBlockCompressionResult r_spec;
+        ensure("LegacySpecular encodes",
+               VayuImageBlockCompressor::encode(normal_with_gloss.data(), W, H, 4, r_spec,
+                                                EVayuBlockCompressionFormat::Auto,
+                                                EVayuTextureJob::LegacySpecular));
+#if LL_DARWIN
+        ensure("LegacySpecular falls back to BC3", r_spec.mFormat == EVayuBlockCompressionFormat::BC3);
+#else
+        ensure("LegacySpecular encodes to BC7", r_spec.mFormat == EVayuBlockCompressionFormat::BC7);
+#endif
+        ensure_equals("LegacySpecular preserves 4 components", r_spec.mComponents, 4);
+        ensure("LegacySpecular is byte-identical to LegacyMaterialNormal",
+               r_spec.mBuffer == r_norm_gloss.mBuffer);
+    }
+
+    // Test 23: An Unknown (unclaimed) texture job must never be block-compressed.
+    // encode() refuses it outright; the worker gate and fetch probe gate keep it
+    // out upstream. Defense in depth: direct encode() calls also refuse.
+    template<> template<>
+    void block_compressor_object::test<23>()
+    {
+        const U32 W = 64, H = 64;
+        std::vector<U8> rgba((size_t)W * H * 4);
+        for (size_t i = 0; i < (size_t)W * H; i++)
+        {
+            rgba[i * 4 + 0] = (U8)(i & 0xFF);
+            rgba[i * 4 + 1] = (U8)((i * 3) & 0xFF);
+            rgba[i * 4 + 2] = (U8)((i * 7) & 0xFF);
+            rgba[i * 4 + 3] = 255;
+        }
+
+        VayuBlockCompressionResult r_unknown;
+        ensure("Unknown job is refused by encode()",
+               !VayuImageBlockCompressor::encode(rgba.data(), W, H, 4, r_unknown,
+                                                  EVayuBlockCompressionFormat::Auto,
+                                                  EVayuTextureJob::Unknown));
+        ensure("Unknown never resolves a format", r_unknown.mBuffer.empty());
     }
 }
 

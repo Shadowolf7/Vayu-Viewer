@@ -196,24 +196,40 @@ bool LLFetchedGLTFMaterial::replaceLocalTexture(const LLUUID& tracking_id, const
     {
         mTextureId[LLGLTFMaterial::GLTF_TEXTURE_INFO_BASE_COLOR] = new_id;
         mBaseColorTexture = fetch_texture(new_id);
+        if (mBaseColorTexture.notNull())
+        {
+            mBaseColorTexture->setTextureJob(EVayuTextureJob::Albedo);
+        }
         res = true;
     }
     if (mTextureId[LLGLTFMaterial::GLTF_TEXTURE_INFO_NORMAL] == old_id)
     {
         mTextureId[LLGLTFMaterial::GLTF_TEXTURE_INFO_NORMAL] = new_id;
         mNormalTexture = fetch_texture(new_id);
+        if (mNormalTexture.notNull())
+        {
+            mNormalTexture->setTextureJob(EVayuTextureJob::PBRNormal);
+        }
         res = true;
     }
     if (mTextureId[LLGLTFMaterial::GLTF_TEXTURE_INFO_METALLIC_ROUGHNESS] == old_id)
     {
         mTextureId[LLGLTFMaterial::GLTF_TEXTURE_INFO_METALLIC_ROUGHNESS] = new_id;
         mMetallicRoughnessTexture = fetch_texture(new_id);
+        if (mMetallicRoughnessTexture.notNull())
+        {
+            mMetallicRoughnessTexture->setTextureJob(EVayuTextureJob::MetallicRoughness);
+        }
         res = true;
     }
     if (mTextureId[LLGLTFMaterial::GLTF_TEXTURE_INFO_EMISSIVE] == old_id)
     {
         mTextureId[LLGLTFMaterial::GLTF_TEXTURE_INFO_EMISSIVE] = new_id;
         mEmissiveTexture = fetch_texture(new_id);
+        if (mEmissiveTexture.notNull())
+        {
+            mEmissiveTexture->setTextureJob(EVayuTextureJob::Emissive);
+        }
         res = true;
     }
 

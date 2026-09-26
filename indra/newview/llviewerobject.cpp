@@ -5477,6 +5477,10 @@ void LLViewerObject::setTE(const U8 te, const LLTextureEntry& texture_entry)
     const LLUUID& image_id = getTE(te)->getID();
     LLViewerTexture* bakedTexture = getBakedTextureForMagicId(image_id);
     mTEImages[te] = bakedTexture ? bakedTexture : LLViewerTextureManager::getFetchedTexture(image_id, FTT_DEFAULT, true, LLGLTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE);
+    if (mTEImages[te].notNull())
+    {
+        mTEImages[te]->setTextureJob(EVayuTextureJob::RGBA);
+    }
 
     updateAvatarMeshVisibility(image_id, old_image_id);
 
@@ -5489,9 +5493,17 @@ void LLViewerObject::updateTEMaterialTextures(U8 te)
     {
         const LLUUID& norm_id = getTE(te)->getMaterialParams()->getNormalID();
         mTENormalMaps[te] = LLViewerTextureManager::getFetchedTexture(norm_id, FTT_DEFAULT, true, LLGLTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE);
+        if (mTENormalMaps[te].notNull())
+        {
+            mTENormalMaps[te]->setTextureJob(EVayuTextureJob::LegacyMaterialNormal);
+        }
 
         const LLUUID& spec_id = getTE(te)->getMaterialParams()->getSpecularID();
         mTESpecularMaps[te] = LLViewerTextureManager::getFetchedTexture(spec_id, FTT_DEFAULT, true, LLGLTexture::BOOST_NONE, LLViewerTexture::LOD_TEXTURE);
+        if (mTESpecularMaps[te].notNull())
+        {
+            mTESpecularMaps[te]->setTextureJob(EVayuTextureJob::LegacySpecular);
+        }
     }
 
     LLFetchedGLTFMaterial* mat = (LLFetchedGLTFMaterial*) getTE(te)->getGLTFRenderMaterial();
@@ -5503,11 +5515,13 @@ void LLViewerObject::updateTEMaterialTextures(U8 te)
         llassert(mat == nullptr || dynamic_cast<LLFetchedGLTFMaterial*>(gGLTFMaterialList.getMaterial(mat_id)) != nullptr);
         if (mat->isFetching())
         { // material is not loaded yet, rebuild draw info when the object finishes loading
-            mat->onMaterialComplete([id=getID()]
+            mat->onMaterialComplete([id=getID(), te]()
                 {
                     LLViewerObject* obj = gObjectList.findObject(id);
                     if (obj)
                     {
+                        obj->initRenderMaterial(te);
+                        obj->updateTEMaterialTextures(te);
                         obj->markForUpdate();
                     }
                 });
@@ -5544,12 +5558,28 @@ void LLViewerObject::updateTEMaterialTextures(U8 te)
         return img;
     };
 
-    if (mat != nullptr)
+    if (mat != nullptr && !mat->isFetching())
     {
         mat->mBaseColorTexture = fetch_texture(mat->mTextureId[LLGLTFMaterial::GLTF_TEXTURE_INFO_BASE_COLOR]);
         mat->mNormalTexture = fetch_texture(mat->mTextureId[LLGLTFMaterial::GLTF_TEXTURE_INFO_NORMAL]);
+        if (mat->mBaseColorTexture.notNull())
+        {
+            mat->mBaseColorTexture->setTextureJob(EVayuTextureJob::Albedo);
+        }
+        if (mat->mNormalTexture.notNull())
+        {
+            mat->mNormalTexture->setTextureJob(EVayuTextureJob::PBRNormal);
+        }
         mat->mMetallicRoughnessTexture = fetch_texture(mat->mTextureId[LLGLTFMaterial::GLTF_TEXTURE_INFO_METALLIC_ROUGHNESS]);
         mat->mEmissiveTexture= fetch_texture(mat->mTextureId[LLGLTFMaterial::GLTF_TEXTURE_INFO_EMISSIVE]);
+        if (mat->mMetallicRoughnessTexture.notNull())
+        {
+            mat->mMetallicRoughnessTexture->setTextureJob(EVayuTextureJob::MetallicRoughness);
+        }
+        if (mat->mEmissiveTexture.notNull())
+        {
+            mat->mEmissiveTexture->setTextureJob(EVayuTextureJob::Emissive);
+        }
     }
 }
 
@@ -5577,6 +5607,10 @@ void LLViewerObject::setTEImage(const U8 te, LLViewerTexture *imagep)
 
         LLViewerTexture* baked_texture = getBakedTextureForMagicId(imagep->getID());
         mTEImages[te] = baked_texture ? baked_texture : imagep;
+        if (mTEImages[te].notNull())
+        {
+            mTEImages[te]->setTextureJob(EVayuTextureJob::RGBA);
+        }
         updateAvatarMeshVisibility(imagep->getID(), old_image_id);
         setChanged(TEXTURE);
         if (mDrawable.notNull())
@@ -5597,6 +5631,10 @@ S32 LLViewerObject::setTETextureCore(const U8 te, LLViewerTexture *image)
         retval = LLPrimitive::setTETexture(te, uuid);
         LLViewerTexture* baked_texture = getBakedTextureForMagicId(uuid);
         mTEImages[te] = baked_texture ? baked_texture : image;
+        if (mTEImages[te].notNull())
+        {
+            mTEImages[te]->setTextureJob(EVayuTextureJob::RGBA);
+        }
         updateAvatarMeshVisibility(uuid,old_image_id);
         setChanged(TEXTURE);
         if (mDrawable.notNull())
@@ -5661,6 +5699,10 @@ void LLViewerObject::changeTEImage(S32 index, LLViewerTexture* new_image)
         return ;
     }
     mTEImages[index] = new_image ;
+    if (mTEImages[index].notNull())
+    {
+        mTEImages[index]->setTextureJob(EVayuTextureJob::RGBA);
+    }
 }
 
 void LLViewerObject::changeTENormalMap(S32 index, LLViewerTexture* new_image)
@@ -5670,6 +5712,10 @@ void LLViewerObject::changeTENormalMap(S32 index, LLViewerTexture* new_image)
         return ;
     }
     mTENormalMaps[index] = new_image ;
+    if (mTENormalMaps[index].notNull())
+    {
+        mTENormalMaps[index]->setTextureJob(EVayuTextureJob::LegacyMaterialNormal);
+    }
     refreshMaterials();
 }
 
@@ -5680,6 +5726,10 @@ void LLViewerObject::changeTESpecularMap(S32 index, LLViewerTexture* new_image)
         return ;
     }
     mTESpecularMaps[index] = new_image ;
+    if (mTESpecularMaps[index].notNull())
+    {
+        mTESpecularMaps[index]->setTextureJob(EVayuTextureJob::LegacySpecular);
+    }
     refreshMaterials();
 }
 
@@ -7883,6 +7933,7 @@ void LLViewerObject::setRenderMaterialID(S32 te_in, const LLUUID& id, bool updat
                 LLViewerObject* obj = gObjectList.findObject(obj_id);
                 if (!obj) { return; }
                 obj->initRenderMaterial(te);
+                obj->updateTEMaterialTextures(te);
             });
         }
     }

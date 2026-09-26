@@ -147,6 +147,17 @@ public:
     virtual size_t getPending();
     bool getThreaded() { return mThreaded; }
 
+    template <typename CALLABLE>
+    bool post(CALLABLE&& func)
+    {
+        bool res = mRequestQueue.post(std::forward<CALLABLE>(func));
+        if (res && mThreaded && !isPaused())
+        {
+            wake();
+        }
+        return res;
+    }
+
     // Request accessors
     status_t getRequestStatus(handle_t handle);
     void abortRequest(handle_t handle, bool autocomplete);

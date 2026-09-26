@@ -64,6 +64,7 @@
 #include "lltexturecache.h"
 #include "llviewerwindow.h"
 #include "llwindow.h"
+#include "llvoavatar.h"
 ///////////////////////////////////////////////////////////////////////////////
 
 // statics
@@ -786,6 +787,26 @@ void LLViewerTexture::dump()
             << LL_ENDL;
 }
 
+void LLViewerTexture::setTextureJob(EVayuTextureJob job)
+{
+    // Local engine files and placeholders never receive compressible jobs; they stay raw.
+    if (const auto* fetched = dynamic_cast<const LLViewerFetchedTexture*>(this))
+    {
+        if (fetched->getFTType() == FTT_LOCAL_FILE)
+        {
+            return;
+        }
+    }
+    if (mTextureJob != job)
+    {
+        mTextureJob = job;
+        if (mGLTexturep)
+        {
+            mGLTexturep->setTextureJob(job);
+        }
+    }
+}
+
 void LLViewerTexture::setBoostLevel(S32 level)
 {
     if(mBoostLevel != level)
@@ -837,6 +858,24 @@ bool LLViewerTexture::bindDefaultImage(S32 stage)
     if (stage < 0) return false;
 
     bool res = true;
+    
+    // If this texture is meant to be a normal map, fall back to a flat normal map
+    // instead of the generic checkerboard/grey default image to prevent severe shading artifacts.
+    // Only take the detour when the flat image actually has a usable GL texture: binding it while
+    // it is still unloaded (precache) re-enters bindImpl -> forceImmediateUpdate ->
+    // bindDefaultImage on the placeholders, which unboundedly nests across the world's
+    // loaded-but-not-yet-decoded normal maps and overflows the stack.
+    if (mTextureJob == EVayuTextureJob::PBRNormal || mTextureJob == EVayuTextureJob::LegacyMaterialNormal)
+    {
+        LLViewerFetchedTexture* flat = LLViewerFetchedTexture::sFlatNormalImagep;
+        LLImageGL* flat_gl = flat ? flat->getGLTexture() : NULL;
+        if (flat && (this != flat) && flat_gl && flat_gl->getTexName())
+        {
+            res = gGL.getTextureSlot(stage)->bindSampled(flat, ALSamplers::AnisoWrap);
+            return res;
+        }
+    }
+
     if (LLViewerFetchedTexture::sDefaultImagep.notNull() && (this != LLViewerFetchedTexture::sDefaultImagep.get()))
     {
         // use default if we've got it
@@ -1209,6 +1248,15 @@ FTType LLViewerFetchedTexture::getFTType() const
     return mFTType;
 }
 
+S32 LLViewerFetchedTexture::getCategory() const
+{
+    if (mFTType == FTT_LOCAL_FILE)
+    {
+        return LLGLTexture::LOCAL;
+    }
+    return mBoostLevel;
+}
+
 void LLViewerFetchedTexture::cleanup()
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
@@ -1514,7 +1562,7 @@ bool LLViewerFetchedTexture::createTexture(S32 usename/*= 0*/)
         return false;
     }
 
-    bool res = mGLTexturep->createGLTexture(mRawDiscardLevel, mRawImage, usename, true, mBoostLevel);
+    bool res = mGLTexturep->createGLTexture(mRawDiscardLevel, mRawImage, usename, true, getCategory());
 
     return res;
 }
@@ -2168,10 +2216,10 @@ bool LLViewerFetchedTexture::updateFetch()
         S32 worker_discard = -1;
         const bool allow_compression = LLImageGL::sCompressTextures
             && mGLTexturep->getAllowCompression()
-            && LLImageGL::categoryAllowsCompression(mBoostLevel);
+            && LLImageGL::categoryAllowsCompression(getCategory());
         LLTextureFetch::FetchStatus status;
         fetch_request_response = LLAppViewer::getTextureFetch()->createRequest(mFTType, mUrl, getID(), getTargetHost(), decode_priority,
-            w, h, c, desired_discard, needsAux(), mCanUseHTTP, allow_compression, status);
+            w, h, c, desired_discard, needsAux(), mCanUseHTTP, allow_compression, status, mTextureJob);
 
         if (fetch_request_response >= 0) // positive values and 0 are discard values
         {

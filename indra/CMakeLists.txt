@@ -225,7 +225,7 @@ set(AL_SENTRY_DSN "" CACHE STRING "The DSN of the Sentry project crash reports g
 
 # Tracy Profiler
 # Default Tracy profiling on for test builds, but off for all others
-string(TOLOWER "${VIEWER_CHANNEL}" channel_lower)
+string(TOLOWER "${AL_CHANNEL}" channel_lower)
 if(channel_lower MATCHES "^(vayu|alchemy) test")
   set(BUILDING_TEST_CHANNEL ON)
 endif()

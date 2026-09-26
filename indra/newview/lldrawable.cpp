@@ -373,6 +373,10 @@ LLFace* LLDrawable::addFace(const LLTextureEntry *te, LLViewerTexture *texturep,
 
     face->setTEOffset(static_cast<S32>(mFaces.size()));
     face->setTexture(texturep);
+    if (normalp)
+    {
+        normalp->setTextureJob(EVayuTextureJob::LegacyMaterialNormal);
+    }
     face->setNormalMap(normalp);
     face->setPoolType(gPipeline.getPoolTypeFromTE(te, texturep));
 
@@ -396,6 +400,10 @@ LLFace* LLDrawable::addFace(const LLTextureEntry *te, LLViewerTexture *texturep,
 
     face->setTEOffset(static_cast<S32>(mFaces.size()));
     face->setTexture(texturep);
+    if (normalp)
+    {
+        normalp->setTextureJob(EVayuTextureJob::LegacyMaterialNormal);
+    }
     face->setNormalMap(normalp);
     face->setSpecularMap(specularp);
     face->setPoolType(gPipeline.getPoolTypeFromTE(te, texturep));

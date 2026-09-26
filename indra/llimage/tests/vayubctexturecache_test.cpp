@@ -159,9 +159,9 @@ namespace tut
         VayuBCTextureCache::instance().shutdown();
 
         // Adjust timestamps so id_a is oldest, id_c is newest
-        std::string path_a = VayuBCTextureCache::instance().getFilePath(id_a);
-        std::string path_b = VayuBCTextureCache::instance().getFilePath(id_b);
-        std::string path_c = VayuBCTextureCache::instance().getFilePath(id_c);
+        std::string path_a = VayuBCTextureCache::instance().getFilePath(id_a, ".bc1");
+        std::string path_b = VayuBCTextureCache::instance().getFilePath(id_b, ".bc1");
+        std::string path_c = VayuBCTextureCache::instance().getFilePath(id_c, ".bc1");
 
         time_t now = time(NULL);
         boost::system::error_code ec;
@@ -310,8 +310,19 @@ namespace tut
         std::error_code ec;
         for (const auto& dirent : std::filesystem::recursive_directory_iterator(dir, ec))
         {
-            if (!ec && dirent.is_regular_file() && dirent.path().extension() == ".bc")
-                ++bc_file_count;
+            if (!ec && dirent.is_regular_file())
+            {
+                std::string ext = dirent.path().extension().string();
+                if (!ext.empty() && ext.back() == 'n')
+                {
+                    ext.pop_back();
+                }
+                if (ext == ".bc1" || ext == ".bc3" || ext == ".bc4" ||
+                    ext == ".bc5" || ext == ".bc7")
+                {
+                    ++bc_file_count;
+                }
+            }
         }
         ensure_equals("Every entry actually reached disk across subdirectories", bc_file_count, kCount);
 
@@ -613,8 +624,8 @@ namespace tut
         VayuBCTextureCache::instance().clear();
     }
 
-    // Test 14: Legacy fallback: Reading <uuid> when <uuid>.bc does not exist
-    // falls back to legacy <uuid>_0.bc on disk and properly slices it.
+    // Test 14: Legacy fallback: Reading <uuid> when <uuid>.bc1 does not exist
+    // falls back to legacy <uuid>_0.bc1 on disk and properly slices it.
     template<> template<>
     void bc_texture_cache_object::test<14>()
     {
@@ -625,9 +636,9 @@ namespace tut
         LLUUID id;
         id.generate();
 
-        // Write a legacy file <uuid>_0.bc directly to disk
+        // Write a legacy file <uuid>_0.bc1 directly to disk
         std::string expected_subdir(1, id.asString()[0]);
-        std::string legacy_path = (dir / expected_subdir / (id.asString() + "_0.bc")).string();
+        std::string legacy_path = (dir / expected_subdir / (id.asString() + "_0.bc1")).string();
 
         VayuBCCacheEntryHeader header = make_header(1 /* BC1 */, 2);
         header.mWidth = 16;
@@ -652,7 +663,7 @@ namespace tut
             out.write(reinterpret_cast<const char*>(&fh), sizeof(fh));
             out.write(reinterpret_cast<const char*>(payload.data()), payload.size());
         }
-        ensure("Legacy _0.bc file exists on disk", std::filesystem::exists(legacy_path));
+        ensure("Legacy _0.bc1 file exists on disk", std::filesystem::exists(legacy_path));
 
         // Read using standard readEntry(id, 0) - should hit legacy file
         VayuBCCacheEntryHeader out_h;
@@ -673,7 +684,7 @@ namespace tut
         LLUUID stale_id;
         stale_id.generate();
         std::string stale_subdir(1, stale_id.asString()[0]);
-        std::filesystem::path stale_path = dir / stale_subdir / (stale_id.asString() + ".bc");
+        std::filesystem::path stale_path = dir / stale_subdir / (stale_id.asString() + ".bc1");
         TestFileHeader stale_fh = fh;
         stale_fh.mVersion = VayuBCTextureCache::kFormatVersion - 1;
         {
@@ -706,11 +717,11 @@ namespace tut
         VayuBCTextureCache::instance().shutdown();
 
         std::string expected_subdir(1, id.asString()[0]);
-        std::filesystem::path new_path = dir / expected_subdir / (id.asString() + ".bc");
-        std::filesystem::path old_path = dir / expected_subdir / (id.asString() + "_0.bc");
+        std::filesystem::path new_path = dir / expected_subdir / (id.asString() + ".bc1");
+        std::filesystem::path old_path = dir / expected_subdir / (id.asString() + "_0.bc1");
 
-        ensure("File exists as <uuid>.bc", std::filesystem::exists(new_path));
-        ensure("File does NOT exist as <uuid>_0.bc", !std::filesystem::exists(old_path));
+        ensure("File exists as <uuid>.bc1", std::filesystem::exists(new_path));
+        ensure("File does NOT exist as <uuid>_0.bc1", !std::filesystem::exists(old_path));
 
         VayuBCTextureCache::instance().clear();
     }
@@ -753,6 +764,100 @@ namespace tut
         ensure("High resolution entry survived concurrent queue attempt", ok);
         ensure_equals("Discard level is 0", (int)read_h.mDiscardLevel, 0);
         ensure("Payload matches high-res payload", read_b == payload0);
+
+        VayuBCTextureCache::instance().clear();
+    }
+
+    // Test 17: Coexistence of form + role for the same UUID.
+    // Verifies that a single UUID written as both color (e.g. BC1) and normal (BC5)
+    // coexists on disk under <uuid>.bc1 and <uuid>.bc5n, neither overwrites the other,
+    // and each reads back with matching format.
+    template<> template<>
+    void bc_texture_cache_object::test<17>()
+    {
+        auto dir = test_dir("coexistence");
+        std::filesystem::remove_all(dir);
+        VayuBCTextureCache::instance().initCache(dir, 1024 * 1024);
+
+        LLUUID id;
+        id.generate();
+
+        // 1. Color entry (BC1 -> .bc1)
+        VayuBCCacheEntryHeader header_color = make_header(VayuBCTextureCache::kFormatBC1, 2);
+        header_color.mDiscardLevel = 0;
+        std::vector<U8> payload_color = { 0xAA, 0xBB, 0xCC, 0xDD };
+
+        // 2. Normal entry (BC5 -> .bc5n)
+        VayuBCCacheEntryHeader header_normal = make_header(VayuBCTextureCache::kFormatBC5, 2);
+        header_normal.mDiscardLevel = 0;
+        header_normal.mComponents = 2;
+        header_normal.mRole = VayuBCTextureCache::kRoleNormal;
+        std::vector<U8> payload_normal = { 0x11, 0x22, 0x33, 0x44, 0x55, 0x66 };
+
+        VayuBCTextureCache::instance().writeEntry(id, 0, header_color, make_buffer(payload_color));
+        VayuBCTextureCache::instance().writeEntry(id, 0, header_normal, make_buffer(payload_normal));
+
+        VayuBCTextureCache::instance().shutdown();
+
+        std::string expected_subdir(1, id.asString()[0]);
+        std::filesystem::path bc_path = dir / expected_subdir / (id.asString() + ".bc1");
+        std::filesystem::path bc5_path = dir / expected_subdir / (id.asString() + ".bc5n");
+
+        ensure("File exists as <uuid>.bc1", std::filesystem::exists(bc_path));
+        ensure("File exists as <uuid>.bc5n", std::filesystem::exists(bc5_path));
+
+        // Read back color entry
+        VayuBCCacheEntryHeader read_color_h;
+        std::vector<U8> read_color_b;
+        bool ok_color = VayuBCTextureCache::instance().readEntry(id, 0, read_color_h, read_color_b, ".bc", VayuBCTextureCache::kFormatBC1);
+        ensure("Color entry read succeeded", ok_color);
+        ensure_equals("Color format is BC1", read_color_h.mFormat, VayuBCTextureCache::kFormatBC1);
+        ensure("Color payload matches", read_color_b == payload_color);
+
+        // Read back normal entry
+        VayuBCCacheEntryHeader read_normal_h;
+        std::vector<U8> read_normal_b;
+        bool ok_normal = VayuBCTextureCache::instance().readEntry(id, 0, read_normal_h, read_normal_b, ".bc5", VayuBCTextureCache::kFormatBC5, VayuBCTextureCache::kRoleNormal);
+        ensure("Normal entry read succeeded", ok_normal);
+        ensure_equals("Normal format is BC5", read_normal_h.mFormat, VayuBCTextureCache::kFormatBC5);
+        ensure("Normal payload matches", read_normal_b == payload_normal);
+
+        // Same-format dual-role: an albedo that also encodes BC7 must not share a
+        // file with a legacy-normal BC7 encode of the same UUID. They coexist as
+        // <uuid>.bc7 (color) and <uuid>.bc7n (normal) - the last-writer-wins
+        // collision across roles is structurally impossible.
+        LLUUID id2;
+        id2.generate();
+
+        VayuBCCacheEntryHeader header_color_bc7 = make_header(VayuBCTextureCache::kFormatBC7, 2);
+        header_color_bc7.mDiscardLevel = 0;
+        header_color_bc7.mRole = VayuBCTextureCache::kRoleColor;
+        VayuBCCacheEntryHeader header_legacy = make_header(VayuBCTextureCache::kFormatBC7, 2);
+        header_legacy.mDiscardLevel = 0;
+        header_legacy.mRole = VayuBCTextureCache::kRoleNormal;
+
+        std::vector<U8> payload_color7 = { 0x01, 0x02, 0x03, 0x04 };
+        std::vector<U8> payload_legacy = { 0x05, 0x06, 0x07, 0x08 };
+
+        VayuBCTextureCache::instance().writeEntry(id2, 0, header_color_bc7, make_buffer(payload_color7));
+        VayuBCTextureCache::instance().writeEntry(id2, 0, header_legacy, make_buffer(payload_legacy));
+        VayuBCTextureCache::instance().shutdown();
+
+        std::string subdir2(1, id2.asString()[0]);
+        ensure("Color BC7 file exists as <uuid>.bc7",
+               std::filesystem::exists(dir / subdir2 / (id2.asString() + ".bc7")));
+        ensure("Normal BC7 file exists as <uuid>.bc7n",
+               std::filesystem::exists(dir / subdir2 / (id2.asString() + ".bc7n")));
+
+        VayuBCCacheEntryHeader read_bc7_h;
+        std::vector<U8> read_bc7_b;
+        bool ok_bc7 = VayuBCTextureCache::instance().readEntry(id2, 0, read_bc7_h, read_bc7_b, ".bc7", VayuBCTextureCache::kFormatBC7, VayuBCTextureCache::kRoleColor);
+        ensure("Color BC7 reads back independently", ok_bc7 && read_bc7_b == payload_color7);
+
+        VayuBCCacheEntryHeader read_legacy_h;
+        std::vector<U8> read_legacy_b;
+        bool ok_legacy = VayuBCTextureCache::instance().readEntry(id2, 0, read_legacy_h, read_legacy_b, ".bc7", VayuBCTextureCache::kFormatBC7, VayuBCTextureCache::kRoleNormal);
+        ensure("Normal BC7 reads back independently of color BC7", ok_legacy && read_legacy_b == payload_legacy);
 
         VayuBCTextureCache::instance().clear();
     }

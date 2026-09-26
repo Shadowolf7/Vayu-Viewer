@@ -37,6 +37,7 @@
 #include "httpcommon.h"
 #include "workqueue.h"
 #include "gltf/common.h"
+#include "vayuimageblockcompressor.h"
 
 #include <map>
 #include <list>
@@ -133,8 +134,12 @@ public:
     /*virtual*/ const LLUUID& getID() const { return mID; }
     virtual void setBoostLevel(S32 level);
     S32  getBoostLevel() { return mBoostLevel; }
+    virtual S32 getCategory() const { return mBoostLevel; }
     void setTextureListType(S32 tex_type) { mTextureListType = tex_type; }
     S32 getTextureListType() { return mTextureListType; }
+
+    void setTextureJob(EVayuTextureJob job);
+    EVayuTextureJob getTextureJob() const { return mTextureJob; }
 
     void addTextureStats(F32 virtual_size, bool needs_gltexture = true) const;
     void resetTextureStats();
@@ -205,6 +210,7 @@ protected:
 
     LL::WorkQueue::weak_t mMainQueue;
     LL::WorkQueue::weak_t mImageQueue;
+    EVayuTextureJob       mTextureJob = EVayuTextureJob::Unknown;
 
 public:
     static const U32 sCurrentFileVersion;
@@ -292,6 +298,7 @@ public:
 public:
     /*virtual*/ S8 getType() const override;
     FTType getFTType() const;
+    /*virtual*/ S32 getCategory() const override;
     /*virtual*/ void forceImmediateUpdate() override;
     /*virtual*/ void dump() override;
 

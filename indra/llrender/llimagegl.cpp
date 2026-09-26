@@ -794,7 +794,7 @@ void LLImageGL::init(bool usemipmaps)
     mFormatSwapBytes = false;
 
     mDeprecatedSourceFormat = 0;
-    mTextureJob = EVayuTextureJob::Default;
+    mTextureJob = EVayuTextureJob::Unknown;
 
 #ifdef DEBUG_MISS
     mMissed = false;
@@ -1007,16 +1007,16 @@ bool LLImageGL::setImage(const U8* data_in, bool data_hasmips /* = false */, S32
         {
             // NOTE: data_in points to largest image; smaller images
             // are stored BEFORE the largest image
-            for (S32 d=mCurrentDiscardLevel; d<=mMaxDiscardLevel; d++)
-            {
+            const S32 total_gl_levels = calcMipLevelCount(liveWidth(mCurrentDiscardLevel), liveHeight(mCurrentDiscardLevel));
+            mMipLevels = total_gl_levels;
 
+            for (S32 gl_level = 0; gl_level < total_gl_levels; gl_level++)
+            {
+                S32 d = mCurrentDiscardLevel + gl_level;
                 S32 w = liveWidth(d);
                 S32 h = liveHeight(d);
-                S32 gl_level = d-mCurrentDiscardLevel;
 
-                mMipLevels = llmax(mMipLevels, gl_level + 1);
-
-                if (d > mCurrentDiscardLevel)
+                if (gl_level > 0)
                 {
                     data_in -= dataFormatBytes(mFormatPrimary, w, h); // see above comment
                 }
@@ -1897,10 +1897,12 @@ bool LLImageGL::createGLTexture(S32 discard_level, const LLImageRaw* imageraw, S
             return createGLTexture(discard_level, comp_data, true /* data_hasmips */, usename, defer_copy, tex_name);
         }
 
-        // 2. Fallback path: encode synchronously if not pre-compressed in background
+        // 2. Fallback path: encode synchronously if not pre-compressed in background.
+        //    An Unknown job (raw never claimed, raw's own job also unclaimed) must
+        //    NOT encode — raw bind instead. encode() refuses Unknown as defense in depth.
         VayuBlockCompressionResult comp_res;
-        const EVayuTextureJob job = (imageraw->getTextureJob() != EVayuTextureJob::Default) ? imageraw->getTextureJob() : mTextureJob;
-        if (VayuImageBlockCompressor::encode(imageraw, comp_res, EVayuBlockCompressionFormat::Auto, job))
+        const EVayuTextureJob job = (imageraw->getTextureJob() != EVayuTextureJob::Unknown) ? imageraw->getTextureJob() : mTextureJob;
+        if (job != EVayuTextureJob::Unknown && VayuImageBlockCompressor::encode(imageraw, comp_res, EVayuBlockCompressionFormat::Auto, job))
         {
             mIsMask = comp_res.mIsMask;
             mFormatInternal = comp_res.mGLInternalFormat;

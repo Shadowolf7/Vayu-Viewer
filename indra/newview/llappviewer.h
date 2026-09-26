@@ -50,6 +50,7 @@
 #include "lltimer.h"
 #include "llappcorehttp.h"
 #include "threadpool_fwd.h"
+#include "workqueue.h"
 
 #include <boost/signals2.hpp>
 
@@ -466,5 +467,6 @@ extern bool gPeriodicSlowFrame;
 extern bool gDoDisconnect;
 
 extern bool gSimulateMemLeak;
+extern LL::WorkQueue gMainloopWork;
 
 #endif // LL_LLAPPVIEWER_H

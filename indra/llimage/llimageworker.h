@@ -54,7 +54,7 @@ public:
                          S32 discard, bool needs_aux, bool allow_compression,
                          const LLPointer<Responder>& responder,
                          const LLUUID& id = LLUUID::null,
-                         EVayuTextureJob job = EVayuTextureJob::Default);
+                         EVayuTextureJob job = EVayuTextureJob::Unknown);
     size_t getPending();
     size_t update(F32 max_time_ms);
     S32 getTotalDecodeCount() { return mDecodeCount; }

@@ -576,7 +576,8 @@ bool idle_startup()
     }
 
     //note: Removing this line will cause incorrect button size in the login screen. -- bao.
-    gTextureList.updateImages(0.01f) ;
+    update_texture_fetch();
+    gMainloopWork.runPending();
 
     if ( STATE_FIRST == LLStartUp::getStartupState() )
     {

@@ -23,12 +23,14 @@ enum class EVayuBlockCompressionFormat : U8
 
 enum class EVayuTextureJob : U8
 {
-    Default = 0,            // General / unknown usage (Auto: BC1 if opaque, BC7 if alpha)
-    Albedo,                 // Base color / diffuse (sRGB: BC1 if opaque, BC7 if alpha)
-    Normal,                 // Tangent-space normal map (linear: BC7 or BC5)
-    MetallicRoughness,      // glTF PBR ORM / Metallic-Roughness (linear: BC7, or BC5/BC4)
+    Albedo = 0,             // glTF PBR base color (sRGB: BC1 if opaque, BC7 if alpha)
+    RGBA,                   // Generic color map: legacy diffuse/alt-diffuse, terrain, water color (sRGB: BC1 if opaque, BC7 if alpha)
+    LegacyMaterialNormal,   // Second Life Blinn-Phong material normal map (linear: BC7, RGBA with gloss in alpha)
+    LegacySpecular,         // Second Life Blinn-Phong specular map (linear: BC7, RGB tint + gloss in alpha)
+    PBRNormal,              // glTF PBR tangent-space normal map (linear: BC5, RG unit vector)
+    MetallicRoughness,      // glTF PBR packed ORM: R=occlusion, G=roughness, B=metal (linear: BC7)
     Emissive,               // Emissive color map (sRGB: BC1 if opaque, BC7 if alpha)
-    SingleChannelMask,      // Scalar mask / roughness / height / AO (linear: BC4)
+    Unknown,                // Unclaimed role: never block-compressed, never cached, raw bind only
 };
 
 // Trades encode latency for compressed-image quality. Applies to both the
@@ -89,11 +91,13 @@ public:
     static bool encode(const U8* src_data, U32 width, U32 height, S32 components,
                        VayuBlockCompressionResult& result,
                        EVayuBlockCompressionFormat format = EVayuBlockCompressionFormat::Auto,
-                       EVayuTextureJob job = EVayuTextureJob::Default);
+                       EVayuTextureJob job = EVayuTextureJob::Albedo);
 
-    // Convenience overload to encode from an LLImageRaw
+    // Convenience overload to encode from an LLImageRaw.
+    // Default job is Unknown: falls back to the raw image's own job, and refuses
+    // to encode if that is also Unknown (unclaimed textures never compress).
     static bool encode(const LLImageRaw* raw_image,
                        VayuBlockCompressionResult& result,
                        EVayuBlockCompressionFormat format = EVayuBlockCompressionFormat::Auto,
-                       EVayuTextureJob job = EVayuTextureJob::Default);
+                       EVayuTextureJob job = EVayuTextureJob::Unknown);
 };

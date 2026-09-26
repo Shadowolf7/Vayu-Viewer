@@ -27,6 +27,8 @@
 #include "llviewerprecompiledheaders.h"
 
 #include <sys/stat.h>
+#include <chrono>
+#include <thread>
 
 #include "llviewertexturelist.h"
 
@@ -156,6 +158,12 @@ void LLViewerTextureList::doPreloadImages()
                                                           0,
                                                           0,
                                                           BLANK_OBJECT_NORMAL);
+
+    // NOTE: do not tag sFlatNormalImagep with a normal texture job. bindDefaultImage()
+    // falls back to it for unloaded normal maps, and if it carried a normal job of its
+    // own it would recurse back through the same fallback during the precache decode
+    // storm (bind -> forceImmediateUpdate -> bindDefaultImage -> ...) and overflow the
+    // main-thread stack. It is a rendering placeholder, never a compressible BC5 target.
 
     // PBR: irradiance
     LLViewerFetchedTexture::sDefaultIrradiancePBRp = LLViewerTextureManager::getFetchedTextureFromFile("default_irradiance.png", FTT_LOCAL_FILE, MIPMAP_YES, LLViewerFetchedTexture::BOOST_UI);
@@ -1384,6 +1392,12 @@ void LLViewerTextureList::decodeAllImages(F32 max_time)
             main_queue->runFor(std::chrono::milliseconds(1));
             fetch_pending += main_queue->size();
         }
+        else
+        {
+            gMainloopWork.runFor(std::chrono::milliseconds(1));
+        }
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
 
         if (fetch_pending == 0 || timer.getElapsedTimeF32() > max_time)
         {

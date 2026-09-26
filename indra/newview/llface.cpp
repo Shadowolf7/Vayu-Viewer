@@ -297,6 +297,15 @@ void LLFace::setTexture(U32 ch, LLViewerTexture* tex)
     }
 
     mTexture[ch] = tex ;
+
+    // Role claim: a texture bound to a color slot is a generic RGBA color map
+    // (legacy diffuse, alt-diffuse, particles). PBR base colors get the Albedo
+    // job at their own assignment sites. Placeholders that fall back through
+    // this path are never compressed because they remain Unknown at the worker gate.
+    if( tex && (ch == LLRender::DIFFUSE_MAP || ch == LLRender::ALTERNATE_DIFFUSE_MAP) )
+    {
+        tex->setTextureJob(EVayuTextureJob::RGBA);
+    }
 }
 
 void LLFace::setTexture(LLViewerTexture* tex)
@@ -316,11 +325,19 @@ void LLFace::setAlternateDiffuseMap(LLViewerTexture* tex)
 
 void LLFace::setNormalMap(LLViewerTexture* tex)
 {
+    if (tex)
+    {
+        tex->setTextureJob(EVayuTextureJob::LegacyMaterialNormal);
+    }
     setTexture(LLRender::NORMAL_MAP, tex);
 }
 
 void LLFace::setSpecularMap(LLViewerTexture* tex)
 {
+    if (tex)
+    {
+        tex->setTextureJob(EVayuTextureJob::LegacySpecular);
+    }
     setTexture(LLRender::SPECULAR_MAP, tex);
 }
 

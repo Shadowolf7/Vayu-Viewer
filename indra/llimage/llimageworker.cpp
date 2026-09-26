@@ -43,7 +43,7 @@ public:
                  const LLPointer<LLImageDecodeThread::Responder>& responder,
                  U32 request_id,
                  const LLUUID& id,
-                 EVayuTextureJob job = EVayuTextureJob::Default);
+                 EVayuTextureJob job = EVayuTextureJob::Unknown);
     virtual ~ImageRequest();
 
     /*virtual*/ bool processRequest();
@@ -206,7 +206,10 @@ bool ImageRequest::processRequest()
         }
 
         const S32 discard = (mDiscardLevel >= 0) ? mDiscardLevel : (S32)mFormattedImage->getDiscardLevel();
-        const bool cacheable = !mNeedsAux && mID.notNull() && discard >= 0 && mAllowCompression;
+        // Unknown (unclaimed) textures never read the BC cache either: a stale
+        // colour/normal entry must not be resurrected for an uncompressed raw bind.
+        const bool cacheable = !mNeedsAux && mID.notNull() && discard >= 0 && mAllowCompression
+            && mTextureJob != EVayuTextureJob::Unknown;
         bool cache_hit = false;
 
         // Check VayuBCTextureCache *before* running expensive CPU OpenJPEG decode.
@@ -215,7 +218,45 @@ bool ImageRequest::processRequest()
         {
             VayuBCCacheEntryHeader cache_header;
             std::vector<U8> cache_buffer;
-            if (VayuBCTextureCache::instance().readEntry(mID, discard, cache_header, cache_buffer))
+            bool cache_hit_vbc = false;
+            if (mTextureJob == EVayuTextureJob::PBRNormal)
+            {
+                if (VayuBCTextureCache::instance().readEntry(mID, discard, cache_header, cache_buffer, ".bc5", VayuBCTextureCache::kFormatBC5, VayuBCTextureCache::kRoleNormal))
+                {
+                    cache_hit_vbc = true;
+                }
+            }
+            else if (mTextureJob == EVayuTextureJob::LegacyMaterialNormal)
+            {
+                // Legacy Blinn-Phong normal map: BC7 (fallback BC3). The cache
+                // name carries format + role, so a colour .bc7 entry can never
+                // satisfy this role.
+                if (VayuBCTextureCache::instance().readEntry(mID, discard, cache_header, cache_buffer, ".bc7", VayuBCTextureCache::kFormatBC7, VayuBCTextureCache::kRoleNormal) ||
+                    VayuBCTextureCache::instance().readEntry(mID, discard, cache_header, cache_buffer, ".bc3", VayuBCTextureCache::kFormatBC3, VayuBCTextureCache::kRoleNormal))
+                {
+                    cache_hit_vbc = true;
+                }
+            }
+            else if (mTextureJob == EVayuTextureJob::LegacySpecular)
+            {
+                // Legacy Blinn-Phong specular map: BC7 (fallback BC3), role colour.
+                // RGB tint + alpha gloss must survive, so only the 4-channel
+                // formats qualify.
+                if (VayuBCTextureCache::instance().readEntry(mID, discard, cache_header, cache_buffer, ".bc7", VayuBCTextureCache::kFormatBC7, VayuBCTextureCache::kRoleColor) ||
+                    VayuBCTextureCache::instance().readEntry(mID, discard, cache_header, cache_buffer, ".bc3", VayuBCTextureCache::kFormatBC3, VayuBCTextureCache::kRoleColor))
+                {
+                    cache_hit_vbc = true;
+                }
+            }
+            else
+            {
+                if (VayuBCTextureCache::instance().readEntry(mID, discard, cache_header, cache_buffer, ".bc"))
+                {
+                    cache_hit_vbc = true;
+                }
+            }
+
+            if (cache_hit_vbc)
             {
                 auto comp_res = std::make_shared<VayuBlockCompressionResult>();
                 comp_res->mFormat = (EVayuBlockCompressionFormat)cache_header.mFormat;
@@ -279,7 +320,13 @@ bool ImageRequest::processRequest()
 
     if (done && mDecodedRaw && mDecodedImageRaw.notNull() && !mDecodedImageRaw->getBlockCompressionResult())
     {
+        // Never block-compress an unclaimed texture: only roles explicitly
+        // assigned by a material slot (or derived from the encoded kind) reach
+        // the BC layer. Unknown (J2C-native, placeholders, skipped categories)
+        // stays raw. Gating here keeps Unknown out of BOTH the GL result and
+        // the on-disk BC cache.
         if (mAllowCompression &&
+            mTextureJob != EVayuTextureJob::Unknown &&
             VayuImageBlockCompressor::isEligible(mDecodedImageRaw->getWidth(),
                                                mDecodedImageRaw->getHeight(),
                                                mDecodedImageRaw->getComponents()))
@@ -298,6 +345,10 @@ bool ImageRequest::processRequest()
                     cache_header.mFormat = (U8)comp_res->mFormat;
                     cache_header.mPreset = (U8)comp_res->mPreset;
                     cache_header.mIsMask = comp_res->mIsMask ? 1 : 0;
+                    cache_header.mRole = (mTextureJob == EVayuTextureJob::PBRNormal ||
+                                          mTextureJob == EVayuTextureJob::LegacyMaterialNormal)
+                                             ? VayuBCTextureCache::kRoleNormal
+                                             : VayuBCTextureCache::kRoleColor;
                     cache_header.mDiscardLevel = (U8)discard;
                     cache_header.mMipLevels = comp_res->mMipLevels;
                     cache_header.mWidth = comp_res->mWidth;

@@ -305,9 +305,10 @@ namespace tut
         bool success = false;
         LLPointer<LLImageRaw> decoded_raw;
 
-        // Discard level 2, allow compression = true, pass test_id
+        // Discard level 2, allow compression = true, pass test_id.
+        // Explicitly claim Albedo: an Unknown job must never compress.
         LLImageDecodeThread::handle_t handle = mThread->decodeImage(
-            mock_image, 2, false, true, new responder_test(&done, &success, &decoded_raw), test_id);
+            mock_image, 2, false, true, new responder_test(&done, &success, &decoded_raw), test_id, EVayuTextureJob::Albedo);
         ensure("Valid handle for coarse decode", handle != 0);
 
         const U32 INCREMENT_TIME = 50;

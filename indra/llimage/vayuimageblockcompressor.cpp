@@ -8,6 +8,7 @@
 #include "bc7e/rgbcx.h"
 #if defined(HAVE_BC7E_ISPC)
 #include "bc7e/bc7e_ispc.h"
+#include "bc7e/bc5e_ispc.h"
 #else
 #include "bc7e/bc7enc.h"
 #endif
@@ -16,6 +17,8 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <cstdlib>
+#include <fstream>
 #include <mutex>
 #include <cstring>
 
@@ -240,6 +243,178 @@ static void downsample_half_srgb_3ch(const uint8_t* src, uint32_t sw, uint32_t s
     }
 }
 
+// Box-filter downsampling for 2-channel data (e.g. BC5 normal maps).
+// Channels are stored byte-after-byte (R,G); a flat 2x2 average per byte.
+// (A naive 16-bit packed average would let byte-to-byte carries corrupt both.)
+static void downsample_half_2ch(const uint8_t* src, uint32_t sw, uint32_t sh, uint8_t* dst)
+{
+    const uint32_t dw = llmax(1u, sw / 2);
+    const uint32_t dh = llmax(1u, sh / 2);
+
+    for (uint32_t y = 0; y < dh; y++)
+    {
+        uint32_t sy0 = y * 2;
+        uint32_t sy1 = (sy0 + 1 < sh) ? (sy0 + 1) : sy0;
+        const uint8_t* r0 = src + (size_t)sy0 * sw * 2;
+        const uint8_t* r1 = src + (size_t)sy1 * sw * 2;
+        uint8_t* out = dst + (size_t)y * dw * 2;
+
+        for (uint32_t x = 0; x < dw; x++)
+        {
+            uint32_t sx0 = x * 2;
+            uint32_t sx1 = (sx0 + 1 < sw) ? (sx0 + 1) : sx0;
+            const uint8_t* a = r0 + (size_t)sx0 * 2;
+            const uint8_t* b = r0 + (size_t)sx1 * 2;
+            const uint8_t* c = r1 + (size_t)sx0 * 2;
+            const uint8_t* d = r1 + (size_t)sx1 * 2;
+
+            out[0] = (uint8_t)(((uint32_t)a[0] + b[0] + c[0] + d[0] + 2) >> 2);
+            out[1] = (uint8_t)(((uint32_t)a[1] + b[1] + c[1] + d[1] + 2) >> 2);
+            out += 2;
+        }
+    }
+}
+
+// Box-filter downsampling for 3-channel linear data (e.g. RGB normal maps).
+static void downsample_half_linear_3ch(const uint8_t* src, uint32_t sw, uint32_t sh, uint8_t* dst)
+{
+    const uint32_t dw = llmax(1u, sw / 2);
+    const uint32_t dh = llmax(1u, sh / 2);
+
+    for (uint32_t y = 0; y < dh; y++)
+    {
+        uint32_t sy0 = y * 2;
+        uint32_t sy1 = (sy0 + 1 < sh) ? (sy0 + 1) : sy0;
+        const uint8_t* r0 = src + (size_t)sy0 * sw * 3;
+        const uint8_t* r1 = src + (size_t)sy1 * sw * 3;
+        uint8_t* out = dst + (size_t)y * dw * 3;
+
+        for (uint32_t x = 0; x < dw; x++)
+        {
+            uint32_t sx0 = x * 2;
+            uint32_t sx1 = (sx0 + 1 < sw) ? (sx0 + 1) : sx0;
+            const uint8_t* a = r0 + (size_t)sx0 * 3;
+            const uint8_t* b = r0 + (size_t)sx1 * 3;
+            const uint8_t* c = r1 + (size_t)sx0 * 3;
+            const uint8_t* d = r1 + (size_t)sx1 * 3;
+
+            out[0] = (uint8_t)(((uint32_t)a[0] + b[0] + c[0] + d[0] + 2) >> 2);
+            out[1] = (uint8_t)(((uint32_t)a[1] + b[1] + c[1] + d[1] + 2) >> 2);
+            out[2] = (uint8_t)(((uint32_t)a[2] + b[2] + c[2] + d[2] + 2) >> 2);
+            out += 3;
+        }
+    }
+}
+
+// Vector-normalized downsampling for normal maps (2-channel BC5, 3-channel RGB normal, 4-channel normal + gloss).
+static void downsample_half_normal(const uint8_t* src, uint32_t sw, uint32_t sh, S32 channels, uint8_t* dst)
+{
+    const uint32_t dw = llmax(1u, sw / 2);
+    const uint32_t dh = llmax(1u, sh / 2);
+
+    for (uint32_t y = 0; y < dh; y++)
+    {
+        uint32_t sy0 = y * 2;
+        uint32_t sy1 = (sy0 + 1 < sh) ? (sy0 + 1) : sy0;
+        const uint8_t* r0 = src + (size_t)sy0 * sw * channels;
+        const uint8_t* r1 = src + (size_t)sy1 * sw * channels;
+        uint8_t* out = dst + (size_t)y * dw * channels;
+
+        for (uint32_t x = 0; x < dw; x++)
+        {
+            uint32_t sx0 = x * 2;
+            uint32_t sx1 = (sx0 + 1 < sw) ? (sx0 + 1) : sx0;
+            const uint8_t* a = r0 + (size_t)sx0 * channels;
+            const uint8_t* b = r0 + (size_t)sx1 * channels;
+            const uint8_t* c = r1 + (size_t)sx0 * channels;
+            const uint8_t* d = r1 + (size_t)sx1 * channels;
+
+            if (channels == 2)
+            {
+                // Unpack (x, y) and reconstruct z on each of the 4 texels before averaging
+                float ax = (a[0] / 255.0f) * 2.0f - 1.0f;
+                float ay = (a[1] / 255.0f) * 2.0f - 1.0f;
+                float az = std::sqrt(std::max(0.0f, 1.0f - ax * ax - ay * ay));
+
+                float bx = (b[0] / 255.0f) * 2.0f - 1.0f;
+                float by = (b[1] / 255.0f) * 2.0f - 1.0f;
+                float bz = std::sqrt(std::max(0.0f, 1.0f - bx * bx - by * by));
+
+                float cx = (c[0] / 255.0f) * 2.0f - 1.0f;
+                float cy = (c[1] / 255.0f) * 2.0f - 1.0f;
+                float cz = std::sqrt(std::max(0.0f, 1.0f - cx * cx - cy * cy));
+
+                float dx = (d[0] / 255.0f) * 2.0f - 1.0f;
+                float dy = (d[1] / 255.0f) * 2.0f - 1.0f;
+                float dz = std::sqrt(std::max(0.0f, 1.0f - dx * dx - dy * dy));
+
+                float vx = (ax + bx + cx + dx) * 0.25f;
+                float vy = (ay + by + cy + dy) * 0.25f;
+                float vz = (az + bz + cz + dz) * 0.25f;
+                float len_sq = vx * vx + vy * vy + vz * vz;
+                if (len_sq > 1e-6f)
+                {
+                    float inv_len = 1.0f / std::sqrt(len_sq);
+                    vx *= inv_len;
+                    vy *= inv_len;
+                }
+                out[0] = (uint8_t)std::clamp((int)std::round((vx + 1.0f) * 0.5f * 255.0f), 0, 255);
+                out[1] = (uint8_t)std::clamp((int)std::round((vy + 1.0f) * 0.5f * 255.0f), 0, 255);
+                out += 2;
+            }
+            else
+            {
+                // 3 or 4 channels (RGB = normal vector, A = glossiness)
+                float ax = (a[0] / 255.0f) * 2.0f - 1.0f;
+                float ay = (a[1] / 255.0f) * 2.0f - 1.0f;
+                float az = (a[2] / 255.0f) * 2.0f - 1.0f;
+
+                float bx = (b[0] / 255.0f) * 2.0f - 1.0f;
+                float by = (b[1] / 255.0f) * 2.0f - 1.0f;
+                float bz = (b[2] / 255.0f) * 2.0f - 1.0f;
+
+                float cx = (c[0] / 255.0f) * 2.0f - 1.0f;
+                float cy = (c[1] / 255.0f) * 2.0f - 1.0f;
+                float cz = (c[2] / 255.0f) * 2.0f - 1.0f;
+
+                float dx = (d[0] / 255.0f) * 2.0f - 1.0f;
+                float dy = (d[1] / 255.0f) * 2.0f - 1.0f;
+                float dz = (d[2] / 255.0f) * 2.0f - 1.0f;
+
+                float vx = (ax + bx + cx + dx) * 0.25f;
+                float vy = (ay + by + cy + dy) * 0.25f;
+                float vz = (az + bz + cz + dz) * 0.25f;
+                float len_sq = vx * vx + vy * vy + vz * vz;
+                if (len_sq > 1e-6f)
+                {
+                    float inv_len = 1.0f / std::sqrt(len_sq);
+                    vx *= inv_len;
+                    vy *= inv_len;
+                    vz *= inv_len;
+                }
+                else
+                {
+                    vx = 0.0f;
+                    vy = 0.0f;
+                    vz = 1.0f;
+                }
+                out[0] = (uint8_t)std::clamp((int)std::round((vx + 1.0f) * 0.5f * 255.0f), 0, 255);
+                out[1] = (uint8_t)std::clamp((int)std::round((vy + 1.0f) * 0.5f * 255.0f), 0, 255);
+                out[2] = (uint8_t)std::clamp((int)std::round((vz + 1.0f) * 0.5f * 255.0f), 0, 255);
+                if (channels == 4)
+                {
+                    out[3] = (uint8_t)(((uint32_t)a[3] + b[3] + c[3] + d[3] + 2) >> 2);
+                    out += 4;
+                }
+                else
+                {
+                    out += 3;
+                }
+            }
+        }
+    }
+}
+
 static void downsample_half_linear(const uint8_t* src, uint32_t sw, uint32_t sh, S32 channels, uint8_t* dst)
 {
     const uint32_t dw = llmax(1u, sw / 2);
@@ -251,11 +426,13 @@ static void downsample_half_linear(const uint8_t* src, uint32_t sw, uint32_t sh,
                           dst, (int)dw * 4, (int)dw, (int)dh,
                           libyuv::kFilterBox);
     }
+    else if (channels == 3)
+    {
+        downsample_half_linear_3ch(src, sw, sh, dst);
+    }
     else if (channels == 2)
     {
-        libyuv::ScalePlane_16(reinterpret_cast<const uint16_t*>(src), (int)sw, (int)sw, (int)sh,
-                              reinterpret_cast<uint16_t*>(dst), (int)dw, (int)dw, (int)dh,
-                              libyuv::kFilterBox);
+        downsample_half_2ch(src, sw, sh, dst);
     }
     else if (channels == 1)
     {
@@ -265,7 +442,7 @@ static void downsample_half_linear(const uint8_t* src, uint32_t sw, uint32_t sh,
     }
     else
     {
-        downsample_half_srgb_3ch(src, sw, sh, dst);
+        downsample_half_linear_3ch(src, sw, sh, dst);
     }
 }
 
@@ -286,6 +463,43 @@ static inline uint32_t calc_level_bytes(uint32_t width, uint32_t height, uint32_
     if (bw < 1) bw = 1;
     if (bh < 1) bh = 1;
     return bw * bh * block_bytes;
+}
+
+static void dump_encode_result(const std::vector<std::vector<uint8_t>>& uncompressed_mips,
+                               uint32_t width, uint32_t height, S32 components,
+                               EVayuBlockCompressionFormat format, EVayuTextureJob job,
+                               bool is_srgb,
+                               const std::vector<size_t>& mip_byte_sizes,
+                               const std::vector<size_t>& buffer_offsets,
+                               const std::vector<uint8_t>& buffer)
+{
+    const char* dir = std::getenv("VAYU_DUMP_DIR");
+    if (!dir || !dir[0])
+        return;
+
+    static std::atomic<U32> s_seq{0};
+    const U32 seq = s_seq.fetch_add(1);
+    const std::string base = std::string(dir) + "/seq" + std::to_string(seq) + "_" +
+                             std::to_string(width) + "x" + std::to_string(height) + "_c" +
+                             std::to_string(components) + "_job" + std::to_string((U32)job) +
+                             "_fmt" + std::to_string((U32)format) + "_srgb" +
+                             std::to_string(is_srgb ? 1 : 0) + "_m" +
+                             std::to_string(uncompressed_mips.size());
+
+    std::ofstream meta(base + ".meta", std::ios::binary);
+    meta << width << " " << height << " " << components << " " << (U32)job << " "
+         << (U32)format << " " << (is_srgb ? 1 : 0) << " " << uncompressed_mips.size() << "\n";
+    for (size_t i = 0; i < uncompressed_mips.size(); i++)
+    {
+        std::ofstream raw(base + "_rawmip" + std::to_string(i) + ".bin", std::ios::binary);
+        raw.write(reinterpret_cast<const char*>(uncompressed_mips[i].data()),
+                  (std::streamsize)uncompressed_mips[i].size());
+        meta << i << " " << uncompressed_mips[i].size() << " " << mip_byte_sizes[i]
+             << " " << buffer_offsets[i] << "\n";
+    }
+
+    std::ofstream comp(base + "_compressed.bin", std::ios::binary);
+    comp.write(reinterpret_cast<const char*>(buffer.data()), (std::streamsize)buffer.size());
 }
 
 } // namespace
@@ -341,7 +555,7 @@ bool VayuImageBlockCompressor::encode(const LLImageRaw* raw_image,
 {
     if (!raw_image || raw_image->isBufferInvalid())
         return false;
-    const EVayuTextureJob resolved_job = (job != EVayuTextureJob::Default) ? job : raw_image->getTextureJob();
+    const EVayuTextureJob resolved_job = (job != EVayuTextureJob::Unknown) ? job : raw_image->getTextureJob();
     return encode(raw_image->getData(), raw_image->getWidth(), raw_image->getHeight(),
                   raw_image->getComponents(), result, format, resolved_job);
 }
@@ -452,12 +666,84 @@ bool VayuImageBlockCompressor::analyzeAlphaMask(
     }
 }
 
+static uint8_t scan_min_alpha_4ch(const uint8_t* src_data, size_t total_px)
+{
+    uint8_t min_a = 255;
+    size_t vec_px = 0;
+
+#if defined(__AVX2__)
+    const __m256i alpha_mask = _mm256_set1_epi32((int)0xFF000000);
+    vec_px = (total_px / 32) * 32;
+    for (size_t i = 0; i < vec_px; i += 32)
+    {
+        __m256i p0 = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(src_data + (i + 0) * 4));
+        __m256i p1 = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(src_data + (i + 8) * 4));
+        __m256i p2 = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(src_data + (i + 16) * 4));
+        __m256i p3 = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(src_data + (i + 24) * 4));
+
+        __m256i a01 = _mm256_and_si256(p0, p1);
+        __m256i a23 = _mm256_and_si256(p2, p3);
+        __m256i a = _mm256_and_si256(a01, a23);
+
+        __m256i alphas = _mm256_and_si256(a, alpha_mask);
+        __m256i cmp = _mm256_cmpeq_epi32(alphas, alpha_mask);
+        if ((uint32_t)_mm256_movemask_epi8(cmp) != 0xFFFFFFFF)
+        {
+            min_a = 0;
+            break;
+        }
+    }
+#elif defined(__SSE2__) || defined(_M_X64) || (defined(_M_IX86_FP) && _M_IX86_FP >= 2)
+    const __m128i alpha_mask = _mm_set1_epi32((int)0xFF000000);
+    vec_px = (total_px / 16) * 16;
+    for (size_t i = 0; i < vec_px; i += 16)
+    {
+        __m128i p0 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(src_data + (i + 0) * 4));
+        __m128i p1 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(src_data + (i + 4) * 4));
+        __m128i p2 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(src_data + (i + 8) * 4));
+        __m128i p3 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(src_data + (i + 12) * 4));
+
+        __m128i a01 = _mm_and_si128(p0, p1);
+        __m128i a23 = _mm_and_si128(p2, p3);
+        __m128i a = _mm_and_si128(a01, a23);
+
+        __m128i alphas = _mm_and_si128(a, alpha_mask);
+        __m128i cmp = _mm_cmpeq_epi32(alphas, alpha_mask);
+        if (_mm_movemask_epi8(cmp) != 0xFFFF)
+        {
+            min_a = 0;
+            break;
+        }
+    }
+#endif
+
+    if (min_a == 255)
+    {
+        for (size_t i = vec_px; i < total_px; i++)
+        {
+            uint8_t a = src_data[i * 4 + 3];
+            if (a < 255)
+            {
+                min_a = a;
+                break;
+            }
+        }
+    }
+    return min_a;
+}
+
 bool VayuImageBlockCompressor::encode(const U8* src_data, U32 width, U32 height, S32 components,
                                     VayuBlockCompressionResult& result,
                                     EVayuBlockCompressionFormat format,
                                     EVayuTextureJob job)
 {
     if (!src_data || !isEligible(width, height, components))
+        return false;
+
+    // Defense in depth: an unclaimed texture must never be block-compressed.
+    // The worker gate and fetch-side read gate prevent Unknown from reaching here,
+    // but refuse outright rather than silently misclassifying it as color.
+    if (job == EVayuTextureJob::Unknown)
         return false;
 
     init();
@@ -481,74 +767,51 @@ bool VayuImageBlockCompressor::encode(const U8* src_data, U32 width, U32 height,
         switch (job)
         {
         case EVayuTextureJob::MetallicRoughness:
-            if (components == 1)
-            {
-                resolved = EVayuBlockCompressionFormat::BC4;
-                is_srgb = false;
-            }
-            else if (components == 2)
-            {
-                resolved = EVayuBlockCompressionFormat::BC5;
-                is_srgb = false;
-            }
-            else
-            {
+            // glTF PBR packed ORM: R = occlusion, G = roughness, B = metal. All
+            // three channels are live and demand precision, so always full-quality
+            // BC7 (BC3 on macOS). Never BC1, BC5, or BC4 — all would drop or
+            // degrade a live channel.
 #if LL_DARWIN
-                resolved = EVayuBlockCompressionFormat::BC3;
+            resolved = EVayuBlockCompressionFormat::BC3;
 #else
-                resolved = EVayuBlockCompressionFormat::BC7;
+            resolved = EVayuBlockCompressionFormat::BC7;
 #endif
-                is_srgb = false;
-            }
-            is_mask = false;
-            break;
-
-        case EVayuTextureJob::Normal:
-            if (components == 1)
-            {
-                resolved = EVayuBlockCompressionFormat::BC4;
-                is_srgb = false;
-            }
-            else if (components == 2)
-            {
-                resolved = EVayuBlockCompressionFormat::BC5;
-                is_srgb = false;
-            }
-            else
-            {
-#if LL_DARWIN
-                resolved = EVayuBlockCompressionFormat::BC3;
-#else
-                resolved = EVayuBlockCompressionFormat::BC7;
-#endif
-                is_srgb = false;
-            }
-            is_mask = false;
-            break;
-
-        case EVayuTextureJob::SingleChannelMask:
-            resolved = EVayuBlockCompressionFormat::BC4;
             is_srgb = false;
-            is_mask = true;
+            is_mask = false;
             break;
+
+        case EVayuTextureJob::LegacyMaterialNormal:
+        case EVayuTextureJob::LegacySpecular:
+            // Second Life Blinn-Phong material map: RGB data + Alpha glossiness
+            // (normal map or specular tint). Preserves all 4 channels with BC7
+            // (or BC3 on macOS). Never BC5, never sRGB.
+#if LL_DARWIN
+            resolved = EVayuBlockCompressionFormat::BC3;
+#else
+            resolved = EVayuBlockCompressionFormat::BC7;
+#endif
+            is_srgb = false;
+            is_mask = false;
+            break;
+
+        case EVayuTextureJob::PBRNormal:
+            // glTF PBR tangent-space normal map. Dedicated 2-channel BC5 linear encoding.
+            // Shaders reconstruct Z = sqrt(max(0, 1 - X^2 - Y^2)).
+            resolved = EVayuBlockCompressionFormat::BC5;
+            is_srgb = false;
+            is_mask = false;
+            break;
+
+        case EVayuTextureJob::Unknown:
+            // Refused earlier; keep the switch exhaustive so an Unknown job
+            // can never fall through to the color branch.
+            return false;
 
         case EVayuTextureJob::Emissive:
         case EVayuTextureJob::Albedo:
-        case EVayuTextureJob::Default:
+        case EVayuTextureJob::RGBA:
         default:
-            if (components == 1)
-            {
-                resolved = EVayuBlockCompressionFormat::BC4;
-                is_srgb = false;
-                is_mask = true;
-            }
-            else if (components == 2)
-            {
-                resolved = EVayuBlockCompressionFormat::BC5;
-                is_srgb = false;
-                is_mask = analyzeAlphaMask(src_data, width, height, 1, 2);
-            }
-            else if (components == 3)
+            if (components == 3)
             {
                 resolved = EVayuBlockCompressionFormat::BC1;
                 is_srgb = true;
@@ -560,67 +823,7 @@ bool VayuImageBlockCompressor::encode(const U8* src_data, U32 width, U32 height,
                 // 1. Fully opaque (all pixels have a == 255) -> BC1 (saves 50% VRAM)
                 // 2. Genuine cutout / transparency / transparent layers -> BC3 on macOS, BC7 elsewhere
                 const size_t total_px = (size_t)width * height;
-                uint8_t min_a = 255;
-                size_t vec_px = 0;
-
-#if defined(__AVX2__)
-                const __m256i alpha_mask = _mm256_set1_epi32((int)0xFF000000);
-                vec_px = (total_px / 32) * 32;
-                for (size_t i = 0; i < vec_px; i += 32)
-                {
-                    __m256i p0 = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(src_data + (i + 0) * 4));
-                    __m256i p1 = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(src_data + (i + 8) * 4));
-                    __m256i p2 = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(src_data + (i + 16) * 4));
-                    __m256i p3 = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(src_data + (i + 24) * 4));
-
-                    __m256i a01 = _mm256_and_si256(p0, p1);
-                    __m256i a23 = _mm256_and_si256(p2, p3);
-                    __m256i a = _mm256_and_si256(a01, a23);
-
-                    __m256i alphas = _mm256_and_si256(a, alpha_mask);
-                    __m256i cmp = _mm256_cmpeq_epi32(alphas, alpha_mask);
-                    if ((uint32_t)_mm256_movemask_epi8(cmp) != 0xFFFFFFFF)
-                    {
-                        min_a = 0;
-                        break;
-                    }
-                }
-#elif defined(__SSE2__) || defined(_M_X64) || (defined(_M_IX86_FP) && _M_IX86_FP >= 2)
-                const __m128i alpha_mask = _mm_set1_epi32((int)0xFF000000);
-                vec_px = (total_px / 16) * 16;
-                for (size_t i = 0; i < vec_px; i += 16)
-                {
-                    __m128i p0 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(src_data + (i + 0) * 4));
-                    __m128i p1 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(src_data + (i + 4) * 4));
-                    __m128i p2 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(src_data + (i + 8) * 4));
-                    __m128i p3 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(src_data + (i + 12) * 4));
-
-                    __m128i a01 = _mm_and_si128(p0, p1);
-                    __m128i a23 = _mm_and_si128(p2, p3);
-                    __m128i a = _mm_and_si128(a01, a23);
-
-                    __m128i alphas = _mm_and_si128(a, alpha_mask);
-                    __m128i cmp = _mm_cmpeq_epi32(alphas, alpha_mask);
-                    if (_mm_movemask_epi8(cmp) != 0xFFFF)
-                    {
-                        min_a = 0;
-                        break;
-                    }
-                }
-#endif
-
-                if (min_a == 255)
-                {
-                    for (size_t i = vec_px; i < total_px; i++)
-                    {
-                        uint8_t a = src_data[i * 4 + 3];
-                        if (a < 255)
-                        {
-                            min_a = a;
-                            break;
-                        }
-                    }
-                }
+                uint8_t min_a = scan_min_alpha_4ch(src_data, total_px);
 
                 if (min_a == 255)
                 {
@@ -641,6 +844,15 @@ bool VayuImageBlockCompressor::encode(const U8* src_data, U32 width, U32 height,
                     is_mask = analyzeAlphaMask(src_data, width, height, 3, 4);
                 }
             }
+            else
+            {
+                // <3 channels cannot arrive via the decode pipeline (J2C decodes
+                // ≥3 channels; SL has no mono content). Unclaimed low-level raw
+                // with 1-2 channels is refused rather than silently mis-encoded
+                // as a color format. Single-channel work must request BC4/BC5
+                // explicitly.
+                return false;
+            }
             break;
         }
     }
@@ -650,7 +862,7 @@ bool VayuImageBlockCompressor::encode(const U8* src_data, U32 width, U32 height,
         {
             is_srgb = false;
         }
-        else if (job == EVayuTextureJob::MetallicRoughness || job == EVayuTextureJob::Normal)
+        else if (job == EVayuTextureJob::MetallicRoughness || job == EVayuTextureJob::LegacyMaterialNormal || job == EVayuTextureJob::LegacySpecular || job == EVayuTextureJob::PBRNormal)
         {
             is_srgb = false;
         }
@@ -687,7 +899,9 @@ bool VayuImageBlockCompressor::encode(const U8* src_data, U32 width, U32 height,
             uint32_t nh = llmax(1u, cur_h / 2);
             std::vector<uint8_t> next_mip((size_t)nw * nh * components);
 
-            if (is_srgb)
+            if ((job == EVayuTextureJob::PBRNormal || job == EVayuTextureJob::LegacyMaterialNormal) && components >= 2)
+                downsample_half_normal(uncompressed_mips.back().data(), cur_w, cur_h, components, next_mip.data());
+            else if (is_srgb)
                 downsample_half_srgb(uncompressed_mips.back().data(), cur_w, cur_h, components, next_mip.data());
             else
                 downsample_half_linear(uncompressed_mips.back().data(), cur_w, cur_h, components, next_mip.data());
@@ -715,7 +929,7 @@ bool VayuImageBlockCompressor::encode(const U8* src_data, U32 width, U32 height,
     result.mWidth = width;
     result.mHeight = height;
     result.mMipLevels = (S32)num_mips;
-    result.mComponents = components;
+    result.mComponents = (resolved == EVayuBlockCompressionFormat::BC5) ? 2 : components;
     result.mIsMask = is_mask;
     result.mBuffer.resize(total_compressed_bytes);
 
@@ -806,10 +1020,10 @@ bool VayuImageBlockCompressor::encode(const U8* src_data, U32 width, U32 height,
         uint8_t* out = result.mBuffer.data() + buffer_offsets[i];
 
 #if defined(HAVE_BC7E_ISPC)
-        constexpr size_t kBC7BatchSize = 64;
-        alignas(32) uint32_t bc7_batch_rgba[kBC7BatchSize * 16];
-        size_t bc7_batch_count = 0;
-        uint8_t* bc7_batch_out = out;
+        constexpr size_t kBlockBatchSize = 64;
+        alignas(32) uint32_t block_batch_rgba[kBlockBatchSize * 16];
+        size_t block_batch_count = 0;
+        uint8_t* block_batch_out = out;
 #endif
 
         for (uint32_t by = 0; by < bh; by++)
@@ -976,22 +1190,77 @@ bool VayuImageBlockCompressor::encode(const U8* src_data, U32 width, U32 height,
                     out += 8;
                     break;
                 case EVayuBlockCompressionFormat::BC5:
+                    if (components >= 3)
+                    {
+                        for (uint32_t p = 0; p < 16; p++)
+                        {
+                            uint8_t* px = block_rgba + p * 4;
+                            float x = (px[0] / 255.0f) * 2.0f - 1.0f;
+                            float y = (px[1] / 255.0f) * 2.0f - 1.0f;
+                            float z = (px[2] / 255.0f) * 2.0f - 1.0f;
+                            float len_sq = x * x + y * y + z * z;
+                            if (len_sq > 1e-6f)
+                            {
+                                float inv_len = 1.0f / std::sqrt(len_sq);
+                                x *= inv_len;
+                                y *= inv_len;
+                                px[0] = (uint8_t)std::clamp((int)std::round((x + 1.0f) * 0.5f * 255.0f), 0, 255);
+                                px[1] = (uint8_t)std::clamp((int)std::round((y + 1.0f) * 0.5f * 255.0f), 0, 255);
+                            }
+                            else
+                            {
+                                px[0] = 128;
+                                px[1] = 128;
+                            }
+                        }
+                    }
+                    else if (components == 2)
+                    {
+                        for (uint32_t p = 0; p < 16; p++)
+                        {
+                            uint8_t* px = block_rgba + p * 4;
+                            float x = (px[0] / 255.0f) * 2.0f - 1.0f;
+                            float y = (px[1] / 255.0f) * 2.0f - 1.0f;
+                            float len_sq = x * x + y * y;
+                            if (len_sq > 1.0f)
+                            {
+                                float inv_len = 1.0f / std::sqrt(len_sq);
+                                x *= inv_len;
+                                y *= inv_len;
+                                px[0] = (uint8_t)std::clamp((int)std::round((x + 1.0f) * 0.5f * 255.0f), 0, 255);
+                                px[1] = (uint8_t)std::clamp((int)std::round((y + 1.0f) * 0.5f * 255.0f), 0, 255);
+                            }
+                        }
+                    }
+#if defined(HAVE_BC7E_ISPC)
+                    memcpy(block_batch_rgba + block_batch_count * 16, block_rgba, 64);
+                    block_batch_count++;
+                    if (block_batch_count == kBlockBatchSize)
+                    {
+                        ispc::bc5e_compress_blocks((uint32_t)block_batch_count,
+                                                   block_batch_out,
+                                                   block_batch_rgba);
+                        block_batch_out += block_batch_count * 16;
+                        block_batch_count = 0;
+                    }
+#else
                     rgbcx::encode_bc5(out, block_rgba, 0, 1, 4);
                     out += 16;
+#endif
                     break;
                 case EVayuBlockCompressionFormat::BC7:
                 default:
 #if defined(HAVE_BC7E_ISPC)
-                    memcpy(bc7_batch_rgba + bc7_batch_count * 16, block_rgba, 64);
-                    bc7_batch_count++;
-                    if (bc7_batch_count == kBC7BatchSize)
+                    memcpy(block_batch_rgba + block_batch_count * 16, block_rgba, 64);
+                    block_batch_count++;
+                    if (block_batch_count == kBlockBatchSize)
                     {
-                        ispc::bc7e_compress_blocks((uint32_t)bc7_batch_count,
-                                                   reinterpret_cast<uint64_t*>(bc7_batch_out),
-                                                   bc7_batch_rgba,
+                        ispc::bc7e_compress_blocks((uint32_t)block_batch_count,
+                                                   reinterpret_cast<uint64_t*>(block_batch_out),
+                                                   block_batch_rgba,
                                                    bc7e_params);
-                        bc7_batch_out += bc7_batch_count * 16;
-                        bc7_batch_count = 0;
+                        block_batch_out += block_batch_count * 16;
+                        block_batch_count = 0;
                     }
 #else
                     bc7enc_compress_block(out, block_rgba, bc7_params);
@@ -1003,17 +1272,31 @@ bool VayuImageBlockCompressor::encode(const U8* src_data, U32 width, U32 height,
         }
 
 #if defined(HAVE_BC7E_ISPC)
-        if (resolved == EVayuBlockCompressionFormat::BC7 && bc7_batch_count > 0)
+        if (block_batch_count > 0)
         {
-            ispc::bc7e_compress_blocks((uint32_t)bc7_batch_count,
-                                       reinterpret_cast<uint64_t*>(bc7_batch_out),
-                                       bc7_batch_rgba,
-                                       bc7e_params);
-            bc7_batch_out += bc7_batch_count * 16;
-            bc7_batch_count = 0;
+            if (resolved == EVayuBlockCompressionFormat::BC5)
+            {
+                ispc::bc5e_compress_blocks((uint32_t)block_batch_count,
+                                           block_batch_out,
+                                           block_batch_rgba);
+                block_batch_out += block_batch_count * 16;
+                block_batch_count = 0;
+            }
+            else if (resolved == EVayuBlockCompressionFormat::BC7)
+            {
+                ispc::bc7e_compress_blocks((uint32_t)block_batch_count,
+                                           reinterpret_cast<uint64_t*>(block_batch_out),
+                                           block_batch_rgba,
+                                           bc7e_params);
+                block_batch_out += block_batch_count * 16;
+                block_batch_count = 0;
+            }
         }
 #endif
     }
+
+    dump_encode_result(uncompressed_mips, width, height, components,
+                       resolved, job, is_srgb, mip_byte_sizes, buffer_offsets, result.mBuffer);
 
     return true;
 }
