@@ -86,7 +86,7 @@ void RegionCrossExtrapolateImpl::update()
 
     //  Moving seat - do the extrapolation calculations
     F64 dt = 1.0 / 45.0;                                        // dt used on first value - one physics frame on server
-    F64 now = LLFrameTimer::getElapsedSeconds();
+    F64 now = LLFrameTimer::getUptimeSeconds();
     if (mPreviousUpdateTime != 0.0)
     {
         dt = now - mPreviousUpdateTime;                         // change since last update
