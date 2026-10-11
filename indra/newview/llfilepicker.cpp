@@ -792,10 +792,10 @@ bool LLFilePicker::getMultipleOpenFiles(ELoadFilter filter, bool blocking)
     if (blocking)
     {
         send_agent_resume();
+        // Account for the fact that the app has been stalled.
+        LLFrameTimer::updateFrameTime();
     }
 
-    // Account for the fact that the app has been stalled.
-    LLFrameTimer::updateFrameTime();
     return success;
 }
 
@@ -1048,16 +1048,18 @@ bool LLFilePicker::getSaveFile(ESaveFilter filter, const std::string& filename, 
         {
             LOG_UNHANDLED_EXCEPTION("");
         }
-        gKeyboard->resetKeys();
     }
 
     if (blocking)
     {
+        // Only here on the main thread: threaded, the keyboard belongs to the
+        // main thread, and the dialog taking focus has already reset it there.
+        gKeyboard->resetKeys();
         send_agent_resume();
+        // Account for the fact that the app has been stalled.
+        LLFrameTimer::updateFrameTime();
     }
 
-    // Account for the fact that the app has been stalled.
-    LLFrameTimer::updateFrameTime();
     return success;
 }
 

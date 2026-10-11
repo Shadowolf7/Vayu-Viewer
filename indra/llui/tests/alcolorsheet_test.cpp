@@ -24,16 +24,9 @@
 
 #include "linden_common.h"
 
-#include "../alcolorsheet.h"
+#include "alcolorsheet.h"
 
 #include "../test/lltut.h"
-
-class LLAvatarName;
-const std::string gColorSheetTestAnonName("Anon");
-const std::string& rlvGetAnonym(const LLAvatarName& av_name)
-{
-    return gColorSheetTestAnonName;
-}
 
 namespace tut
 {

@@ -28,6 +28,7 @@
 
 #include "llspatialpartition.h"
 
+#include "alfarplane.h"
 #include "llappviewer.h"
 #include "lltexturecache.h"
 #include "lltexturefetch.h"
@@ -127,6 +128,13 @@ LLSpatialGroup::~LLSpatialGroup()
     }
 
     sNodeCount--;
+
+    // unhook from the reflection probe, which the manager keeps until its next update
+    // notices nothing else holds it -- and autoAdjustOrigin dereferences mGroup until then
+    if (mReflectionProbe.notNull())
+    {
+        mReflectionProbe->orphan();
+    }
 
     clearDrawMap();
 }
@@ -726,7 +734,7 @@ F32 LLSpatialGroup::getUpdateUrgency() const
     }
     else
     {
-        F32 time = gFrameTimeSeconds-mLastUpdateTime+4.f;
+        F32 time = (F32)(gFrameTimeSeconds-mLastUpdateTime)+4.f;
         return time + (mObjectBounds[1].dot3(mObjectBounds[1]).getF32()+1.f)/mDistance;
     }
 }
@@ -1104,6 +1112,38 @@ public:
     }
 };
 
+// LLOctreeCullNoFarClip held to a sphere, for terrain once the projection no longer bounds it
+// (ALFarPlane::terrainReach).
+class ALOctreeCullReach : public LLOctreeCullNoFarClip
+{
+public:
+    ALOctreeCullReach(LLCamera* camera, F32 reach)
+        : LLOctreeCullNoFarClip(camera), mReach(reach) { }
+
+    S32 frustumCheck(const LLViewerOctreeGroup* group) override
+    {
+        S32 res = AABBInFrustumNoFarClipGroupBounds(group);
+        if (res != 0)
+        {
+            res = llmin(res, AABBSphereIntersect(group->getExtents()[0], group->getExtents()[1], mCamera->getOrigin(), mReach));
+        }
+        return res;
+    }
+
+    S32 frustumCheckObjects(const LLViewerOctreeGroup* group) override
+    {
+        S32 res = AABBInFrustumNoFarClipObjectBounds(group);
+        if (res != 0)
+        {
+            res = llmin(res, AABBSphereIntersect(group->getObjectExtents()[0], group->getObjectExtents()[1], mCamera->getOrigin(), mReach));
+        }
+        return res;
+    }
+
+private:
+    F32 mReach;
+};
+
 class LLOctreeCullShadow : public LLOctreeCull
 {
 public:
@@ -1441,6 +1481,15 @@ S32 LLSpatialPartition::cull(LLCamera &camera, bool do_occlusion)
         LLOctreeCullShadow culler(&camera);
         culler.traverse(mOctree);
     }
+    // Terrain in the main view, when an infinite projection no longer bounds it. Water is a flat plane drawn out
+    // to its stretch, so it is not held to the reach.
+    else if (const F32 reach = ALFarPlane::terrainReach(LLViewerCamera::getInstance()->getProjectionFar());
+             mInfiniteFarClip && reach > 0.f && !gCubeSnapshot && &camera == LLViewerCamera::getInstance() &&
+             mPartitionType != LLViewerRegion::PARTITION_WATER && mPartitionType != LLViewerRegion::PARTITION_VOIDWATER)
+    {
+        ALOctreeCullReach culler(&camera, reach);
+        culler.traverse(mOctree);
+    }
     else if (mInfiniteFarClip || (!LLPipeline::sUseFarClip && !gCubeSnapshot))
     {
         LLOctreeCullNoFarClip culler(&camera);
@@ -1657,6 +1706,7 @@ void renderOctree(LLSpatialGroup* group)
 
         {
             LLGLDepthTest gl_depth(false, false);
+            gGL.flush();
             glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
 
             gGL.diffuseColor4f(1,0,0,group->mBuilt);
@@ -1700,6 +1750,12 @@ void renderOctree(LLSpatialGroup* group)
                     gGL.loadMatrix(LLViewerCamera::getCurrent().getModelview());
                     if (!LLRenderPass::uploadMatrixPalette(face->mAvatar, face->mSkinInfo, lastAvatar, lastMeshId, skipLastSkin))
                     {
+                        // Both pushes above are popped at the end of the iteration this skips.
+                        gGL.popMatrix();
+                        if (!group->getSpatialPartition()->isBridge())
+                        {
+                            gGL.popMatrix();
+                        }
                         continue;
                     }
                 }
@@ -1873,6 +1929,10 @@ void renderUpdateType(LLDrawable* drawablep)
 
 void renderBoundingBox(LLDrawable* drawable, bool set_color = true)
 {
+    // The colour is a uniform, so the last drawable's outlines go out under their own colour
+    // before it changes.
+    gGL.flush();
+
     if (set_color)
     {
         if (drawable->isSpatialBridge())
@@ -1973,7 +2033,7 @@ void renderBoundingBox(LLDrawable* drawable, bool set_color = true)
     LLViewerObject* vobj = drawable->getVObj();
     if (vobj && vobj->onActiveList())
     {
-        gGL.setLineWidth(llmax(4.f*sinf(gFrameTimeSeconds*2.f)+1.f, 1.f));
+        gGL.setLineWidth(llmax(4.f*sinf((F32)fmod(gFrameTimeSeconds.value()*2.0, (F64)F_TWO_PI))+1.f, 1.f));
         //gGL.setLineWidth(4.f*(sinf(gFrameTimeSeconds*2.f)*0.25f+0.75f));
         stop_glerror();
         drawBoxOutline(pos,size);
@@ -2900,6 +2960,8 @@ public:
                 gGL.vertex3fv(tri->mV[2]->getF32ptr());
             }
             gGL.end();
+            // Drawn under this pass's depth func and colour, which the next pass changes.
+            gGL.flush();
 
             if (i == 1)
             {

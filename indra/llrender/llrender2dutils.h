@@ -65,6 +65,12 @@ void gl_line_2d(S32 x1, S32 y1, S32 x2, S32 y2, const LLColor4 &color );
 // infinity. Fewer than two points draws nothing; coincident points are skipped.
 void gl_polyline_2d(const std::vector<LLVector2>& points, const LLColor4& color,
                     F32 width = 1.f, bool closed = false);
+// The same ribbon added to the triangles being drawn, as gl_rect_2d_in_batch
+// adds its rectangle: no texture unbound, no batch begun, ended or flushed,
+// and nothing allocated, so that many -- a tab's arrow on every row -- go to
+// GL as the one draw they are drawn in.
+void gl_polyline_2d_in_batch(const LLVector2* points, size_t count, const LLColor4& color,
+                             F32 width = 1.f, bool closed = false);
 
 // The area between `points` and the horizontal line y = `baseline_y`, flat
 // filled. The companion to gl_polyline_2d for a graph whose meaning is how much
@@ -88,6 +94,12 @@ void gl_rect_2d_offset_local( S32 left, S32 top, S32 right, S32 bottom, const LL
 void gl_rect_2d_offset_local( S32 left, S32 top, S32 right, S32 bottom, S32 pixel_offset = 0, bool filled = true );
 void gl_rect_2d(const LLRect& rect, bool filled = true );
 void gl_rect_2d(const LLRect& rect, const LLColor4& color, bool filled = true );
+// A filled rectangle in its own colour, added to the triangles being drawn:
+// it unbinds no texture and begins and ends no batch, so that many drawn
+// between one gGL.getTextureSlot(0)->unbind() and gGL.begin(LLRender::TRIANGLES)
+// and one gGL.end() go to GL as one draw, where gl_rect_2d makes each one
+// its own.
+void gl_rect_2d_in_batch(S32 left, S32 top, S32 right, S32 bottom, const LLColor4& color);
 void gl_rect_2d_checkerboard(const LLRect& rect, GLfloat alpha = 1.0f);
 
 void gl_drop_shadow(S32 left, S32 top, S32 right, S32 bottom, const LLColor4 &start_color, S32 lines);

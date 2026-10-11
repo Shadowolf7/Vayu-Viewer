@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """\
-@file   test_llsdmessage_peer.py
+@file   test_llcorehttp_peer.py
 @author Nat Goodspeed
 @date   2008-10-09
 @brief  This script asynchronously runs the executable (with args) specified on
@@ -273,6 +273,13 @@ class Server(HTTPServer):
     # This pernicious flag is on by default in HTTPServer. But proper
     # operation of freeport() absolutely depends on it being off.
     allow_reuse_address = False
+
+    # The listen backlog. The server answers one request at a time, and a
+    # test fires half a dozen at once, some of which retry; the default
+    # of five is fewer than that, and where the kernel refuses a SYN the
+    # backlog cannot hold rather than dropping it -- macOS -- the client
+    # sees a connection refused and the test a failure that is nobody's.
+    request_queue_size = 128
 
     # Override of BaseServer.handle_error().  Not too interested
     # in errors and the default handler emits a scary traceback

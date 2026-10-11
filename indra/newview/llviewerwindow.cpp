@@ -87,6 +87,7 @@
 // newview includes
 #include "alchatbar.h"
 #include "alfloaterprogressview.h"
+#include "alkeychord.h"
 #include "llaccordionctrl.h"
 // [SL:KB] - Patch: Build-DragNDrop | Checked: 2013-07-22 (Catznip-3.6)
 #include "llagentbenefits.h"
@@ -500,7 +501,7 @@ public:
         static LLCachedControl<bool> debug_show_time(gSavedSettings, "DebugShowTime", false);
         if (debug_show_time())
         {
-            F32 time = gFrameTimeSeconds;
+            F64 time = gFrameTimeSeconds;
             S32 hours = (S32)(time / (60*60));
             S32 mins = (S32)((time - hours*(60*60)) / 60);
             S32 secs = (S32)((time - hours*(60*60) - mins*60));
@@ -2760,9 +2761,6 @@ void LLViewerWindow::shutdownGL()
 
     LL_INFOS() << "All textures and llimagegl images are destroyed!" << LL_ENDL ;
 
-    LL_INFOS() << "Cleaning up select manager" << LL_ENDL;
-    LLSelectMgr::getInstance()->cleanup();
-
     LL_INFOS() << "Stopping GL during shutdown" << LL_ENDL;
     stopGL();
     stop_glerror();
@@ -3032,10 +3030,7 @@ void LLViewerWindow::draw()
 
     //S32 screen_x, screen_y;
 
-    if (!LLPipeline::RenderUIBuffer)
-    {
-        LLView::sDirtyRect = getWindowRectScaled();
-    }
+    LLView::sDirtyRect = getWindowRectScaled();
 
     // HACK for timecode debugging
     if (gSavedSettings.getBOOL("DisplayTimecode"))
@@ -3045,7 +3040,9 @@ void LLViewerWindow::draw()
 
         gGL.loadIdentity();
 
-        microsecondsToTimecodeString(gFrameTime,text);
+        // From the session's start: from the epoch's, the hours run past
+        // the three digits the timecode has for them.
+        microsecondsToTimecodeString(U64Microseconds(gFrameTimeSeconds), text);
         const LLFontGL* font = LLFontGL::getFontSansSerif();
         font->renderUTF8(text, 0,
                         ll_round((getWindowWidthScaled()/2)-100.f),
@@ -3207,6 +3204,13 @@ bool LLViewerWindow::handleKey(KEY key, MASK mask)
         return true;
     }
 
+    // The second of two keys, to the window waiting for it, before
+    // whatever has the keyboard would take it or type it.
+    if (ALKeyChords::takeKey(key, mask))
+    {
+        return true;
+    }
+
     LLFocusableElement* keyboard_focus = gFocusMgr.getKeyboardFocus();
 
     if (keyboard_focus
@@ -3225,15 +3229,17 @@ bool LLViewerWindow::handleKey(KEY key, MASK mask)
 #endif
         {
 #if LL_SDL_WINDOW
-            // SDL3 / Linux: AltGr is delivered as Right-Alt with no Ctrl
-            // (unlike Win32 where the AltGr generates a synthetic Ctrl too).
-            // LLKeyboardSDL folds RAlt into MASK_ALT, so the menu/binding
+            // SDL3: where AltGr arrives as an Alt (Right-Alt with no Ctrl,
+            // unlike Win32 where the AltGr generates a synthetic Ctrl too),
+            // LLKeyboardSDL folds it into MASK_ALT, so the menu/binding
             // dispatch below would otherwise route an AltGr-modified
             // printable key (AltGr+E for €, AltGr+S for ß, AltGr+W for the
             // ł on Polish, etc.) to the in-world "Alt+letter" binding
             // alongside SDL3's TEXT_INPUT delivering the composed character.
             // Suppress the binding dispatch when AltGr is active and the
-            // key is a printable ASCII letter / digit / symbol.
+            // key is a printable ASCII letter / digit / symbol. On Linux
+            // AltGr is xkb's level-three shift, which is never an Alt, so
+            // it doesn't reach the Alt bindings to begin with.
             if (mWindow->isAltGrPressed() && (mask & MASK_ALT) && key >= 0x20 && key < 0x80)
             {
                 return true;
@@ -3283,7 +3289,7 @@ bool LLViewerWindow::handleKey(KEY key, MASK mask)
             }
 #endif
 
-            if (!(mask & (MASK_CONTROL | MASK_ALT)))
+            if (!(mask & (MASK_CONTROL | MASK_ALT | MASK_MAC_CONTROL)))
             {
                 // We have keyboard focus, and it's not an accelerator
                 if (keyboard_focus && keyboard_focus->wantsKeyUpKeyDown())
@@ -3311,7 +3317,8 @@ bool LLViewerWindow::handleKey(KEY key, MASK mask)
 
     // give menus a chance to handle modified (Ctrl, Alt) shortcut keys before current focus
     // as long as focus isn't locked
-    if (mask & (MASK_CONTROL | MASK_ALT) && !gFocusMgr.focusLocked())
+    // The Mac's own Control key too, which a menu item may ask for by name.
+    if (mask & (MASK_CONTROL | MASK_ALT | MASK_MAC_CONTROL) && !gFocusMgr.focusLocked())
     {
         // Check the current floater's menu first, if it has one.
         if (gFocusMgr.keyboardFocusHasAccelerators()
@@ -3338,13 +3345,16 @@ bool LLViewerWindow::handleKey(KEY key, MASK mask)
     // give floaters first chance to handle TAB key
     // so frontmost floater gets focus
     // if nothing has focus, go to first or last UI element as appropriate
-    if (key == KEY_TAB && (mask & MASK_CONTROL || keyboard_focus == NULL))
+    // Control-Tab is Control-Tab on the Mac too, where Command-Tab is the
+    // system's.
+    const bool control_tab = key == KEY_TAB && (mask & (MASK_CONTROL | MASK_MAC_CONTROL)) != 0;
+    if (key == KEY_TAB && (control_tab || keyboard_focus == NULL))
     {
         LL_WARNS() << "LLviewerWindow::handleKey give floaters first chance at tab key " << LL_ENDL;
         if (gMenuHolder) gMenuHolder->hideMenus();
 
         // if CTRL-tabbing (and not just TAB with no focus), go into window cycle mode
-        gFloaterView->setCycleMode((mask & MASK_CONTROL) != 0);
+        gFloaterView->setCycleMode(control_tab);
 
         // do CTRL-TAB and CTRL-SHIFT-TAB logic
         if (mask & MASK_SHIFT)
@@ -3494,6 +3504,12 @@ bool LLViewerWindow::handleKey(KEY key, MASK mask)
 
 bool LLViewerWindow::handleUnicodeChar(llwchar uni_char, MASK mask)
 {
+    // The character of a key taken as the second of two.
+    if (ALKeyChords::takeChar(uni_char))
+    {
+        return true;
+    }
+
     // HACK:  We delay processing of return keys until they arrive as a Unicode char,
     // so that if you're typing chat text at low frame rate, we don't send the chat
     // until all keystrokes have been entered. JC
@@ -4498,7 +4514,7 @@ void LLViewerWindow::renderSelections( bool for_gl_pick, bool pick_parcel_walls,
     if (!for_hud && !for_gl_pick)
     {
         // Call this once and only once
-        LLSelectMgr::getInstance()->updateSilhouettes();
+        LLSelectMgr::getInstance()->updateHighlightedObjects();
     }
 
     // <FS:Beq> render the poser manipulator guides
@@ -4519,12 +4535,19 @@ void LLViewerWindow::renderSelections( bool for_gl_pick, bool pick_parcel_walls,
         {
             LLViewerParcelMgr::getInstance()->renderParcelCollision();
         }
+        return;
     }
-    else if (( for_hud && selection->getSelectType() == SELECT_TYPE_HUD) ||
-             (!for_hud && selection->getSelectType() != SELECT_TYPE_HUD))
+
+    // The world's outlines every frame, for what the pointer is over glows in the world wherever the selection is;
+    // the HUD's while the selection is on it.
+    if (!for_hud || selection->getSelectType() == SELECT_TYPE_HUD)
     {
         LLSelectMgr::getInstance()->renderSilhouettes(for_hud);
+    }
 
+    if (( for_hud && selection->getSelectType() == SELECT_TYPE_HUD) ||
+        (!for_hud && selection->getSelectType() != SELECT_TYPE_HUD))
+    {
         stop_glerror();
 
         // setup HUD render
@@ -5071,12 +5094,29 @@ bool LLViewerWindow::mousePointOnLandGlobal(const S32 x, const S32 y, LLVector3d
     F32         land_z;
     const F32   FIRST_PASS_STEP = 1.0f;     // meters
     const F32   SECOND_PASS_STEP = 0.1f;    // meters
-    const F32   draw_distance = ignore_distance ? MAX_FAR_CLIP : gAgentCamera.mDrawDistance;
+    const F32   draw_distance = ignore_distance ? llmax(FORWARD_Z_MAX_FAR_CLIP, gAgentCamera.mDrawDistance) : gAgentCamera.mDrawDistance;
     LLVector3d  camera_pos_global;
 
     camera_pos_global = gAgentCamera.getCameraPositionGlobal();
     LLVector3d      probe_point_global;
     LLVector3       probe_point_region;
+
+    // The walk probes every metre out to the draw distance, and a 2048 m draw distance loads up to some 200 regions,
+    // all of which LLWorld::resolveRegionGlobal scans. A probe almost always lies in the region the last one did, so
+    // that one is asked first; regions do not overlap, so the answer is the scan's.
+    LLViewerRegion* last_region = nullptr;
+    const auto resolve_region = [&last_region](LLVector3& pos_region, const LLVector3d& pos_global) -> LLViewerRegion*
+    {
+        if (!last_region || !last_region->pointInRegionGlobal(pos_global))
+        {
+            last_region = LLWorld::getInstance()->getRegionFromPosGlobal(pos_global);
+        }
+        if (last_region)
+        {
+            pos_region = last_region->getPosRegionFromGlobal(pos_global);
+        }
+        return last_region;
+    };
 
     // walk forwards to find the point
     for (mouse_dir_scale = FIRST_PASS_STEP; mouse_dir_scale < draw_distance; mouse_dir_scale += FIRST_PASS_STEP)
@@ -5085,7 +5125,7 @@ bool LLViewerWindow::mousePointOnLandGlobal(const S32 x, const S32 y, LLVector3d
         mouse_direction_global_d.setVec(mouse_direction_global * mouse_dir_scale);
         probe_point_global = camera_pos_global + mouse_direction_global_d;
 
-        regionp = LLWorld::getInstance()->resolveRegionGlobal(probe_point_region, probe_point_global);
+        regionp = resolve_region(probe_point_region, probe_point_global);
 
         if (!regionp)
         {
@@ -5132,7 +5172,7 @@ bool LLViewerWindow::mousePointOnLandGlobal(const S32 x, const S32 y, LLVector3d
             mouse_direction_global_d.setVec(mouse_direction_global * mouse_dir_scale);
             probe_point_global = camera_pos_global + mouse_direction_global_d;
 
-            regionp = LLWorld::getInstance()->resolveRegionGlobal(probe_point_region, probe_point_global);
+            regionp = resolve_region(probe_point_region, probe_point_global);
 
             if (!regionp)
             {
@@ -5662,9 +5702,16 @@ bool LLViewerWindow::rawSnapshot(LLImageRaw *raw, S32 image_width, S32 image_hei
     // W*(f-n) <= f-n < f for any W in range.
     const bool reverse_z_snapshot = LLRender::sReverseZ;
     const F32 snap_near = LLViewerCamera::getInstance()->getNear();
-    const F32 snap_far  = LLViewerCamera::getInstance()->getFar();
+    // The projection's far plane, which depth was stored against, not the draw distance (getFar()).
+    const F32 snap_far  = LLViewerCamera::getInstance()->getProjectionFar();
+    const bool infinite_snapshot = al_projection_is_infinite(LLViewerCamera::getInstance()->getProjection());
     auto linearize_snapshot_depth = [&](F32 d) -> F32
     {
+        // An infinite projection stores near / distance, and its cleared depth reads as MAX_RECONSTRUCT_DISTANCE.
+        if (infinite_snapshot)
+        {
+            return snap_near / llmax(d, snap_near / MAX_RECONSTRUCT_DISTANCE);
+        }
         const F32 window_depth = reverse_z_snapshot ? (1.f - d) : d;
         return (snap_far * snap_near) / (snap_far - window_depth * (snap_far - snap_near));
     };
@@ -6288,7 +6335,7 @@ void LLViewerWindow::setup2DViewport(S32 x_offset, S32 y_offset)
 void LLViewerWindow::setup3DRender()
 {
     // setup perspective camera
-    LLViewerCamera::getInstance()->setPerspective(NOT_FOR_SELECTION, mWorldViewRectRaw.mLeft, mWorldViewRectRaw.mBottom,  mWorldViewRectRaw.getWidth(), mWorldViewRectRaw.getHeight(), false, LLViewerCamera::getInstance()->getNear(), MAX_FAR_CLIP*2.f);
+    LLViewerCamera::getInstance()->setPerspective(NOT_FOR_SELECTION, mWorldViewRectRaw.mLeft, mWorldViewRectRaw.mBottom,  mWorldViewRectRaw.getWidth(), mWorldViewRectRaw.getHeight(), false, LLViewerCamera::getInstance()->getNear(), LLViewerCamera::getInstance()->getProjectionFar());
     setup3DViewport();
 }
 

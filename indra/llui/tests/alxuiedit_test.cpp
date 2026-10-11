@@ -24,11 +24,11 @@
 
 #include "linden_common.h"
 
-#include "../alxuiedit.h"
+#include "alxuiedit.h"
 
-#include "../alxuiselection.h"
+#include "alxuiselection.h"
 
-#include "../alxuicatalog.h"
+#include "alxuicatalog.h"
 #include "../llpanel.h"
 #include "../lluictrlfactory.h"
 
@@ -40,13 +40,6 @@
 #include <iostream>
 
 #include "../test/lltut.h"
-
-class LLAvatarName;
-const std::string gEditTestAnonName("Anon");
-const std::string& rlvGetAnonym(const LLAvatarName& av_name)
-{
-    return gEditTestAnonName;
-}
 
 namespace tut
 {

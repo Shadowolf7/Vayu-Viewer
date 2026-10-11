@@ -24,7 +24,7 @@
 
 #include "linden_common.h"
 
-#include "../alemptystate.h"
+#include "alemptystate.h"
 
 #include "../llbutton.h"
 #include "../lltextbox.h"
@@ -35,15 +35,6 @@
 #include "../test/lltut.h"
 
 #include <string>
-
-// llui reaches the viewer for this one, and linking any of the library pulls
-// the object that calls it. Nothing under test goes near it.
-class LLAvatarName;
-const std::string gEmptyTestAnonName("Anon");
-const std::string& rlvGetAnonym(const LLAvatarName& av_name)
-{
-    return gEmptyTestAnonName;
-}
 
 namespace tut
 {
@@ -211,6 +202,66 @@ namespace tut
         ensure_equals("and then the other thing", state->headline(), std::string("No field of that name"));
         ensure_equals("with its own sentence", state->sentence(), std::string("Clear the filter."));
         ensure("and no button, since none was given", !part(state, "action")->getVisible());
+        state->die();
+    }
+
+    // Two ways out: side by side under the sentence, each telling its own.
+    template<> template<>
+    void alemptystate_object::test<7>()
+    {
+        if (!ui.ok())
+        {
+            skip("no UI: LLUI_TEST_APP_DIR does not point at the source tree");
+        }
+
+        ALEmptyState* state = build();
+        S32 first = 0, second = 0;
+        state->onAction([&first]() { ++first; });
+        state->onSecondAction([&second]() { ++second; });
+        state->say("No script open", "Open one, or make one.", "Open File...", "New Script...");
+        const LLRect a = part(state, "action")->getRect();
+        const LLRect b = part(state, "second_action")->getRect();
+        ensure("both shown", part(state, "action")->getVisible() && part(state, "second_action")->getVisible());
+        ensure("on one row", a.mTop == b.mTop);
+        ensure("side by side", a.mRight <= b.mLeft);
+        ensure("inside the room", state->getLocalRect().contains(a) && state->getLocalRect().contains(b));
+        ensure("under the sentence", a.mTop <= part(state, "sentence")->getRect().mBottom);
+        state->getChild<LLButton>("second_action", true)->onCommit();
+        ensure("the second is its own", first == 0 && second == 1);
+
+        state->say("No script open", "Open one.", "Open File...");
+        ensure("gone when not given", !part(state, "second_action")->getVisible());
+        state->die();
+    }
+
+    // A way out not to lead with: a link under the buttons, clicked as one.
+    template<> template<>
+    void alemptystate_object::test<8>()
+    {
+        if (!ui.ok())
+        {
+            skip("no UI: LLUI_TEST_APP_DIR does not point at the source tree");
+        }
+
+        ALEmptyState* state = build();
+        S32 clicked = 0;
+        state->onLink([&clicked]() { ++clicked; });
+        state->say("No script open", "Go to one, or make one.", "Go to Script...", "New Script...");
+        ensure("no link until given", !part(state, "link")->getVisible());
+        state->setLink("Open a file...");
+        const LLRect link = part(state, "link")->getRect();
+        ensure("shown", part(state, "link")->getVisible());
+        ensure("under the buttons", link.mTop <= part(state, "action")->getRect().mBottom);
+        ensure("inside the room", state->getLocalRect().contains(link));
+        ensure("narrower than the room", link.getWidth() < state->getRect().getWidth() - 32);
+        LLTextBox* text = state->getChild<LLTextBox>("link", true);
+        const S32  x    = link.getWidth() / 2;
+        const S32  y    = link.getHeight() / 2;
+        text->handleMouseDown(x, y, MASK_NONE);
+        text->handleMouseUp(x, y, MASK_NONE);
+        ensure_equals("clicked", clicked, 1);
+        state->setLink(std::string());
+        ensure("gone when taken away", !part(state, "link")->getVisible());
         state->die();
     }
 }

@@ -44,6 +44,7 @@
 #include "../test/lltut.h"
 
 #include <cstdio>
+#include <functional>
 
 #include <set>
 
@@ -72,29 +73,22 @@ namespace
 
 namespace tut
 {
-    // Shared GL fixture. TUT spins fixtures per-test method, but
+namespace
+{
+    // The shared GL context. TUT spins fixtures per-test method, but
     // per-fixture HeadlessGL recreation poisons LLFontGL's per-getter
     // static fontp caches after ~10 cycles (the per-test new GL
     // context invalidates LLImageGL textures the fontps reference).
     // Sharing the GL context for the binary's lifetime keeps font
     // state coherent across all tests.
     //
-    // needs_render=true so the render group can drive gGL.beginList /
-    // flush against a real bound gUIProgram. Layout-only tests (which
+    // It binds gUIProgram, so the render group can drive gGL.beginList /
+    // flush against a real shader. Layout-only tests (which
     // never issue a draw) still work fine — the bound shader is harmless
     // when no draw call is in flight.
-    inline ll_test::HeadlessGL& getSharedFontGL()
-    {
-        static ll_test::HeadlessGL gl(/*needs_vbos=*/true,
-                                      /*needs_imagegl=*/true,
-                                      /*needs_llrender=*/true,
-                                      /*needs_render=*/true);
-        return gl;
-    }
-
     struct llfontgl_data
     {
-        ll_test::HeadlessGL& gl = getSharedFontGL();
+        ll_test::HeadlessGL& gl = ll_test::sharedHeadlessGL();
         llfontgl_data() = default;
         ~llfontgl_data() = default;
     };
@@ -102,6 +96,7 @@ namespace tut
     typedef test_group<llfontgl_data> llfontgl_test;
     typedef llfontgl_test::object     llfontgl_object;
     tut::llfontgl_test llfontgl_testcase("LLFontGL");
+}
 
     // initClass through the explicit-path overload should bring up a
     // working font registry under a real GL context. loadDefaultFonts
@@ -990,6 +985,8 @@ namespace tut
     // static fontp cache after a few cycles (see vertexbuffer fixture).
     // ===================================================================
 
+namespace
+{
     inline void ensureRenderLLFontGL()
     {
         static bool initialized = false;
@@ -1003,7 +1000,7 @@ namespace tut
 
     struct llfontgl_render_data
     {
-        ll_test::HeadlessGL& gl = getSharedFontGL();
+        ll_test::HeadlessGL& gl = ll_test::sharedHeadlessGL();
         llfontgl_render_data() { ensureRenderLLFontGL(); }
         ~llfontgl_render_data() = default;
     };
@@ -1011,6 +1008,7 @@ namespace tut
     typedef test_group<llfontgl_render_data> llfontgl_render_test;
     typedef llfontgl_render_test::object     llfontgl_render_object;
     tut::llfontgl_render_test llfontgl_render_testcase("LLFontGLRender");
+}
 
     // First end-to-end render() call with LEFT/BASELINE places glyph
     // pixels into the framebuffer at the requested x. Pins the full
@@ -1028,12 +1026,12 @@ namespace tut
         const std::string s = "A";
 
         // Held against the quads the draw emits rather than against pixels.
-        // Nothing this harness draws reaches the framebuffer -- a readback
-        // after a render finds the clear colour and nothing else -- so a test
-        // that asks whether a glyph appeared there can only answer yes by
-        // accident. It did: clearFramebuffer clears to opaque black, the check
-        // was for a non-zero alpha, and alpha is 255 over the whole buffer
-        // before anything is drawn at all.
+        // Until the fixture's UI shader read its matrices from the Matrices
+        // block, nothing this harness drew reached the framebuffer, and a
+        // test that asked whether a glyph appeared there answered yes by
+        // accident: clearFramebuffer clears to opaque black, the check was
+        // for a non-zero alpha, and alpha is 255 over the whole buffer before
+        // anything is drawn at all.
         std::list<LLVertexBufferData> capture;
         gGL.beginList(&capture);
         const S32 n = font->renderBytes(s, 0, /*x=*/64.f, /*y=*/64.f,
@@ -1559,4 +1557,70 @@ namespace tut
                ALFontShaping::cacheMutationCount() > before);
     }
 
+    // A string placed by placeGlyphs and drawn by renderGlyphs lands on the
+    // pixels renderUTF8 puts it on, whichever way it is aligned; and runs
+    // drawn in one call by renderGlyphRuns are the runs drawn apiece.
+    template<> template<>
+    void llfontgl_render_object::test<11>()
+    {
+        if (!fileExists(kFontsXml))
+            skip("fonts.xml not found");
+        const S32  w     = ll_test::HeadlessGL::WIDTH;
+        const S32  h     = ll_test::HeadlessGL::HEIGHT;
+        const auto frame = [&](const std::function<void()>& draw) {
+            gl.clearFramebuffer();
+            glEnable(GL_BLEND);
+            gGL.setSceneBlendType(LLRender::BT_ALPHA);
+            draw();
+            gGL.flush();
+            glDisable(GL_BLEND);
+            glFinish();
+            return ll_test::readFramebufferRGBA(w, h);
+        };
+        const auto lit = [](const std::vector<U8>& px) {
+            for (size_t i = 0; i < px.size(); i += 4)
+            {
+                if (px[i] > 0)
+                    return true;
+            }
+            return false;
+        };
+        const LLFontGL::HAlign aligns[] = { LLFontGL::LEFT, LLFontGL::RIGHT, LLFontGL::HCENTER };
+        for (LLFontGL* font : { LLFontGL::getFontMonospace(), LLFontGL::getFontSansSerif() })
+        {
+            ensure("font resolves", font != nullptr);
+            for (const std::string s : { "7", "42", "12345", "Hello, world" })
+            {
+                for (LLFontGL::HAlign halign : aligns)
+                {
+                    const std::string what = s + " aligned " + std::to_string((int)halign);
+                    const std::vector<U8> said = frame([&] {
+                        font->renderUTF8(s, 0, 128.f, 100.f, LLColor4::white, halign, LLFontGL::BASELINE, LLFontGL::NORMAL, LLFontGL::NO_SHADOW);
+                    });
+                    std::vector<LLFontGL::Placed> placed;
+                    const F32                     shift = font->placeGlyphs(s, halign, placed);
+                    const std::vector<LLColor4U>  colors(placed.size(), LLColor4U(255, 255, 255, 255));
+                    const std::vector<U8>         drawn = frame([&] { font->renderGlyphs(placed.data(), colors.data(), placed.size(), 128.f + shift, 100.f); });
+                    ensure(what + ": drawn at all", lit(said));
+                    ensure(what + ": the same pixels", said == drawn);
+                }
+            }
+        }
+
+        LLFontGL*                     font = LLFontGL::getFontSansSerif();
+        std::vector<LLFontGL::Placed> first, second;
+        font->placeGlyphs("abc", LLFontGL::LEFT, first);
+        font->placeGlyphs("xyz", LLFontGL::LEFT, second);
+        const std::vector<LLColor4U> red(first.size(), LLColor4U(255, 0, 0, 255));
+        const std::vector<LLColor4U> green(second.size(), LLColor4U(0, 255, 0, 255));
+        const std::vector<U8> apiece = frame([&] {
+            font->renderGlyphs(first.data(), red.data(), first.size(), 20.f, 50.f);
+            font->renderGlyphs(second.data(), green.data(), second.size(), 100.f, 150.f);
+        });
+        const LLFontGL::GlyphRun runs[] = { { first.data(), red.data(), first.size(), 20.f, 50.f },
+                                            { second.data(), green.data(), second.size(), 100.f, 150.f } };
+        const std::vector<U8> together = frame([&] { font->renderGlyphRuns(runs, 2); });
+        ensure("runs drawn at all", lit(apiece));
+        ensure("runs in one call are the runs apiece", apiece == together);
+    }
 }

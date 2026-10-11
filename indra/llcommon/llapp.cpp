@@ -38,13 +38,11 @@
 
 #include "llcommon.h"
 
-#include "llerrorcontrol.h"
 #include "llframetimer.h"
 #include "lllivefile.h"
 #include "llmemory.h"
 #include "llstl.h" // for DeletePointer()
 #include "llstring.h"
-#include "llthread.h" // for on_main_thread()
 #include "lleventtimer.h"
 #include "stringize.h"
 #include "llcleanup.h"
@@ -377,10 +375,9 @@ void LLApp::sendOutOfDiskSpaceNotification()
 #ifndef LL_WINDOWS
 // With a crash reporter in the process, the crash signals are its own:
 // crashpad on Linux and SentryCrash on macOS install their handlers after
-// this runs, and a handler of ours underneath would run the app's shutdown
-// from inside a crashed process once the reporter re-raises. The signals the
-// app answers itself, for a graceful quit or to ignore, stay with it either
-// way.
+// this runs, and a handler of ours underneath would have nothing to add once
+// the reporter re-raises. The signals the app answers itself, for a graceful
+// quit or to ignore, stay with it either way.
 void setup_signals()
 {
     //
@@ -480,50 +477,10 @@ const char* signal_to_string(int sig) {
     }
 }
 
-// Hand a fatal signal back to the OS in whatever way preserves the most
-// post-mortem evidence, having already restored default signal dispositions
-// via clear_signals().
-//
-// The obvious way to do this is raise(signum), and that's what every path
-// here used to do. The problem is that raise() is implemented as
-// tgkill(self), i.e. it sends a *fresh* signal from this thread rather than
-// letting the original one through. The core dump that results describes the
-// raise() call site, and reports si_code = SI_TKILL with the sender's pid
-// where the faulting address should be - so the actual instruction and
-// address that crashed are simply gone. Every coredump this viewer has
-// produced looks like it crashed inside its own signal handler.
-//
-// For a genuine hardware fault there's a better option: just return. The
-// kernel resumes the thread at the instruction that faulted, and since
-// clear_signals() has already put SIG_DFL back, re-executing it faults again
-// and terminates the process with a faithful core - correct thread, correct
-// stack, correct si_addr.
-//
-// That only works when re-executing actually re-triggers the signal, so it's
-// gated on a kernel-generated (si_code > 0) synchronous fault. A signal that
-// arrived asynchronously - SIGQUIT, or a SIGSEGV someone sent with kill -
-// has no faulting instruction to retry; returning there would just resume as
-// if nothing happened and the process would never die. Those still go
-// through raise().
-void reraise_for_core(int signum, siginfo_t *info)
-{
-    const bool is_fault_signal = (signum == SIGSEGV || signum == SIGBUS ||
-                                  signum == SIGILL  || signum == SIGFPE);
-
-    if (is_fault_signal && info && info->si_code > 0)
-    {
-        return;
-    }
-
-    raise(signum);
-}
-
 void default_unix_signal_handler(int signum, siginfo_t *info, void *)
 {
     // Unix implementation of synchronous signal handler
     // This runs in the thread that threw the signal.
-    // We do the somewhat sketchy operation of blocking in here until the error handler
-    // has gracefully stopped the app.
 
     // FIXME(brad) - we are using this handler for asynchronous signals as well, so sLogInSignal is currently
     // disabled for safety.  we need to find a way to selectively reenable it when it is safe.
@@ -593,11 +550,6 @@ void default_unix_signal_handler(int signum, siginfo_t *info, void *)
                 {
                     LL_WARNS() << "Signal handler - Handling smackdown signal!" << LL_ENDL;
                 }
-                else
-                {
-                    // Don't log anything, even errors - this is because this signal could happen anywhere.
-                    LLError::setDefaultLevel(LLError::LEVEL_NONE);
-                }
 
                 // Change the signal that we reraise to SIGABRT, so we generate a core dump.
                 signum = SIGABRT;
@@ -605,56 +557,23 @@ void default_unix_signal_handler(int signum, siginfo_t *info, void *)
 
             if (LLApp::sLogInSignal)
             {
-                LL_WARNS() << "Signal handler - Handling fatal signal!" << LL_ENDL;
+                LL_WARNS() << "Signal handler - Fatal signal, passing it back to the operating system" << LL_ENDL;
             }
 
-            if (LLApp::isError())
-            {
-                // Received second fatal signal while handling first, just die right now
-                // Set the signal handlers back to default before handling the signal - this makes the next signal wipe out the app.
-                clear_signals();
-
-                if (LLApp::sLogInSignal)
-                {
-                    LL_WARNS() << "Signal handler - Got another fatal signal while in the error handler, die now!" << LL_ENDL;
-                }
-                reraise_for_core(signum, info);
-                return;
-            }
-
-            if (LLApp::sLogInSignal)
-            {
-                LL_WARNS() << "Signal handler - Flagging error status and waiting for shutdown" << LL_ENDL;
-            }
-
-            if (LLApp::isCrashloggerDisabled()) // Don't gracefully handle any signal, crash and core for a gdb post mortem
-            {
-                clear_signals();
-                LL_WARNS() << "Fatal signal received, not handling the crash here, passing back to operating system" << LL_ENDL;
-                reraise_for_core(signum, info);
-                return;
-            }
-
-            if (!on_main_thread())
-            {
-                // A fatal signal on a helper thread cannot be handled gracefully:
-                // setError() posts events and joins thread pools, which deadlocks
-                // if the crashing thread is one the shutdown depends on, e.g. a
-                // libdispatch worker inside the macOS GL driver. Crash instead.
-                clear_signals();
-                reraise_for_core(signum, info);
-                return;
-            }
-
-            // Flag status to ERROR
-            LLApp::setError();
-
-            if (LLApp::sLogInSignal)
-            {
-                LL_WARNS() << "Signal handler - App is stopped, reraising signal" << LL_ENDL;
-            }
+            // A fatal signal is never handled here, on any thread. LLApp::setError()
+            // posts the status change, and its listeners close work queues and join
+            // thread pools -- none of it safe inside a signal handler, least of all
+            // after a fault, when the heap may already be damaged. Each worker that
+            // exits frees its malloc cache on the way out and aborts on that damage,
+            // so the core records a worker's abort instead of the fault that started
+            // it; and a fault on a thread the shutdown waits for, such as a
+            // libdispatch worker inside the macOS GL driver, deadlocks outright.
+            // LLApp::isError() is no safer, since it locks a fiber mutex.
+            //
+            // Restoring the default handlers before re-raising also covers a second
+            // fatal signal: it takes the process down by default.
             clear_signals();
-            reraise_for_core(signum, info);
+            raise(signum);
             return;
         }
 

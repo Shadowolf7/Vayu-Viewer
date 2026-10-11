@@ -27,8 +27,13 @@
 #include "llviewerprecompiledheaders.h"
 #include "llviewermessage.h"
 
+#include "alscriptstudio.h"
+#include "alscripttypes.h"
+#include "alnotecarditems.h"
+
 // Linden libraries
 #include "llanimationstates.h"
+#include "llnotecard.h"
 #include "llaudioengine.h"
 #include "llavataractions.h"
 #include "llavatarnamecache.h"      // IDEVO HACK
@@ -1421,7 +1426,7 @@ void open_inventory_offer(const uuid_vec_t& objects, const std::string& from_nam
                         LLFloaterReg::showInstance("preview_anim", LLSD(obj_id), take_focus);
                         break;
                     case LLAssetType::AT_SCRIPT:
-                        LLFloaterReg::showInstance("preview_script", LLSD(obj_id), take_focus);
+                        ALScriptStudio::open(ALScriptRef(LLUUID::null, obj_id), item->getName(), take_focus);
                         break;
                     case LLAssetType::AT_SOUND:
                         LLFloaterReg::showInstance("preview_sound", LLSD(obj_id), take_focus);
@@ -2564,7 +2569,7 @@ void process_chat_from_simulator(LLMessageSystem *msg, void **user_data)
     msg->getU8Fast(_PREHASH_ChatData, _PREHASH_Audible, audible_temp);
     chat.mAudible = (EChatAudible)audible_temp;
 
-    chat.mTime = LLFrameTimer::getElapsedSeconds();
+    chat.mTime = LLFrameTimer::getUptimeSeconds();
 
     // IDEVO Correct for new-style "Resident" names
     if (chat.mSourceType == CHAT_SOURCE_AGENT)
@@ -3443,11 +3448,6 @@ void process_agent_movement_complete(LLMessageSystem* msg, void**)
             LLViewerCamera::getInstance()->lookAt(agent_pos, look_at_point, up_direction);
         }
     }
-
-#ifdef LL_DISCORD
-    if (gSavedSettings.getBOOL("EnableDiscord"))
-        LLAppViewer::updateDiscordActivity();
-#endif
 
     if ( LLTracker::isTracking(NULL) )
     {
@@ -7512,20 +7512,21 @@ void onCovenantLoadComplete(const LLUUID& asset_uuid,
 
         if( (file_length > 19) && !strncmp( &buffer[0], "Linden text version", 19 ) )
         {
-            LLViewerTextEditor::Params params;
-            params.name("temp");
-            params.max_text_length(file_length+1);
-            LLViewerTextEditor * editor = LLUICtrlFactory::create<LLViewerTextEditor> (params);
-            if( !editor->importBuffer( &buffer[0], file_length+1 ) )
+            LLNotecard         notecard(LLNotecard::MAX_SIZE);
+            std::istringstream in(std::string(&buffer[0], file_length));
+            if (!notecard.importStream(in))
             {
                 LL_WARNS("Messaging") << "Problem importing estate covenant." << LL_ENDL;
                 covenant_text = "Problem importing estate covenant.";
-                delete editor;
             }
             else
             {
-                // Version 0 (just text, doesn't include version number)
-                editorp.reset(editor); // Use covenant from editorp;
+                LLViewerTextEditor::Params params;
+                params.name("temp");
+                params.max_text_length(file_length+1);
+                editorp.reset(LLUICtrlFactory::create<LLViewerTextEditor>(params));
+                // The items a covenant carries are not shown here.
+                editorp->setText(ALNotecardItems::withoutItems(notecard.getText()));
             }
         }
         else

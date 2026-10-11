@@ -35,6 +35,7 @@ indra/.distcc
 indra/out/*
 
 indra/packages/*
+indra/rust/target/
 build-*/
 indra/CMakeFiles
 indra/CMakeUserPresets.json
@@ -99,6 +100,7 @@ web/secondlife.com.*
 # Auto-generated from lsl_definitions package
 indra/newview/app_settings/keywords_lsl_default.xml
 indra/newview/app_settings/keywords_lua_default.xml
+indra/newview/app_settings/syntax_default/
 
 .env
 .vscode

@@ -48,7 +48,8 @@
 #pragma warning(disable: 4702)
 #endif
 
-LLCoreHttpUtil::HttpCoroutineAdapter::HttpCoroutineAdapter(std::string name, LLCore::HttpRequest::policy_t policyId)
+LLCoreHttpUtil::HttpCoroutineAdapter::HttpCoroutineAdapter(std::string name, LLCore::HttpRequest::policy_t policyId,
+                                                           Destination destination)
 {
 }
 
@@ -70,6 +71,8 @@ LLCore::HttpRequest::~HttpRequest()
 
 namespace tut
 {
+namespace
+{
     struct coproceduremanager_test
     {
         coproceduremanager_test()
@@ -84,6 +87,7 @@ namespace tut
     typedef test_group<coproceduremanager_test> coproceduremanager_t;
     typedef coproceduremanager_t::object coproceduremanager_object_t;
     tut::coproceduremanager_t tut_coproceduremanager("LLCoprocedureManager");
+}
 
 
     template<> template<>

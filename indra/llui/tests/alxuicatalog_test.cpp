@@ -24,13 +24,14 @@
 
 #include "linden_common.h"
 
-#include "../alxuicatalog.h"
-#include "../alxuiselection.h"
+#include "alxuicatalog.h"
+#include "alxuiselection.h"
 #include "../llbutton.h"
 #include "../llpanel.h"
 #include "../lluictrlfactory.h"
 
 #include "alheadlessui_fixture.h"
+#include "altesttempdir.h"
 
 #include "lldir.h"
 #include "llfile.h"
@@ -38,13 +39,6 @@
 #include "../test/lltut.h"
 
 #include <fstream>
-
-class LLAvatarName;
-const std::string gCatalogTestAnonName("Anon");
-const std::string& rlvGetAnonym(const LLAvatarName& av_name)
-{
-    return gCatalogTestAnonName;
-}
 
 namespace tut
 {
@@ -55,12 +49,12 @@ namespace tut
     {
         ll_test::HeadlessUI& ui = ll_test::HeadlessUI::get();
 
-        std::string mSkins;
+        // A tree of its own for each test, removed as it ends.
+        ll_test::TempDir mTemp{ "alxuicatalog_test" };
+        std::string      mSkins = mTemp.string();
 
         alxuicatalog_data()
         {
-            mSkins = gDirUtilp->add(gDirUtilp->getTempDir(), "alxuicatalog_test");
-            gDirUtilp->deleteDirAndContents(mSkins);
             write("default/xui/en/floater_a.xml",
                   "<floater name=\"a\" title=\"Floater A\" width=\"100\" height=\"50\">\n"
                   "  <floater.string name=\"greeting\">Hello</floater.string>\n"
@@ -85,11 +79,6 @@ namespace tut
                   "<button name=\"button\" font=\"SansSerif\"/>\n");
             write("default/xui/de/broken.xml",
                   "<floater name=\"broken\">\n<panel>\n");
-        }
-
-        ~alxuicatalog_data()
-        {
-            gDirUtilp->deleteDirAndContents(mSkins);
         }
 
         void write(const std::string& relative, const std::string& text)
@@ -302,5 +291,25 @@ namespace tut
         ensure("the view's path reaches it in the file's vocabulary",
                ALXUICatalog::resolve(root, ALXUISelection::fromString("unnamed#1"), true) == y);
         ensure("and so does the file's", ALXUICatalog::resolve(root, ALXUISelection::fromString("y"), true) == y);
+    }
+
+    template<> template<>
+    void alxuicatalog_object::test<5>()
+    {
+        set_test_name("the UI library's own tags are told from the viewer's, and the kinds built from the rest");
+        ensure("a button is the library's", ALXUICatalog::isCoreWidgetTag("button"));
+        ensure("so is a layout stack", ALXUICatalog::isCoreWidgetTag("layout_stack"));
+        ensure("a chat history is the viewer's", !ALXUICatalog::isCoreWidgetTag("chat_history"));
+        ensure("no tag is nobody's", !ALXUICatalog::isCoreWidgetTag(""));
+
+        using Kind = ALXUICatalog::Kind;
+        for (Kind kind : { Kind::Floater, Kind::Panel, Kind::Menu, Kind::Widget, Kind::Template })
+        {
+            ensure(std::string("built: ") + ALXUICatalog::kindName(kind), ALXUICatalog::isBuilt(kind));
+        }
+        for (Kind kind : { Kind::Notifications, Kind::Strings, Kind::Other })
+        {
+            ensure(std::string("not built: ") + ALXUICatalog::kindName(kind), !ALXUICatalog::isBuilt(kind));
+        }
     }
 }

@@ -543,8 +543,6 @@
   <string>Ativar a criação de novos anúncios classificados a partir de link web.</string>
   <key>EnableCollisionSounds</key>
   <string>Reproduzir sons em colisões.</string>
-  <key>EnableDiscord</key>
-  <string>Quando ativado, conecta ao Discord para habilitar o Rich Presence.</string>
   <key>EnableDiskCacheDebugInfo</key>
   <string>Quando ativado, exibir informações adicionais de depuração do cache.</string>
   <key>EnableGestureSounds</key>
@@ -1841,18 +1839,10 @@
   <string>Escalar de ruído para esconder banding na renderização diferida.</string>
   <key>RenderDeferredSSAO</key>
   <string>Executar o shader de oclusão de ambiente em espaço de tela no renderizador diferido.</string>
-  <key>RenderDeferredSpotShadowBias</key>
-  <string>Valor de viés para sombras de spot (previne shadow acne).</string>
-  <key>RenderDeferredSpotShadowOffset</key>
-  <string>Valor de deslocamento para sombras de spot (previne shadow acne).</string>
   <key>RenderDeferredSun</key>
   <string>Executar o shader de luz solar no renderizador diferido.</string>
   <key>RenderDeferredSunWash</key>
   <string>Quanto as luzes locais são apagadas pelo sol.</string>
-  <key>RenderDeferredTreeShadowBias</key>
-  <string>Valor de viés para sombras de árvores (previne shadow acne).</string>
-  <key>RenderDeferredTreeShadowOffset</key>
-  <string>Valor de deslocamento para sombras de árvores (previne shadow acne).</string>
   <key>RenderDelayCreation</key>
   <string>Limitar a criação de drawables.</string>
   <key>RenderDelayVBUpdate</key>
@@ -1865,16 +1855,12 @@
   <string>EXPERIMENTAL: preparar o buffer de profundidade com geometria de prim simples antes de renderizar com texturas.</string>
   <key>RenderDesaturateIrradiance</key>
   <string>Dessaturar a irradiância para remover o tom azulado.</string>
-  <key>RenderDiffuseLuminanceScale</key>
-  <string>Ajuste de luminância para superfícies difusas para auxiliar o comportamento de autoexposição.</string>
   <key>RenderDisablePostProcessing</key>
   <string>Desativar mapeamento de tons e correção de exposição quando o floater de construção está aberto (para artistas desenvolvendo materiais).</string>
   <key>RenderDisableVintageMode</key>
   <string>Ativa recursos adicionais do pipeline de renderização em máquinas mais novas, como HDR e texturas emissivas em conteúdo PBR.</string>
   <key>RenderDownScaleMethod</key>
   <string>Método a usar para reduzir imagens. 0 - FBO, 1 - PBO.</string>
-  <key>RenderDynamicExposureCoefficient</key>
-  <string>Coeficiente de luminância para exposição dinâmica.</string>
   <key>RenderDynamicLOD</key>
   <string>Ajustar dinamicamente o nível de detalhe.</string>
   <key>RenderEdgeDepthCutoff</key>
@@ -2203,16 +2189,10 @@
   <string>Renderizar a água como transparente. Definir como falso renderiza a água como opaca com uma textura simples aplicada.</string>
   <key>RenderTreeLODFactor</key>
   <string>Controla o nível de detalhe da vegetação (multiplicador para a área de tela atual ao calcular o nível de detalhe).</string>
-  <key>RenderUIBuffer</key>
-  <string>Armazenar em cache a renderização da interface em um buffer alinhado à tela.</string>
   <key>RenderUIInSnapshot</key>
   <string>Exibir a interface do usuário na captura.</string>
   <key>RenderUnloadedAvatar</key>
   <string>Mostrar avatares que ainda não terminaram de carregar.</string>
-  <key>RenderUseAdvancedAtmospherics</key>
-  <string>Usar atmosféricos pré-computados sofisticados e afins.</string>
-  <key>RenderUseExposureSkySettings</key>
-  <string>Usar as configurações de exposição do céu em vez de derivar da escala HDR.</string>
   <key>RenderUseFarClip</key>
   <string>Se falso, o culling de frustum ignorará o plano de far clip.</string>
   <key>RenderUseStreamVBO</key>
@@ -2373,10 +2353,6 @@
   <string>Exibir console de depuração.</string>
   <key>ShowDeviceSettings</key>
   <string>Mostrar configurações de dispositivo.</string>
-  <key>ShowDiscordActivityDetails</key>
-  <string>Quando ativado, mostrar o nome do avatar no Discord Rich Presence.</string>
-  <key>ShowDiscordActivityState</key>
-  <string>Quando ativado, mostrar a localização no Discord Rich Presence.</string>
   <key>ShowFavoritesOnLogin</key>
   <string>Define se os favoritos do último usuário logado serão salvos ao sair e exibidos na tela de login.</string>
   <key>ShowGestureButton</key>

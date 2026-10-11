@@ -146,6 +146,8 @@ const std::string& LLImage::getLastThreadError() { static std::string msg; retur
 
 namespace tut
 {
+namespace
+{
     // Test wrapper declarations
 
     // Note: We derive the responder class for 2 reasons:
@@ -245,6 +247,7 @@ namespace tut
     typedef test_group<imagedecodethread_test> imagedecodethread_t;
     typedef imagedecodethread_t::object imagedecodethread_object_t;
     tut::imagedecodethread_t tut_imagedecodethread("LLImageDecodeThread");
+}
 
     // ---------------------------------------------------------------------------------------
     // Test functions

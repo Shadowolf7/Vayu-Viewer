@@ -195,9 +195,6 @@ LLTextBase::Params::Params()
 LLTextBase::LLTextBase(const LLTextBase::Params &p)
 :   LLUICtrl(p, LLTextViewModelPtr(new LLTextViewModel)),
     mURLClickSignal(NULL),
-    mIsFriendSignal(NULL),
-    mIsObjectBlockedSignal(NULL),
-    mIsObjectReachableSignal(NULL),
     mMaxTextByteLength( p.max_text_length ),
     mFont(p.font),
     mFontShadow(p.font_shadow),
@@ -311,9 +308,6 @@ LLTextBase::~LLTextBase()
         mPopupMenuHandle.markDead();
     }
     delete mURLClickSignal;
-    delete mIsFriendSignal;
-    delete mIsObjectBlockedSignal;
-    delete mIsObjectReachableSignal;
 // [SL:KB] - Patch: Control-TextParser | Checked: 2012-07-10 (Catznip-3.3)
     delete mHighlightsSignal;
 // [/SL:KB]
@@ -2364,92 +2358,9 @@ LLTextSegmentPtr LLTextBase::getSegmentAtLocalPos( S32 x, S32 y, bool hit_past_e
 
 void LLTextBase::createUrlContextMenu(S32 x, S32 y, const std::string &in_url)
 {
-    // work out the XUI menu file to use for this url
-    LLUrlMatch match;
-    std::string url = in_url;
-    if (! LLUrlRegistry::instance().findUrl(url, match))
+    // the registry's menu for this url, its items bound to it
+    if (LLContextMenu* menu = LLUrlAction::createMenu(in_url, mPopupMenuHandle))
     {
-        return;
-    }
-
-    std::string xui_file = match.getMenuName();
-    if (xui_file.empty())
-    {
-        return;
-    }
-
-    // set up the callbacks for all of the potential menu items, N.B. we
-    // don't use const ref strings in callbacks in case url goes out of scope
-    LLUICtrl::CommitCallbackRegistry::ScopedRegistrar registrar;
-    registrar.add("Url.Open", boost::bind(&LLUrlAction::openURL, url));
-    registrar.add("Url.OpenInternal", boost::bind(&LLUrlAction::openURLInternal, url));
-    registrar.add("Url.OpenExternal", boost::bind(&LLUrlAction::openURLExternal, url));
-    registrar.add("Url.Execute", boost::bind(&LLUrlAction::executeSLURL, url, true));
-    registrar.add("Url.Block", boost::bind(&LLUrlAction::blockObject, url));
-    registrar.add("Url.Unblock", boost::bind(&LLUrlAction::unblockObject, url));
-    registrar.add("Url.Teleport", boost::bind(&LLUrlAction::teleportToLocation, url));
-    registrar.add("Url.ShowProfile", boost::bind(&LLUrlAction::showProfile, url));
-    registrar.add("Url.AddFriend", boost::bind(&LLUrlAction::addFriend, url));
-    registrar.add("Url.RemoveFriend", boost::bind(&LLUrlAction::removeFriend, url));
-    registrar.add("Url.ReportAbuse", boost::bind(&LLUrlAction::reportAbuse, url));
-    registrar.add("Url.ReportAbuseObj", boost::bind(&LLUrlAction::reportAbuseObj, url));
-    registrar.add("Url.SendIM", boost::bind(&LLUrlAction::sendIM, url));
-    registrar.add("Url.ZoomInObject", boost::bind(&LLUrlAction::zoomInObject, url));
-    registrar.add("Url.ShowOnMap", boost::bind(&LLUrlAction::showLocationOnMap, url));
-    registrar.add("Url.ShowParcelOnMap", boost::bind(&LLUrlAction::showParcelOnMap, url));
-    registrar.add("Url.CopyLabel", boost::bind(&LLUrlAction::copyLabelToClipboard, url));
-    registrar.add("Url.CopyUrl", boost::bind(&LLUrlAction::copyURLToClipboard, url));
-    registrar.add("Url.CopyUUID", boost::bind(&LLUrlAction::copyUUIDToClipboard, url));
-
-    // create and return the context menu from the XUI file
-
-    LLContextMenu* menu = static_cast<LLContextMenu*>(mPopupMenuHandle.get());
-    if (menu)
-    {
-        menu->die();
-        mPopupMenuHandle.markDead();
-    }
-    llassert(LLMenuGL::sMenuContainer != NULL);
-    menu = LLUICtrlFactory::getInstance()->createFromFile<LLContextMenu>(xui_file, LLMenuGL::sMenuContainer,
-                                                                         LLMenuHolderGL::child_registry_t::instance());
-    if (menu)
-    {
-        mPopupMenuHandle = menu->getHandle();
-
-        if (mIsFriendSignal)
-        {
-            LLView* addFriendButton = menu->findChild<LLView>("add_friend");
-            LLView* removeFriendButton = menu->findChild<LLView>("remove_friend");
-
-            if (addFriendButton && removeFriendButton)
-            {
-                bool isFriend = *(*mIsFriendSignal)(LLUUID(LLUrlAction::getUserID(url)));
-                addFriendButton->setEnabled(!isFriend);
-                removeFriendButton->setEnabled(isFriend);
-            }
-        }
-
-        if (mIsObjectBlockedSignal)
-        {
-            LLView* blockButton = menu->findChild<LLView>("block_object");
-            LLView* unblockButton = menu->findChild<LLView>("unblock_object");
-
-            if (blockButton && unblockButton)
-            {
-                bool is_blocked = *(*mIsObjectBlockedSignal)(LLUUID(LLUrlAction::getObjectId(url)), LLUrlAction::getObjectName(url));
-                blockButton->setVisible(!is_blocked);
-                unblockButton->setVisible(is_blocked);
-            }
-        }
-
-        if (mIsObjectReachableSignal)
-        {
-            bool is_reachable = *(*mIsObjectReachableSignal)(LLUUID(LLUrlAction::getObjectId(url)));
-            if (LLView* zoom_btn = menu->getChild<LLView>("zoom_in"))
-            {
-                zoom_btn->setEnabled(is_reachable);
-            }
-        }
         menu->show(x, y);
         LLMenuGL::showPopup(this, menu, x, y);
     }
@@ -3877,33 +3788,6 @@ boost::signals2::connection LLTextBase::setURLClickedCallback(const commit_signa
     return mURLClickSignal->connect(cb);
 }
 
-boost::signals2::connection LLTextBase::setIsFriendCallback(const is_friend_signal_t::slot_type& cb)
-{
-    if (!mIsFriendSignal)
-    {
-        mIsFriendSignal = new is_friend_signal_t();
-    }
-    return mIsFriendSignal->connect(cb);
-}
-
-boost::signals2::connection LLTextBase::setIsObjectBlockedCallback(const is_blocked_signal_t::slot_type& cb)
-{
-    if (!mIsObjectBlockedSignal)
-    {
-        mIsObjectBlockedSignal = new is_blocked_signal_t();
-    }
-    return mIsObjectBlockedSignal->connect(cb);
-}
-
-boost::signals2::connection LLTextBase::setIsObjectReachableCallback(const is_obj_reachable_signal_t::slot_type& cb)
-{
-    if (!mIsObjectReachableSignal)
-    {
-        mIsObjectReachableSignal = new is_obj_reachable_signal_t();
-    }
-    return mIsObjectReachableSignal->connect(cb);
-}
-
 // [SL:KB] - Patch: Control-TextParser | Checked: 2012-07-10 (Catznip-3.3)
 boost::signals2::connection LLTextBase::setHighlightsCallback(const highlights_signal_t::slot_type& cb)
 {
@@ -3958,8 +3842,6 @@ const LLUIColor& LLTextSegment::getColor() const { static const LLUIColor white 
 //void LLTextSegment::setColor(const LLUIColor &color) {}
 LLStyleConstSP LLTextSegment::getStyle() const {static LLStyleConstSP sp(new LLStyle()); return sp; }
 void LLTextSegment::setStyle(LLStyleConstSP style) {}
-void LLTextSegment::setToken( LLKeywordToken* token ) {}
-LLKeywordToken* LLTextSegment::getToken() const { return NULL; }
 void LLTextSegment::setToolTip( const std::string &msg ) {}
 void LLTextSegment::dump() const {}
 bool LLTextSegment::handleMouseDown(S32 x, S32 y, MASK mask) { return false; }
@@ -3989,7 +3871,6 @@ bool LLTextSegment::hasMouseCapture() { return false; }
 LLNormalTextSegment::LLNormalTextSegment( LLStyleConstSP style, S32 start, S32 end, LLTextBase& editor )
 :   LLTextSegment(start, end),
     mStyle( style ),
-    mToken(NULL),
     mEditor(editor)
 {
     mCanEdit = !mStyle->getDrawHighlightBg();
@@ -4003,7 +3884,6 @@ LLNormalTextSegment::LLNormalTextSegment( LLStyleConstSP style, S32 start, S32 e
 
 LLNormalTextSegment::LLNormalTextSegment( const LLUIColor& color, S32 start, S32 end, LLTextBase& editor, bool is_visible)
 :   LLTextSegment(start, end),
-    mToken(NULL),
     mEditor(editor)
 {
     mStyle = new LLStyle(LLStyle::Params().visible(is_visible).color(color));
@@ -4273,14 +4153,7 @@ bool LLNormalTextSegment::handleMouseUp(S32 x, S32 y, MASK mask)
 
 bool LLNormalTextSegment::handleToolTip(S32 x, S32 y, MASK mask)
 {
-    std::string msg;
-    // do we have a tooltip for a loaded keyword (for script editor)?
-    if (mToken && !mToken->getToolTip().empty())
-    {
-        LLToolTipMgr::instance().show(mToken->getToolTip(), (mToken->getType() == LLKeywordToken::TT_FUNCTION));
-        return true;
-    }
-    // or do we have an explicitly set tooltip (e.g., for Urls)
+    // An explicitly set tooltip (e.g., for Urls)
     if (!mTooltip.empty())
     {
         LLToolTipMgr::instance().show(mTooltip);
@@ -4316,12 +4189,6 @@ bool LLNormalTextSegment::handleToolTip(S32 x, S32 y, MASK mask)
 
 void LLNormalTextSegment::setToolTip(const std::string& tooltip)
 {
-    // we cannot replace a keyword tooltip that's loaded from a file
-    if (mToken)
-    {
-        LL_WARNS() << "LLTextSegment::setToolTip: cannot replace keyword tooltip." << LL_ENDL;
-        return;
-    }
     mTooltip = tooltip;
 }
 

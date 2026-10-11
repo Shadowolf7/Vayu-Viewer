@@ -160,6 +160,8 @@ namespace
 
 namespace tut
 {
+namespace
+{
     struct llvector4a_data
     {
         // Four lanes of distinct bit patterns, including a NaN payload and a
@@ -181,6 +183,7 @@ namespace tut
     typedef test_group<llvector4a_data> llvector4a_test;
     typedef llvector4a_test::object llvector4a_object;
     tut::llvector4a_test llvector4a_testcase("LLVector4a");
+}
 
     // Plain data of one register, and the two constants.
     template<> template<>
@@ -361,14 +364,17 @@ namespace tut
         r = p; r.div(q);
         ensure_ulps("div", r, expected, 1);
 
-        const LLVector4a signs(-1.5f, 0.f, -0.f, -INF);
+        // The negative zero as its bits, in and out: /fp:fast lets the
+        // compiler take -0.f for 0.f, and MSVC for arm64 does.
+        const LLVector4a signs(alsimd::or_(alsimd::set(-1.5f, 0.f, 0.f, -INF),
+                                           alsimd::and_(alsimd::set1_bits(0x80000000u), alsimd::mask_lane<2>())));
         r.setAbs(signs);
-        ensure_exact("setAbs", r, 1.5f, 0.f, 0.f, INF);
+        ensure_bits("setAbs", r, bits_of(1.5f), 0u, 0u, bits_of(INF));
         r.setNeg(signs);
-        ensure_exact("setNeg", r, 1.5f, -0.f, 0.f, INF);
+        ensure_bits("setNeg", r, bits_of(1.5f), 0x80000000u, 0u, bits_of(INF));
         r = signs;
         r.negate();
-        ensure_exact("negate", r, 1.5f, -0.f, 0.f, INF);
+        ensure_bits("negate", r, bits_of(1.5f), 0x80000000u, 0u, bits_of(INF));
 
         // a NaN payload survives the sign ops unchanged
         r.setAbs(a());
@@ -586,8 +592,11 @@ namespace tut
         ensure("equals4 sees w", !p.equals4(w_off));
         ensure("operator!=", p != w_off);
 
+        // Held against another value rather than itself: /fp:fast lets the
+        // compiler fold x - x to 0, so a vector equals itself whatever it holds.
         const LLVector4a nan(NAN_QUIET, 0.f, 0.f, 0.f);
-        ensure("a NaN equals nothing", !nan.equals4(nan));
+        ensure("a NaN equals nothing", !nan.equals4(LLVector4a::getZero()));
+        ensure("and nothing equals a NaN", !LLVector4a::getZero().equals4(nan));
     }
 
     // Quantizing maps onto the stored integers and back: the result is

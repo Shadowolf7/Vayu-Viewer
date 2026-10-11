@@ -28,68 +28,10 @@
 #include "linden_common.h"
 #include "../llurlentry.h"
 #include "../lluictrl.h"
-//#include "llurlentry_stub.cpp"
 #include "lltut.h"
 #include "../lluicolortable.h"
 #include "../llrender/lluiimage.h"
 #include "../llmessage/llexperiencecache.h"
-
-#include <boost/regex.hpp>
-
-// namespace LLExperienceCache
-// {
-//     const LLSD& get( const LLUUID& key)
-//     {
-//      static LLSD boo;
-//         return boo;
-//     }
-//
-//     void get( const LLUUID& key, callback_slot_t slot ){}
-//
-// }
-
-/*==========================================================================*|
-typedef std::map<std::string, LLControlGroup*> settings_map_t;
-settings_map_t LLUI::sSettingGroups;
-
-bool LLControlGroup::getBOOL(const std::string& name)
-{
-    return false;
-}
-
-LLUIColor LLUIColorTable::getColor(const std::string& name, const LLColor4& default_color) const
-{
-    return LLUIColor();
-}
-
-LLUIColor::LLUIColor() : mColorPtr(NULL) {}
-
-LLUIImage::LLUIImage(const std::string& name, LLPointer<LLTexture> image)
-{
-}
-
-LLUIImage::~LLUIImage()
-{
-}
-
-//virtual
-S32 LLUIImage::getWidth() const
-{
-    return 0;
-}
-
-//virtual
-S32 LLUIImage::getHeight() const
-{
-    return 0;
-}
-|*==========================================================================*/
-
-const std::string anonName("Anon");
-const std::string& rlvGetAnonym(const LLAvatarName& avName)
-{
-    return anonName;
-}
 
 namespace tut
 {
@@ -108,60 +50,56 @@ namespace
 
 namespace tut
 {
-    void testRegex(const std::string &testname, LLUrlEntryBase &entry,
-                   const char *text, const std::string &expected)
+    namespace
     {
-        boost::regex regex = entry.getPattern();
-        std::string url = "";
-        boost::cmatch result;
-        bool found = boost::regex_search(text, result, regex);
-        if (found)
+        void testRegex(const std::string &testname, LLUrlEntryBase &entry,
+                       const char *text, const std::string &expected)
         {
-            S32 start = static_cast<U32>(result[0].first - text);
-            S32 end = static_cast<U32>(result[0].second - text);
-            url = entry.getUrl(std::string(text+start, end-start));
+            std::string url = "";
+            ALRegexMatch result;
+            const U32 group = entry.getUrlGroup();
+            bool found = entry.getPattern().search(text, &result) && result.matched(group);
+            if (found)
+            {
+                url = entry.getUrl(result.str(group));
+            }
+            ensure_equals(testname, url, expected);
         }
-        ensure_equals(testname, url, expected);
-    }
 
-    void dummyCallback(const std::string &url, const std::string &label, const std::string& icon)
-    {
-    }
-
-    void testLabel(const std::string &testname, LLUrlEntryBase &entry,
-                   const char *text, const std::string &expected)
-    {
-        boost::regex regex = entry.getPattern();
-        std::string label = "";
-        boost::cmatch result;
-        bool found = boost::regex_search(text, result, regex);
-        if (found)
+        void dummyCallback(const std::string &url, const std::string &label, const std::string& icon)
         {
-            S32 start = static_cast<U32>(result[0].first - text);
-            S32 end = static_cast<U32>(result[0].second - text);
-            std::string url = std::string(text+start, end-start);
-            label = entry.getLabel(url, boost::bind(dummyCallback, _1, _2, _3));
         }
-        ensure_equals(testname, label, expected);
-    }
 
-    void testLocation(const std::string &testname, LLUrlEntryBase &entry,
-                      const char *text, const std::string &expected)
-    {
-        boost::regex regex = entry.getPattern();
-        std::string location = "";
-        boost::cmatch result;
-        bool found = boost::regex_search(text, result, regex);
-        if (found)
+        void testLabel(const std::string &testname, LLUrlEntryBase &entry,
+                       const char *text, const std::string &expected)
         {
-            S32 start = static_cast<U32>(result[0].first - text);
-            S32 end = static_cast<U32>(result[0].second - text);
-            std::string url = std::string(text+start, end-start);
-            location = entry.getLocation(url);
+            std::string label = "";
+            ALRegexMatch result;
+            const U32 group = entry.getUrlGroup();
+            bool found = entry.getPattern().search(text, &result) && result.matched(group);
+            if (found)
+            {
+                std::string url = result.str(group);
+                label = entry.getLabel(url, boost::bind(dummyCallback, _1, _2, _3));
+            }
+            ensure_equals(testname, label, expected);
         }
-        ensure_equals(testname, location, expected);
-    }
 
+        void testLocation(const std::string &testname, LLUrlEntryBase &entry,
+                          const char *text, const std::string &expected)
+        {
+            std::string location = "";
+            ALRegexMatch result;
+            const U32 group = entry.getUrlGroup();
+            bool found = entry.getPattern().search(text, &result) && result.matched(group);
+            if (found)
+            {
+                std::string url = result.str(group);
+                location = entry.getLocation(url);
+            }
+            ensure_equals(testname, location, expected);
+        }
+    }
 
     template<> template<>
     void object::test<1>()
@@ -896,6 +834,36 @@ namespace tut
 
         testRegex("don't match urls w/o protocol", url,
                   "and even no www something lindenlab.com",
+                  "");
+
+        // Only a host that ends where the text or a space does: anything
+        // longer is LLUrlEntrySecondlifeURL's or LLUrlEntryHTTP's.
+        testRegex("a host at the end of the text", url,
+                  "go to http://secondlife.com",
+                  "http://secondlife.com");
+
+        testRegex("a host at the end of a line", url,
+                  "go to https://www.secondlife.com\nand look",
+                  "https://www.secondlife.com");
+
+        testRegex("a host with a tab after it", url,
+                  "go to http://secondlifegrid.net\tnow",
+                  "http://secondlifegrid.net");
+
+        testRegex("not a host with a path", url,
+                  "see http://secondlife.com/foo here",
+                  "");
+
+        testRegex("not a host with a port", url,
+                  "at https://secondlife.com:888 now",
+                  "");
+
+        testRegex("not a host that goes on", url,
+                  "at https://secondlife.com.example.net x",
+                  "");
+
+        testRegex("not a host with a full stop after it", url,
+                  "visit http://secondlife.com.",
                   "");
     }
 

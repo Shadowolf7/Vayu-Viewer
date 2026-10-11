@@ -24,44 +24,29 @@
 
 #include "linden_common.h"
 
-#include "../alxuidocuments.h"
+#include "alxuidocuments.h"
 
 #include "lldir.h"
 #include "llfile.h"
+
+#include "altesttempdir.h"
 
 #include "../test/lltut.h"
 
 #include <fstream>
 
-class LLAvatarName;
-const std::string gDocumentsTestAnonName("Anon");
-const std::string& rlvGetAnonym(const LLAvatarName& av_name)
-{
-    return gDocumentsTestAnonName;
-}
-
 namespace tut
 {
     struct alxuidocuments_data
     {
-        std::string mDir;
-
-        alxuidocuments_data()
-        {
-            mDir = gDirUtilp->add(gDirUtilp->getTempDir(), "alxuidocuments_test");
-            gDirUtilp->deleteDirAndContents(mDir);
-            LLFile::mkdir(mDir);
-        }
-
-        ~alxuidocuments_data()
-        {
-            gDirUtilp->deleteDirAndContents(mDir);
-        }
+        // A directory of its own for each test, removed as it ends.
+        ll_test::TempDir mTemp{ "alxuidocuments_test" };
+        std::string      mDir = mTemp.string();
 
         std::string write(const std::string& name, const std::string& text) const
         {
             const std::string path = gDirUtilp->add(mDir, name);
-            std::ofstream out(path, std::ios::binary | std::ios::trunc);
+            llofstream out(path, std::ios::binary | std::ios::trunc);
             out << text;
             return path;
         }
@@ -343,6 +328,7 @@ namespace tut
         LLFile::remove(path);
         ensure_equals("nothing was read again", open.rereadClean(), 0);
         ensure_equals("and the text is what it was", held->text(), was);
+        ensure("and reading it did not put it back", !LLFile::isfile(path));
         ensure("which the merge is still given", open.textFor(path) != nullptr);
         ensure("and the document says why", !held->error().empty());
     }
@@ -428,5 +414,43 @@ namespace tut
         all = open.history();
         ensure_equals("a new run, and the one put back is gone", all.size(), 1u);
         ensure_equals("of one step", all[0].steps, 1);
+    }
+
+    // Looked at in the middle -- a caller settling after each edit while an
+    // Action is open -- an Action is still the one thing: its steps in each
+    // document added up, not one field though its first step was, and put
+    // back and on again in one.
+    template<> template<>
+    void alxuidocuments_object::test<12>()
+    {
+        const std::string first  = write("first.xml", panel("a"));
+        const std::string second = write("second.xml", panel("b"));
+        ALXUIDocuments open;
+        open.setCoalesceWindow(60.0);
+        ALXUIEdit* one = open.open(first);
+        ALXUIEdit* two = open.open(second);
+        ensure("opens both", one && two);
+        {
+            ALXUIDocuments::Action together(open);
+            ensure("writes", one->setAttribute({ "a" }, "width", "11"));
+            open.settle();
+            ensure("writes", two->setAttribute({ "b" }, "width", "21"));
+            open.settle();
+            ensure("writes", one->setAttribute({ "a" }, "height", "12"));
+            open.settle();
+        }
+        std::vector<ALXUIDocuments::Entry> all = open.history();
+        ensure_equals("one action", all.size(), 1u);
+        ensure_equals("of three steps", all[0].steps, 3);
+        ensure_equals("in two documents", all[0].documents, 2);
+        ensure("not one field", !all[0].sameField);
+        ensure("put back", open.undo());
+        ensure("all of it", one->resolve({ "a" }).attribute("width").as_int() == 10 &&
+                                one->resolve({ "a" }).attribute("height").as_int() == 10 &&
+                                two->resolve({ "b" }).attribute("width").as_int() == 10);
+        ensure("nothing else", !open.canUndo());
+        ensure("done again", open.redo());
+        ensure("all of it", one->resolve({ "a" }).attribute("height").as_int() == 12 &&
+                                two->resolve({ "b" }).attribute("width").as_int() == 21);
     }
 }

@@ -43,7 +43,9 @@
 
 // newview includes
 #include "alavataractions.h"
+#include "alfeedback.h"
 #include "alfloaterblocked.h"
+#include "alfloaterfeedback.h"
 #include "alviewermenu.h"
 #include "llagent.h"
 #include "llagentaccess.h"
@@ -149,7 +151,6 @@
 #include "llpathfindingmanager.h"
 #include "llstartup.h"
 #include <unordered_map>
-#include <boost/regex.hpp>
 #include <boost/algorithm/string.hpp>
 #include "llcleanup.h"
 #include "llviewershadermgr.h"
@@ -9747,6 +9748,11 @@ void handle_show_url(const LLSD& param)
 
 void handle_report_bug(const LLSD& param)
 {
+    if (ALFeedback::available())
+    {
+        ALFloaterFeedback::show();
+        return;
+    }
     std::string url = gSavedSettings.getString("ReportBugURL");
     LLWeb::loadURLExternal(url);
 }
@@ -11085,6 +11091,9 @@ void initialize_menus()
     view_listener_t::addMenu(new LLToggleControl(), "ToggleControl");
     view_listener_t::addMenu(new LLToggleShaderControl(), "ToggleShaderControl");
     view_listener_t::addMenu(new LLCheckControl(), "CheckControl");
+    // Develop > Rendering > Far Plane, a radio over AlchemyRenderFarPlaneForce
+    commit.add("Advanced.SetFarPlaneForce", [](LLUICtrl*, const LLSD& param) { gSavedSettings.setS32("AlchemyRenderFarPlaneForce", param.asInteger()); });
+    enable.add("Advanced.CheckFarPlaneForce", [](LLUICtrl*, const LLSD& param) { return gSavedSettings.getS32("AlchemyRenderFarPlaneForce") == param.asInteger(); });
     view_listener_t::addMenu(new LLResetControl(), "ResetControl");
 
     view_listener_t::addMenu(new LLToggleControlPerAccount(), "ToggleControlPerAccount");

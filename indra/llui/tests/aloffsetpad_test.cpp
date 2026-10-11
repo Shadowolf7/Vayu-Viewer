@@ -24,31 +24,27 @@
 
 #include "linden_common.h"
 
-#include "../aloffsetpad.h"
+#include "aloffsetpad.h"
 
 #include "../llfocusmgr.h"
+#include "../llspinctrl.h"
 #include "../lluictrlfactory.h"
 
 #include "alheadlessui_fixture.h"
+#include "aluistatescope.h"
 
 #include "../test/lltut.h"
 
 #include <string>
-
-// llui reaches the viewer for this one, and linking any of the library pulls
-// the object that calls it. Nothing under test goes near it.
-class LLAvatarName;
-const std::string gOffsetPadTestAnonName("Anon");
-const std::string& rlvGetAnonym(const LLAvatarName& av_name)
-{
-    return gOffsetPadTestAnonName;
-}
 
 namespace tut
 {
     struct aloffsetpad_data
     {
         ll_test::HeadlessUI& ui = ll_test::HeadlessUI::get();
+        // Focus and capture as the test found them, whatever it leaves
+        // them on.
+        ll_test::FocusScope  focus;
 
         // 70 tall: the pad is the 66-pixel square at the left, its centre
         // at (35, 35), reaching 32 either way.
@@ -106,6 +102,42 @@ namespace tut
         gFocusMgr.setMouseCapture(nullptr);
         p->handleHover(35 + 33, 35, MASK_NONE);
         ensure_equals("a hover after the loss moves nothing", p->getValue().asString(), std::string("0 0"));
+        p->die();
+    }
+
+    template<> template<>
+    void aloffsetpad_object::test<3>()
+    {
+        set_test_name("a number typed in a box is the value, committed once; a reset goes back to the default, committed where it moved");
+        if (!ui.ok())
+        {
+            skip("no UI: LLUI_TEST_APP_DIR does not point at the source tree");
+        }
+        ALOffsetPad* p       = pad();
+        S32          commits = 0;
+        p->setCommitCallback([&commits](LLUICtrl*, const LLSD&) { ++commits; });
+        p->setValue("1 2");
+        ensure_equals("the boxes show it", p->getChild<LLSpinCtrl>("y")->getValue().asReal(), 2.0);
+        LLSpinCtrl* x = p->getChild<LLSpinCtrl>("x");
+        x->setValue(LLSD(5.0));
+        x->onCommit();
+        ensure_equals("typed", p->getValue().asString(), std::string("5 2"));
+        ensure_equals("committed once", commits, 1);
+        LLSpinCtrl* y = p->getChild<LLSpinCtrl>("y");
+        y->setValue(LLSD(-1.0));
+        y->onCommit();
+        ensure_equals("either box", p->getValue().asString(), std::string("5 -1"));
+        ensure_equals("committed again", commits, 2);
+
+        ensure("no default, no reset", !p->resetToDefault());
+        ensure_equals("and nothing committed", commits, 2);
+        p->setDefault("-3 4");
+        ensure("reset", p->resetToDefault());
+        ensure_equals("to the default", p->getValue().asString(), std::string("-3 4"));
+        ensure_equals("shown", x->getValue().asReal(), -3.0);
+        ensure_equals("committed", commits, 3);
+        ensure("reset again", p->resetToDefault());
+        ensure_equals("where nothing moved, not committed", commits, 3);
         p->die();
     }
 }

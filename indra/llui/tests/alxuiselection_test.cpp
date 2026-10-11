@@ -24,20 +24,13 @@
 
 #include "linden_common.h"
 
-#include "../alxuiselection.h"
+#include "alxuiselection.h"
 #include "../lluictrlfactory.h"
 #include "../llview.h"
 
 #include "alheadlessui_fixture.h"
 
 #include "../test/lltut.h"
-
-class LLAvatarName;
-const std::string gSelectionTestAnonName("Anon");
-const std::string& rlvGetAnonym(const LLAvatarName& av_name)
-{
-    return gSelectionTestAnonName;
-}
 
 namespace tut
 {

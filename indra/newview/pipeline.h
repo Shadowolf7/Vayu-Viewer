@@ -418,6 +418,10 @@ public:
     // and just before rendering alpha when camera is above water
     void doAtmospherics();
 
+    // Whether this frame's haze pass could converge anything on the sky behind (mSkyBehind): the main view's, with
+    // atmospherics on, the camera above the water, and water among what was sorted to draw.
+    bool skyBehindWanted() const;
+
     // apply water haze based on contents of color and depth buffer
     // should be called just before rendering pre-water alpha objects
     void doWaterHaze();
@@ -887,8 +891,11 @@ public:
     // for use by SSR
     LLRenderTarget          mSceneMap;
 
-    // exposure map for getting average color in scene
+    // The auto-exposure: the meter grid (luminanceF.glsl), its 64-bin histogram
+    // (exposureHistogramV.glsl), and the exposure, 1x1: x the scale, y the EV the next
+    // frame adapts from (exposureF.glsl). mLastExposure is last frame's.
     LLRenderTarget          mLuminanceMap;
+    LLRenderTarget          mExposureHistogram;
     LLRenderTarget          mExposureMap;
     LLRenderTarget          mLastExposure;
 
@@ -901,9 +908,6 @@ public:
     // FXAA helper target
     LLRenderTarget          mFXAAMap;
     LLRenderTarget          mSMAABlendBuffer;
-
-    // render ui to buffer target
-    LLRenderTarget          mUIScreen;
 
     // downres scratch space for GPU downscaling of textures
     LLRenderTarget          mDownResMap;
@@ -932,6 +936,9 @@ public:
     S32                     mScenePixelY = 0;
     bool                    mScenePixelPending = false;
 
+    // UI previews must not inherit reflection-probe resolution or scene scaling.
+    LLRenderTarget          mPreviewMap;
+
     // 2k bom scratch target
     LLRenderTarget          mBakeMap;
 
@@ -944,6 +951,9 @@ public:
 
     // a single triangle that covers the whole screen
     LLPointer<LLVertexBuffer> mScreenTriangleVB;
+
+    // the exposure meter's points: two per meter grid texel, its non-sky and sky parts
+    LLPointer<LLVertexBuffer> mExposureHistogramVB;
 
     //utility buffer for rendering cubes, 8 vertices are corners of a cube [-1, 1]
     LLPointer<LLVertexBuffer> mCubeVB;
@@ -1005,6 +1015,11 @@ public:
 
     //water distortion texture (refraction)
     LLRenderTarget              mWaterDis;
+
+    // The sky dome behind everything at half resolution: the sky pool draws it again here, with no depth, and the
+    // haze pass converges far water on it (hazeF.glsl). Holds the main view's sky for mSkyBehindFrame only.
+    LLRenderTarget              mSkyBehind;
+    U32                         mSkyBehindFrame = 0;
 
     static const U32 MAX_PREVIEW_WIDTH;
 
@@ -1309,7 +1324,6 @@ public:
 // [SL:KB] - Patch: Settings-RenderResolutionMultiplier | Checked: Catznip-5.4
     static F32 RenderResolutionMultiplier;
 // [/SL:KB]
-    static bool RenderUIBuffer;
     static S32 RenderShadowDetail;
     static S32 RenderShadowSplits;
     static bool RenderDeferredSSAO;

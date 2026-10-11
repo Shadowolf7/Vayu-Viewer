@@ -73,6 +73,14 @@ bool                LLViewerShaderMgr::sSkipReload = false;
 
 LLVector4           gShinyOrigin;
 
+// Whether the session computes: a context with compute, GLSL 4.30 left to it after the feature manager's fallbacks,
+// and AlchemyRenderDisableCompute off. Read at shader load, as everything built on it is.
+static bool compute_enabled()
+{
+    const S32 glsl = gGLManager.mGLSLVersionMajor * 100 + gGLManager.mGLSLVersionMinor;
+    return gGLManager.mHasCompute && glsl >= 430 && !gSavedSettings.getBOOL("AlchemyRenderDisableCompute");
+}
+
 S32 clamp_terrain_mapping(S32 mapping)
 {
     // 1 = "flat", 2 not implemented, 3 = triplanar mapping
@@ -137,6 +145,7 @@ LLGLSLShader    gAlphaMaskProgram;
 LLGLSLShader    gBenchmarkProgram;
 LLGLSLShader    gReflectionProbeDisplayProgram;
 LLGLSLShader    gCopyProgram;
+LLGLSLShader    gCopyDepthProgram;
 LLGLSLShader    gPBRTerrainBakeProgram;
 LLGLSLShader    gDrawColorProgram;
 
@@ -154,6 +163,13 @@ LLGLSLShader        gUnderWaterProgram;
 LLGLSLShader        gHighlightProgram;
 LLGLSLShader        gHighlightNormalProgram;
 LLGLSLShader        gHighlightSpecularProgram;
+LLGLSLShader        gSelectionIdProgram;
+LLGLSLShader        gSelectionWireframeProgram;
+LLGLSLShader        gSelectionJumpProgram;
+LLGLSLShader        gSelectionTileProgram;
+LLGLSLShader        gSelectionOutlineProgram;
+LLGLSLShader        gSelectionGlowReachProgram;
+LLGLSLShader        gSelectionGlowRowProgram;
 
 LLGLSLShader        gDeferredHighlightProgram;
 
@@ -197,6 +213,7 @@ LLGLSLShader            gHazeProgram;
 LLGLSLShader            gHazeWaterProgram;
 LLGLSLShader            gDeferredBlurLightProgram;
 LLGLSLShader            gDeferredSoftenProgram;
+LLGLSLShader            gDeferredSoftenSkyProgram;
 LLGLSLShader            gDeferredShadowProgram;
 LLGLSLShader            gDeferredTerrainShadowProgram;
 LLGLSLShader            gDeferredShadowCubeProgram;
@@ -229,6 +246,7 @@ LLGLSLShader            gDeferredDoFCombineProgram;
 LLGLSLShader            gDeferredDoFCombineProgramNoNear;
 LLGLSLShader            gExposureProgram;
 LLGLSLShader            gExposureProgramNoFade;
+LLGLSLShader            gExposureHistogramProgram;
 LLGLSLShader            gLuminanceProgram;
 LLGLSLShader            gLensFlareStateProgram;
 LLGLSLShader            gFXAAProgram[4];
@@ -405,33 +423,6 @@ static void add_common_permutations(LLGLSLShader* shader)
     }
 }
 
-// Single source of truth for the sun-shadow gate: shader level plus RenderShadowDetail. Callers
-// also read the returned bool for LLGLSLShaderFeatures::hasShadows, so this returns the value
-// rather than adding the permutation directly -- see add_sun_shadow_permutation() below.
-static bool sun_shadow_enabled(S32 deferred_shader_level)
-{
-    static LLCachedControl<S32> shadow_detail(gSavedSettings, "RenderShadowDetail", 0);
-    return deferred_shader_level > 1 && shadow_detail > 0;
-}
-
-static void add_sun_shadow_permutation(LLGLSLShader* shader, bool use_sun_shadow)
-{
-    if (use_sun_shadow)
-    {
-        shader->addPermutation("HAS_SUN_SHADOW", "1");
-    }
-}
-
-static void add_bloom_halation_permutation(LLGLSLShader* shader)
-{
-    static LLCachedControl<bool> halation(gSavedSettings, "RenderBloomHalation", false);
-
-    if (halation)
-    {
-        shader->addPermutation("BLOOM_HALATION", "1");
-    }
-}
-
 // Map an indexed GLTF PBR program's per-slot samplers to texture units. Slot s
 // uses base color unit s; when full (the GBuffer-write shaders, not the shadow
 // alpha-mask shader) it also uses normal N+s, ORM 2N+s and emissive 3N+s. Inactive
@@ -580,6 +571,10 @@ void LLViewerShaderMgr::setShaders()
     // whole next frame.
     LLPipeline::updateReverseZ();
 
+    // The same for compute: the shared objects compiled for its stage and every program built on it follow the switch
+    // as it stands for this load.
+    LLRender::sCompute = compute_enabled();
+
     {
         static LLCachedControl<bool> shader_cache_enabled(gSavedSettings, "RenderShaderCacheEnabled", true);
         static LLUUID old_cache_version;
@@ -618,6 +613,18 @@ void LLViewerShaderMgr::setShaders()
     // reserved. Capped at 8 to bound shader sampler declarations.
     LLGLSLShader::sIndexedGLTFChannels = llclamp(gGLManager.mNumTextureImageUnits / 4, 1,
                                                 LLGLSLShader::MAX_INDEXED_GLTF_CHANNELS);
+
+    // GLOn12 crashes inside the driver on the first indexed legacy material draw. Mesa's
+    // d3d12 links the program but translates it to DXIL lazily, at that draw, and its
+    // variant selection writes through the result without checking that the translation
+    // succeeded -- so no GL call can report the failure first. The indexed programs are not
+    // built there at all; zero channels is the state a failed load already leaves, and the
+    // pools fall back to their scalar paths.
+    if (gGLManager.mIsD3D12)
+    {
+        LL_INFOS("ShaderLoading") << "Indexed material batching disabled on GLOn12." << LL_ENDL;
+        LLGLSLShader::sIndexedGLTFChannels = 0;
+    }
 
     reentrance = true;
 
@@ -801,6 +808,8 @@ void LLViewerShaderMgr::unloadShaders()
         LLGLSLShader* shader = *(LLGLSLShader::sInstances.begin());
         shader->unload();
     }
+    // The shared objects are the manager's, so they go here rather than with the programs that attached them.
+    clearShaderObjects();
 
     mShaderLevel[SHADER_LIGHTING] = 0;
     mShaderLevel[SHADER_OBJECT] = 0;
@@ -1061,7 +1070,8 @@ bool LLViewerShaderMgr::loadShadersWater()
     bool success = true;
     bool terrainWaterSuccess = true;
 
-    bool use_sun_shadow = sun_shadow_enabled(mShaderLevel[SHADER_DEFERRED]);
+    bool use_sun_shadow = mShaderLevel[SHADER_DEFERRED] > 1 &&
+        gSavedSettings.getS32("RenderShadowDetail") > 0;
 
     if (mShaderLevel[SHADER_WATER] == 0)
     {
@@ -1090,7 +1100,10 @@ bool LLViewerShaderMgr::loadShadersWater()
             gWaterProgram.addPermutation("TRANSPARENT_WATER", "1");
         }
 
-        add_sun_shadow_permutation(&gWaterProgram, use_sun_shadow);
+        if (use_sun_shadow)
+        {
+            gWaterProgram.addPermutation("HAS_SUN_SHADOW", "1");
+        }
 
         gWaterProgram.mShaderGroup = LLGLSLShader::SG_WATER;
         gWaterProgram.mShaderLevel = mShaderLevel[SHADER_WATER];
@@ -1203,6 +1216,8 @@ bool LLViewerShaderMgr::loadShadersEffects()
         }
     }
 
+    const bool bloom_halation = gSavedSettings.getBOOL("RenderBloomHalation");
+
     if (success)
     {
         gBloomExtractProgram.mName = "HDR Bloom Extract";
@@ -1210,7 +1225,10 @@ bool LLViewerShaderMgr::loadShadersEffects()
         gBloomExtractProgram.mShaderFiles.push_back(make_pair("effects/glowExtractV.glsl", GL_VERTEX_SHADER));
         gBloomExtractProgram.mShaderFiles.push_back(make_pair("effects/bloomExtractF.glsl", GL_FRAGMENT_SHADER));
         gBloomExtractProgram.mShaderLevel = mShaderLevel[SHADER_EFFECT];
-        add_bloom_halation_permutation(&gBloomExtractProgram);
+        if (bloom_halation)
+        {
+            gBloomExtractProgram.addPermutation("BLOOM_HALATION", "1");
+        }
         success = gBloomExtractProgram.createShader();
     }
 
@@ -1276,7 +1294,10 @@ bool LLViewerShaderMgr::loadShadersEffects()
         gBloomCompositeProgram.mShaderFiles.push_back(make_pair("effects/glowExtractV.glsl", GL_VERTEX_SHADER));
         gBloomCompositeProgram.mShaderFiles.push_back(make_pair("effects/bloomCompositeF.glsl", GL_FRAGMENT_SHADER));
         gBloomCompositeProgram.mShaderLevel = mShaderLevel[SHADER_EFFECT];
-        add_bloom_halation_permutation(&gBloomCompositeProgram);
+        if (bloom_halation)
+        {
+            gBloomCompositeProgram.addPermutation("BLOOM_HALATION", "1");
+        }
         success = gBloomCompositeProgram.createShader();
     }
 
@@ -1287,7 +1308,8 @@ bool LLViewerShaderMgr::loadShadersEffects()
 bool LLViewerShaderMgr::loadShadersDeferred()
 {
     LL_PROFILE_ZONE_SCOPED;
-    bool use_sun_shadow = sun_shadow_enabled(mShaderLevel[SHADER_DEFERRED]);
+    bool use_sun_shadow = mShaderLevel[SHADER_DEFERRED] > 1 &&
+        gSavedSettings.getS32("RenderShadowDetail") > 0;
 
     if (mShaderLevel[SHADER_DEFERRED] == 0)
     {
@@ -1310,6 +1332,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredSunProgram.unload();
         gDeferredBlurLightProgram.unload();
         gDeferredSoftenProgram.unload();
+        gDeferredSoftenSkyProgram.unload();
         gDeferredShadowProgram.unload();
         gDeferredTerrainShadowProgram.unload();
         gDeferredShadowCubeProgram.unload();
@@ -1342,6 +1365,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredDoFCombineProgramNoNear.unload();
         gExposureProgram.unload();
         gExposureProgramNoFade.unload();
+        gExposureHistogramProgram.unload();
         gLuminanceProgram.unload();
         gLensFlareStateProgram.unload();
 
@@ -1515,7 +1539,11 @@ bool LLViewerShaderMgr::loadShadersDeferred()
                 gDeferredMaterialProgram[i].addPermutation("HAS_ALPHA_MASK", "1");
             }
 
-            add_sun_shadow_permutation(&gDeferredMaterialProgram[i], use_sun_shadow);
+            if (use_sun_shadow)
+            {
+                gDeferredMaterialProgram[i].addPermutation("HAS_SUN_SHADOW", "1");
+            }
+
             add_common_permutations(&gDeferredMaterialProgram[i]);
 
             gDeferredMaterialProgram[i].mFeatures.hasSrgb = true;
@@ -1767,7 +1795,11 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         shader->addPermutation("USE_VERTEX_COLOR", "1");
 
         add_common_permutations(shader);
-        add_sun_shadow_permutation(shader, use_sun_shadow);
+
+        if (use_sun_shadow)
+        {
+            shader->addPermutation("HAS_SUN_SHADOW", "1");
+        }
 
         shader->mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = shader->createShader(LLGLSLShader::VARIANT_RIGGED | LLGLSLShader::VARIANT_CLASSIC | mirror_variant());
@@ -2125,7 +2157,11 @@ bool LLViewerShaderMgr::loadShadersDeferred()
             shader->addPermutation("USE_VERTEX_COLOR", "1");
             shader->addPermutation("HAS_ALPHA_MASK", "1");
             shader->addPermutation("USE_INDEXED_TEX", "1");
-            add_sun_shadow_permutation(shader, use_sun_shadow);
+            if (use_sun_shadow)
+            {
+                shader->addPermutation("HAS_SUN_SHADOW", "1");
+            }
+
             add_common_permutations(shader);
 
             if (hud)
@@ -2187,7 +2223,11 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         // ran in did not encode either.
         shader->addPermutation("LINEAR_DIFFUSE", "1");
 
-        add_sun_shadow_permutation(shader, use_sun_shadow);
+        if (use_sun_shadow)
+        {
+            shader->addPermutation("HAS_SUN_SHADOW", "1");
+        }
+
         add_common_permutations(shader);
 
         shader->mShaderLevel = mShaderLevel[SHADER_DEFERRED];
@@ -2427,34 +2467,51 @@ bool LLViewerShaderMgr::loadShadersDeferred()
 
     if (success)
     {
-        gDeferredSoftenProgram.mName = "Deferred Soften Shader";
-        gDeferredSoftenProgram.mShaderFiles.clear();
-        gDeferredSoftenProgram.mFeatures.hasSrgb = true;
-        gDeferredSoftenProgram.mFeatures.calculatesAtmospherics = true;
-        gDeferredSoftenProgram.mFeatures.hasAtmospherics = true;
-        gDeferredSoftenProgram.mFeatures.hasGamma = true;
-        gDeferredSoftenProgram.mFeatures.isDeferred = true;
-        gDeferredSoftenProgram.mFeatures.hasFullGBuffer = true;
-        gDeferredSoftenProgram.mFeatures.hasShadows = use_sun_shadow;
-        gDeferredSoftenProgram.mFeatures.hasReflectionProbes = mShaderLevel[SHADER_DEFERRED] > 2;
+        // The soften pass, and its variant for the sky alone (softenLightF.glsl, SOFTEN_SKY), from one configuration,
+        // so the two resolve the same shader level and link the same objects.
+        const auto load_soften = [&](LLGLSLShader& shader, const char* name, bool sky)
+        {
+            shader.mName = name;
+            shader.mShaderFiles.clear();
+            shader.mFeatures.hasSrgb = true;
+            shader.mFeatures.calculatesAtmospherics = true;
+            shader.mFeatures.hasAtmospherics = true;
+            shader.mFeatures.hasGamma = true;
+            shader.mFeatures.isDeferred = true;
+            shader.mFeatures.hasFullGBuffer = true;
+            shader.mFeatures.hasShadows = use_sun_shadow;
+            shader.mFeatures.hasReflectionProbes = mShaderLevel[SHADER_DEFERRED] > 2;
 
-        gDeferredSoftenProgram.clearPermutations();
-        add_common_permutations(&gDeferredSoftenProgram);
-        gDeferredSoftenProgram.mShaderFiles.push_back(make_pair("deferred/softenLightV.glsl", GL_VERTEX_SHADER));
-        gDeferredSoftenProgram.mShaderFiles.push_back(make_pair("deferred/softenLightF.glsl", GL_FRAGMENT_SHADER));
+            shader.clearPermutations();
+            add_common_permutations(&shader);
+            shader.mShaderFiles.push_back(make_pair("deferred/softenLightV.glsl", GL_VERTEX_SHADER));
+            shader.mShaderFiles.push_back(make_pair("deferred/softenLightF.glsl", GL_FRAGMENT_SHADER));
 
-        gDeferredSoftenProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+            shader.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
 
-        add_sun_shadow_permutation(&gDeferredSoftenProgram, use_sun_shadow);
+            if (use_sun_shadow)
+            {
+                shader.addPermutation("HAS_SUN_SHADOW", "1");
+            }
 
-        if (gSavedSettings.getBOOL("RenderDeferredSSAO"))
-        { //if using SSAO, take screen space light map into account as if shadows are enabled
-            gDeferredSoftenProgram.mShaderLevel = llmax(gDeferredSoftenProgram.mShaderLevel, 2);
-            gDeferredSoftenProgram.addPermutation("HAS_SSAO", "1");
-        }
+            if (gSavedSettings.getBOOL("RenderDeferredSSAO"))
+            { //if using SSAO, take screen space light map into account as if shadows are enabled
+                shader.mShaderLevel = llmax(shader.mShaderLevel, 2);
+                shader.addPermutation("HAS_SSAO", "1");
+            }
 
-        success = gDeferredSoftenProgram.createShader(LLGLSLShader::VARIANT_CLASSIC);
-        llassert(success);
+            if (sky)
+            {
+                shader.addPermutation("SOFTEN_SKY", "1");
+            }
+
+            const bool loaded = shader.createShader(LLGLSLShader::VARIANT_CLASSIC);
+            llassert(loaded);
+            return loaded;
+        };
+
+        success = load_soften(gDeferredSoftenProgram, "Deferred Soften Shader", false) &&
+                  load_soften(gDeferredSoftenSkyProgram, "Deferred Soften Sky Shader", true);
     }
 
     if (success)
@@ -2470,7 +2527,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gHazeProgram.mFeatures.hasReflectionProbes    = mShaderLevel[SHADER_DEFERRED] > 2;
 
         gHazeProgram.clearPermutations();
-        gHazeProgram.mShaderFiles.push_back(make_pair("deferred/softenLightV.glsl", GL_VERTEX_SHADER));
+        gHazeProgram.mShaderFiles.push_back(make_pair("deferred/hazeV.glsl", GL_VERTEX_SHADER));
         gHazeProgram.mShaderFiles.push_back(make_pair("deferred/hazeF.glsl", GL_FRAGMENT_SHADER));
 
         add_common_permutations(&gHazeProgram);
@@ -2791,7 +2848,10 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         gDeferredAvatarAlphaProgram.addPermutation("LINEAR_DIFFUSE", "1");
         gDeferredAvatarAlphaProgram.addPermutation("USE_DIFFUSE_TEX", "1");
         gDeferredAvatarAlphaProgram.addPermutation("IS_AVATAR_SKIN", "1");
-        add_sun_shadow_permutation(&gDeferredAvatarAlphaProgram, use_sun_shadow);
+        if (use_sun_shadow)
+        {
+            gDeferredAvatarAlphaProgram.addPermutation("HAS_SUN_SHADOW", "1");
+        }
 
         gDeferredAvatarAlphaProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
 
@@ -2835,6 +2895,20 @@ bool LLViewerShaderMgr::loadShadersDeferred()
 
     if (success)
     {
+        // The exposure meter's histogram: one point per part of a meter grid texel,
+        // summed into 64 bins by additive blending.
+        gExposureHistogramProgram.mName = "Exposure Histogram";
+        gExposureHistogramProgram.mShaderFiles.clear();
+        gExposureHistogramProgram.clearPermutations();
+        gExposureHistogramProgram.mShaderFiles.push_back(make_pair("deferred/exposureHistogramV.glsl", GL_VERTEX_SHADER));
+        gExposureHistogramProgram.mShaderFiles.push_back(make_pair("deferred/exposureHistogramF.glsl", GL_FRAGMENT_SHADER));
+        gExposureHistogramProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
+        success = gExposureHistogramProgram.createShader();
+        llassert(success);
+    }
+
+    if (success)
+    {
         // Sun coverage, colour and the filtered flare drive, 2x1, read by the
         // colour-correct programs through uLensFlareStateMap.
         gLensFlareStateProgram.mName = "Lens Flare State";
@@ -2849,7 +2923,7 @@ bool LLViewerShaderMgr::loadShadersDeferred()
 
     if (success)
     {
-        gLuminanceProgram.mName = "Luminance";
+        gLuminanceProgram.mName = "Exposure Meter Grid";
         gLuminanceProgram.mShaderFiles.clear();
         gLuminanceProgram.clearPermutations();
         gLuminanceProgram.mShaderFiles.push_back(make_pair("deferred/postDeferredNoTCV.glsl", GL_VERTEX_SHADER));
@@ -3353,7 +3427,8 @@ bool LLViewerShaderMgr::loadShadersDeferred()
     // bloom alpha channel when RenderBloomHalation is on — both settings trigger
     // shader rebuilds, so reading them at compile time stays in sync with the
     // bloom pyramid format.
-    const bool hdr_enabled = gSavedSettings.getBOOL("RenderHDREnabled");
+    const bool hdr_enabled         = gSavedSettings.getBOOL("RenderHDREnabled");
+    const bool bloom_halation_perm = gSavedSettings.getBOOL("RenderBloomHalation");
 
     if (success)
     {
@@ -3372,7 +3447,10 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         else
         {
             gCGGammaProgram.addPermutation("BLOOM_COMPOSITE", "1");
-            add_bloom_halation_permutation(&gCGGammaProgram);
+            if (bloom_halation_perm)
+            {
+                gCGGammaProgram.addPermutation("BLOOM_HALATION", "1");
+            }
         }
         gCGGammaProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gCGGammaProgram.createShader();
@@ -3397,7 +3475,10 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         else
         {
             gCGLegacyGammaProgram.addPermutation("BLOOM_COMPOSITE", "1");
-            add_bloom_halation_permutation(&gCGLegacyGammaProgram);
+            if (bloom_halation_perm)
+            {
+                gCGLegacyGammaProgram.addPermutation("BLOOM_HALATION", "1");
+            }
         }
         gCGLegacyGammaProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gCGLegacyGammaProgram.createShader();
@@ -3423,7 +3504,10 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         else
         {
             gCGColorgradeGammaProgram.addPermutation("BLOOM_COMPOSITE", "1");
-            add_bloom_halation_permutation(&gCGColorgradeGammaProgram);
+            if (bloom_halation_perm)
+            {
+                gCGColorgradeGammaProgram.addPermutation("BLOOM_HALATION", "1");
+            }
         }
         gCGColorgradeGammaProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success                                = gCGColorgradeGammaProgram.createShader();
@@ -3450,7 +3534,10 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         else
         {
             gCGColorgradeLegacyGammaProgram.addPermutation("BLOOM_COMPOSITE", "1");
-            add_bloom_halation_permutation(&gCGColorgradeLegacyGammaProgram);
+            if (bloom_halation_perm)
+            {
+                gCGColorgradeLegacyGammaProgram.addPermutation("BLOOM_HALATION", "1");
+            }
         }
         gCGColorgradeLegacyGammaProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gCGColorgradeLegacyGammaProgram.createShader();
@@ -3476,7 +3563,10 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         else
         {
             gCGTonemapProgram.addPermutation("BLOOM_COMPOSITE", "1");
-            add_bloom_halation_permutation(&gCGTonemapProgram);
+            if (bloom_halation_perm)
+            {
+                gCGTonemapProgram.addPermutation("BLOOM_HALATION", "1");
+            }
         }
         gCGTonemapProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gCGTonemapProgram.createShader();
@@ -3503,7 +3593,10 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         else
         {
             gCGTonemapLegacyGammaProgram.addPermutation("BLOOM_COMPOSITE", "1");
-            add_bloom_halation_permutation(&gCGTonemapLegacyGammaProgram);
+            if (bloom_halation_perm)
+            {
+                gCGTonemapLegacyGammaProgram.addPermutation("BLOOM_HALATION", "1");
+            }
         }
         gCGTonemapLegacyGammaProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gCGTonemapLegacyGammaProgram.createShader();
@@ -3531,7 +3624,10 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         else
         {
             gCGTonemapColorgradeProgram.addPermutation("BLOOM_COMPOSITE", "1");
-            add_bloom_halation_permutation(&gCGTonemapColorgradeProgram);
+            if (bloom_halation_perm)
+            {
+                gCGTonemapColorgradeProgram.addPermutation("BLOOM_HALATION", "1");
+            }
         }
         gCGTonemapColorgradeProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gCGTonemapColorgradeProgram.createShader();
@@ -3560,7 +3656,10 @@ bool LLViewerShaderMgr::loadShadersDeferred()
         else
         {
             gCGTonemapColorgradeLegacyGammaProgram.addPermutation("BLOOM_COMPOSITE", "1");
-            add_bloom_halation_permutation(&gCGTonemapColorgradeLegacyGammaProgram);
+            if (bloom_halation_perm)
+            {
+                gCGTonemapColorgradeLegacyGammaProgram.addPermutation("BLOOM_HALATION", "1");
+            }
         }
         gCGTonemapColorgradeLegacyGammaProgram.mShaderLevel = mShaderLevel[SHADER_DEFERRED];
         success = gCGTonemapColorgradeLegacyGammaProgram.createShader();
@@ -3744,6 +3843,66 @@ bool LLViewerShaderMgr::loadShadersInterface()
         gHighlightSpecularProgram.mShaderFiles.push_back(make_pair("interface/highlightF.glsl", GL_FRAGMENT_SHADER));
         gHighlightSpecularProgram.mShaderLevel = mShaderLevel[SHADER_INTERFACE];
         success = gHighlightSpecularProgram.createShader();
+    }
+
+    if (success)
+    {
+        // The selection outline's and wireframe's programs. ALSelectionOutline::render draws only with the ones that
+        // loaded, so a driver that rejects one loses what that one draws and keeps the rest of the interface.
+        const auto load_selection = [this](LLGLSLShader& program, const char* name,
+                                           std::initializer_list<std::pair<const char*, GLenum>> files, U32 variants)
+        {
+            program.mName = name;
+            program.mShaderFiles.clear();
+            for (const auto& [file, stage] : files)
+            {
+                program.mShaderFiles.push_back(make_pair(file, stage));
+            }
+            program.mShaderLevel = mShaderLevel[SHADER_INTERFACE];
+            if (!program.createShader(variants))
+            {
+                LL_WARNS("Shader") << "Could not load " << name << "; selections are drawn without it" << LL_ENDL;
+                program.unload();
+            }
+        };
+
+        load_selection(gSelectionIdProgram, "Selection Id Shader",
+                       { { "interface/selectionIdV.glsl", GL_VERTEX_SHADER },
+                         { "interface/selectionIdF.glsl", GL_FRAGMENT_SHADER },
+                         { "interface/selectionAlphaF.glsl", GL_FRAGMENT_SHADER },
+                         { "interface/selectionUtilF.glsl", GL_FRAGMENT_SHADER } },
+                       LLGLSLShader::VARIANT_RIGGED);
+        load_selection(gSelectionWireframeProgram, "Selection Wireframe Shader",
+                       { { "interface/selectionIdV.glsl", GL_VERTEX_SHADER },
+                         { "interface/selectionWireframeG.glsl", GL_GEOMETRY_SHADER },
+                         { "interface/selectionWireframeF.glsl", GL_FRAGMENT_SHADER },
+                         { "interface/selectionAlphaF.glsl", GL_FRAGMENT_SHADER },
+                         { "interface/selectionUtilF.glsl", GL_FRAGMENT_SHADER } },
+                       LLGLSLShader::VARIANT_RIGGED);
+        load_selection(gSelectionJumpProgram, "Selection Jump Shader",
+                       { { "interface/copyV.glsl", GL_VERTEX_SHADER },
+                         { "interface/selectionJumpF.glsl", GL_FRAGMENT_SHADER },
+                         { "interface/selectionUtilF.glsl", GL_FRAGMENT_SHADER } },
+                       0);
+        load_selection(gSelectionTileProgram, "Selection Tile Shader",
+                       { { "interface/copyV.glsl", GL_VERTEX_SHADER },
+                         { "interface/selectionTileF.glsl", GL_FRAGMENT_SHADER },
+                         { "interface/selectionUtilF.glsl", GL_FRAGMENT_SHADER } },
+                       0);
+        load_selection(gSelectionOutlineProgram, "Selection Outline Shader",
+                       { { "interface/copyV.glsl", GL_VERTEX_SHADER },
+                         { "interface/selectionOutlineF.glsl", GL_FRAGMENT_SHADER },
+                         { "interface/selectionUtilF.glsl", GL_FRAGMENT_SHADER } },
+                       0);
+        load_selection(gSelectionGlowReachProgram, "Selection Glow Reach Shader",
+                       { { "interface/copyV.glsl", GL_VERTEX_SHADER },
+                         { "interface/selectionGlowReachF.glsl", GL_FRAGMENT_SHADER } },
+                       0);
+        load_selection(gSelectionGlowRowProgram, "Selection Glow Row Shader",
+                       { { "interface/copyV.glsl", GL_VERTEX_SHADER },
+                         { "interface/selectionGlowRowF.glsl", GL_FRAGMENT_SHADER },
+                         { "interface/selectionUtilF.glsl", GL_FRAGMENT_SHADER } },
+                       0);
     }
 
     if (success)
@@ -3961,6 +4120,19 @@ bool LLViewerShaderMgr::loadShadersInterface()
         gCopyProgram.mShaderFiles.push_back(make_pair("interface/copyF.glsl", GL_FRAGMENT_SHADER));
         gCopyProgram.mShaderLevel = mShaderLevel[SHADER_INTERFACE];
         success = gCopyProgram.createShader();
+    }
+
+    if (success)
+    {
+        gCopyDepthProgram.mName = "Copy Depth Shader";
+        gCopyDepthProgram.mShaderFiles.clear();
+        gCopyDepthProgram.mShaderFiles.push_back(make_pair("interface/copyV.glsl", GL_VERTEX_SHADER));
+        gCopyDepthProgram.mShaderFiles.push_back(make_pair("interface/copyF.glsl", GL_FRAGMENT_SHADER));
+        gCopyDepthProgram.clearPermutations();
+        gCopyDepthProgram.addPermutation("COPY_DEPTH", "1");
+        gCopyDepthProgram.addPermutation("DEPTH_ONLY", "1");
+        gCopyDepthProgram.mShaderLevel = mShaderLevel[SHADER_INTERFACE];
+        success = gCopyDepthProgram.createShader();
     }
 
     if (success)

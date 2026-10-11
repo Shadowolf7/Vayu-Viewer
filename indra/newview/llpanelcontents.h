@@ -33,8 +33,8 @@
 #include "lluuid.h"
 #include "llviewerobject.h"
 #include "llvoinventorylistener.h"
-#include "llscripteditorws.h"
 #include "v3math.h"
+#include <boost/signals2/connection.hpp>
 
 class LLButton;
 class LLPanelObjectInventory;
@@ -82,10 +82,13 @@ public:
 protected:
     void getState(LLViewerObject *object);
     void onFilterEdit();
+    void onSimulatorFeaturesReceived(const LLUUID& region_id);
 
     bool mDirtyFilter { false };
     LLUUID mLastScriptObjectID;
     bool mLastLuaRegion { false };
+    bool mNewScriptIsLua { false };
+    boost::signals2::connection mSimulatorFeaturesConnection;
 
 private:
     bool isLuaEnabledForObjectRegion(LLViewerObject *objectp);

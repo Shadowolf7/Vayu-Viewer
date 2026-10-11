@@ -125,14 +125,26 @@ void gl_rect_2d(S32 left, S32 top, S32 right, S32 bottom, bool filled )
     }
     else
     {
-        top--;
-        right--;
+        // Through the middle of the first screen pixel inside each edge.
+        // A line along the edge of a pixel lands on whichever side of it
+        // the driver picks -- on a Mac the left and right a column left,
+        // so that a rect's left line fell outside it -- where one through
+        // a pixel's middle lands on that pixel. Half a screen pixel is less
+        // than half a unit where the UI is scaled up, and the line stays a
+        // screen pixel thick.
+        const LLVector3 scale = gGL.getUIScale();
+        const F32       in_x  = 0.5f / llmax(scale.mV[VX], 0.01f);
+        const F32       in_y  = 0.5f / llmax(scale.mV[VY], 0.01f);
+        const F32       l     = static_cast<F32>(left) + in_x;
+        const F32       r     = static_cast<F32>(right) - in_x;
+        const F32       b     = static_cast<F32>(bottom) + in_y;
+        const F32       t     = static_cast<F32>(top) - in_y;
         gGL.begin( LLRender::LINE_STRIP );
-            gGL.vertex2i(left, top);
-            gGL.vertex2i(left, bottom);
-            gGL.vertex2i(right, bottom);
-            gGL.vertex2i(right, top);
-            gGL.vertex2i(left, top);
+            gGL.vertex2f(l, t);
+            gGL.vertex2f(l, b);
+            gGL.vertex2f(r, b);
+            gGL.vertex2f(r, t);
+            gGL.vertex2f(l, t);
         gGL.end();
     }
 }
@@ -143,6 +155,18 @@ void gl_rect_2d(S32 left, S32 top, S32 right, S32 bottom, const LLColor4 &color,
     gl_rect_2d( left, top, right, bottom, filled );
 }
 
+
+void gl_rect_2d_in_batch(S32 left, S32 top, S32 right, S32 bottom, const LLColor4& color)
+{
+    gGL.color4fv(color.mV);
+    gGL.vertex2i(left, top);
+    gGL.vertex2i(left, bottom);
+    gGL.vertex2i(right, bottom);
+
+    gGL.vertex2i(left, top);
+    gGL.vertex2i(right, bottom);
+    gGL.vertex2i(right, top);
+}
 
 void gl_rect_2d( const LLRect& rect, const LLColor4& color, bool filled )
 {
@@ -259,7 +283,23 @@ void gl_line_2d(S32 x1, S32 y1, S32 x2, S32 y2, const LLColor4 &color )
 
 void gl_polyline_2d(const std::vector<LLVector2>& points, const LLColor4& color, F32 width, bool closed)
 {
-    const size_t count = points.size();
+    if (points.size() < 2)
+    {
+        return;
+    }
+    gGL.getTextureSlot(0)->unbind();
+
+    // TRIANGLES rather than a strip: LLRender auto-flushes this mode on a
+    // multiple of three, so a long polyline cannot overrun the immediate-mode
+    // vertex buffer and lose its tail the way an unsplittable strip would.
+    gGL.begin(LLRender::TRIANGLES);
+    gl_polyline_2d_in_batch(points.data(), points.size(), color, width, closed);
+    gGL.end();
+    gGL.flush();
+}
+
+void gl_polyline_2d_in_batch(const LLVector2* points, size_t count, const LLColor4& color, F32 width, bool closed)
+{
     if (count < 2)
     {
         return;
@@ -276,11 +316,10 @@ void gl_polyline_2d(const std::vector<LLVector2>& points, const LLColor4& color,
 
     const size_t segments = closed ? count : count - 1;
 
-    // Per-vertex mitre normals, so consecutive segments share their corner
-    // vertices exactly and the ribbon has no notches at the joins.
-    std::vector<LLVector2> normals(count);
-    for (size_t i = 0; i < count; ++i)
-    {
+    // A vertex's mitre normal, so consecutive segments share their corner
+    // vertices exactly and the ribbon has no notches at the joins: worked
+    // out for each segment it ends, which keeps nothing to allocate.
+    const auto normal_at = [&](size_t i) {
         const bool has_prev = closed || i > 0;
         const bool has_next = closed || i + 1 < count;
 
@@ -316,8 +355,7 @@ void gl_polyline_2d(const std::vector<LLVector2>& points, const LLColor4& color,
         }
         if (n.lengthSquared() <= 0.f)
         {
-            normals[i].set(0.f, 0.f);
-            continue;
+            return LLVector2(0.f, 0.f);
         }
         n.normalize();
 
@@ -326,17 +364,11 @@ void gl_polyline_2d(const std::vector<LLVector2>& points, const LLColor4& color,
         const LLVector2& reference = (n_next.lengthSquared() > 0.f) ? n_next : n_prev;
         const F32 cos_half = n * reference;
         const F32 scale = (cos_half > 1.f / MITRE_LIMIT) ? (1.f / cos_half) : MITRE_LIMIT;
-        normals[i] = n * scale;
-    }
-
-    gGL.getTextureSlot(0)->unbind();
+        return n * scale;
+    };
 
     const LLColor4 edge(color.mV[VRED], color.mV[VGREEN], color.mV[VBLUE], 0.f);
 
-    // TRIANGLES rather than a strip: LLRender auto-flushes this mode on a
-    // multiple of three, so a long polyline cannot overrun the immediate-mode
-    // vertex buffer and lose its tail the way an unsplittable strip would.
-    gGL.begin(LLRender::TRIANGLES);
     for (size_t s = 0; s < segments; ++s)
     {
         const size_t i0 = s;
@@ -347,8 +379,8 @@ void gl_polyline_2d(const std::vector<LLVector2>& points, const LLColor4& color,
         {
             continue;
         }
-        const LLVector2& n0 = normals[i0];
-        const LLVector2& n1 = normals[i1];
+        const LLVector2 n0 = normal_at(i0);
+        const LLVector2 n1 = normal_at(i1);
 
         // Three bands per segment: the opaque core, and a fading skirt on
         // each side. The skirts are what actually anti-alias the edge.
@@ -373,8 +405,6 @@ void gl_polyline_2d(const std::vector<LLVector2>& points, const LLColor4& color,
             gGL.color4fv(cb.mV); gGL.vertex2f(b0.mV[VX], b0.mV[VY]);
         }
     }
-    gGL.end();
-    gGL.flush();
 }
 
 void gl_polyfill_2d(const std::vector<LLVector2>& points, F32 baseline_y, const LLColor4& color)

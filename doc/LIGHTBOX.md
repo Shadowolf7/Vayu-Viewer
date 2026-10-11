@@ -25,7 +25,7 @@ statics), so edits preview live with no glue code.
 | Scene tab (quality/performance) | `.../panel_lightbox_scene.xml` |
 | Sky tab (environment + client-side sky effects) | `.../panel_lightbox_sky.xml` |
 | Day cycle landmark search | `indra/newview/aldaycyclelandmarks.{h,cpp}` |
-| The C++ (callbacks, Vec3 binder, section reset, Looks bar) | `indra/newview/alfloaterlightbox.{h,cpp}` |
+| The C++ (callbacks, named resets, section reset, Looks bar) | `indra/newview/alfloaterlightbox.{h,cpp}` |
 | Where every section and setting is, found once | `indra/newview/allightboxdirectory.{h,cpp}` |
 | Looks preset system + whitelist | `indra/newview/llpresetsmanager.{h,cpp}` |
 | Bundled starter Looks | `indra/newview/app_settings/looks/` |
@@ -87,17 +87,14 @@ That is the real contract, and the distinction matters when you plan work:
 The floater's C++ provides:
 
 - `LightBox.ResetControlDefault` — per-row reset; `parameter` = setting name.
-  Dropdown, colour and vector rows call it from their reset buttons; setting
-  rows reach the same function through `setResetHandler`, set in `postBuild`.
+  Dropdown and colour rows call it from their reset buttons. Setting rows --
+  scalar, vector and one part of a vector alike -- are given a handler in
+  `postBuild` (`resetRow`) that names the step the same way and has the row
+  reset what it shows: the whole setting, or its part.
 - `LightBox.ResetSection` — data-driven section reset; `parameter` = `sec_<id>`.
   It walks the panels named `sec_<id>` and `sec_<id>_adv`, collects every
-  descendant's bound control (plus settings named by `vec3_*` spinners), and
-  resets them. New rows enroll automatically.
-- `LightBox.CommitVec3` — the component binder for Vector3/Color3 settings,
-  driven entirely by the widget naming contract `vec3_<SettingName>_<0|1|2>`.
-  `postBuild` discovers the widgets, seeds them, and keeps them synced with
-  the control both ways. Partial exposure is supported: expose only the
-  meaningful components and the binder preserves the rest on write.
+  descendant's bound control (and the settings its graphs edit), and resets
+  them. New rows enroll automatically.
   **Any `LLUICtrl` will do** — the name is the whole contract, so a bank of
   related values can be sliders rather than spinners. Prefer sliders for a
   bank: eight hue sliders in a column read as a shape, and you can see at a
@@ -194,6 +191,7 @@ persist — declare everything you expose).
  height="{PANEL_HEIGHT + 29}"
  name="atab_sec_myfx"
  title="My Effect"
+ header_tool_tip="What the section is for, in a sentence: what it does to the picture and what is in it."
  fit_panel="true">
     <panel
      follows="all"
@@ -219,6 +217,13 @@ persist — declare everything you expose).
 
 The essentials section's Reset All resets the Advanced sibling too (the walker
 includes `sec_<id>_adv`); the sibling's own button uses `parameter="sec_myfx_adv"`.
+
+Every section says what it is for in `header_tool_tip`, shown over its header
+only. Not `tool_tip` on the tab: `LLView::handleToolTip` offers a parent's
+tooltip before its children's, so one on the tab pops up over every caption
+and gap in the section that has no tooltip of its own — the same reason the
+tab pages' tooltips are moved onto their tab buttons (§4g). A title the header
+cuts short is put in full ahead of it.
 
 ### 3b. A switch on the section header (optional)
 
@@ -286,7 +291,7 @@ taller than a slider); later rows chain with `top_pad`. Every value row gets an
  max_val="1" name="myfx_strength" tool_tip="..." control_name="RenderMyFxStrength" />
 ```
 
-`setting_row` (`indra/llui/alsettingrow.{h,cpp}`, tested by
+`setting_row` (`indra/llui/fields/alsettingrow.{h,cpp}`, tested by
 `alsettingrow_test`) is the slider and its reset glyph as one widget, and it
 takes the slider's attributes by the slider's names. What it does for you:
 
@@ -315,8 +320,8 @@ Every scalar row on the four tabs is a `setting_row`. The form they replaced —
 (`top_pad="-17"`, `LightBox.ResetControlDefault` with the setting repeated as
 its `parameter`) — still works, but do not add one: it is two widgets to lay out
 against each other and a setting name to keep in step by hand. A slider that is
-*not* a scalar row (a vector bank's component, or one driven from C++ like the
-day cycle's time) stays a plain `slider`.
+*not* a row (one driven from C++, like the day cycle's time) stays a plain
+`slider`.
 
 **Checkbox row** (no reset glyph): `check_box` with `control_name`,
 `top_pad="10"` after a button, `top_pad="8"` after another checkbox.
@@ -338,28 +343,25 @@ pick as one undo step. Its "Full picker..." button is the way on to the
 viewer's own picker, for typed values and the eyedropper. Keep tints within
 0-1: the inline picker's tracks stop there.
 
-**Vector row**: label `text` (width 110, `top_pad="10"`) + spinners named
-`vec3_<Setting>_<0|1|2>` at `left_delta="110" top_pad="-16" width="68"
-height="18"` (then `left_delta="72" top_delta="0"`), each with per-axis
-`min_val`/`max_val` and `<spinner.commit_callback function="LightBox.CommitVec3" />`,
-+ one reset glyph (`top_delta="0"`, parameter = the setting). Setting names
-contain no underscores, so the name parse is unambiguous. Omit components that
-are unused — label the ones you keep by meaning.
+**Vector row**: a `setting_row` given `components` -- the letters its parts go
+by, `components="R G B"` or `"X Y"` -- with `label_width="110"` and the row's
+usual `top_pad`, `min_val`/`max_val`, `increment` and `decimal_digits` for every
+part. The row is the caption and a box per part, 68 wide, each named by its
+letter; a letter wider than one (`"P1 P2"`) takes `letter_width="18"`. Name only
+the parts that mean something: a box typed in writes its part and the row keeps
+the rest of the setting as it stands. The reset glyph is the row's own, shown
+while a part it shows differs.
 
-Give each spinner its channel letter as `label` (`label_width="10"`) and
-`scrub="true"`: dragging the letter sideways changes the value, 4px per
-increment, with Shift for 0.01×, Ctrl for 0.1× and Alt for 10×. Undo folds a
-whole scrub into one step on its own, because every move writes the same
-setting. Leave `scrub` off a spinner **without** a label: the drag then moves
-onto its arrow buttons, and they lose hold-to-repeat. The two SSAO spinners on
-the Scene tab have no label, their caption being the text beside them, so they
-do not scrub.
+Dragging a letter sideways changes the value, 4px per increment, with Shift for
+0.01×, Ctrl for 0.1× and Alt for 10×. Undo folds a whole scrub into one step on
+its own, because every move writes the same setting.
 
-A **bank** of the same component across many settings is the other shape this
-supports, and it wants ordinary slider rows rather than the compact spinner
-layout: one section per component, one slider per setting, named
-`vec3_<Setting>_<n>` with a `<slider.commit_callback>`. Nothing but XUI is
-involved either way.
+**One part of a vector** as a row of its own -- each part with its own caption
+and tip, as the Scene tab's occlusion value and saturation are -- is a
+`setting_row` given `part="<n>"`: a slider over that part, which writes,
+compares and resets that part alone. A **bank** of the same component across
+many settings is the same thing: one section per component, one part row per
+setting. Nothing but XUI is involved either way.
 
 **Group headers** (inside a long Advanced panel): a `view_border`
 (`bevel_style="none" height="0"`, `top_pad="12"`) then a bold `text`
@@ -382,8 +384,8 @@ editable channel fields, all driving one Vector3 setting.
  control_name="RenderColorGradeLift" />
 ```
 
-- Binds through plain `control_name`, **not** the `vec3_*` contract: the widget
-  handles a three-element LLSD array in `setValue`/`getValue`, which is all
+- Binds through plain `control_name`, as a vector row does: the widget handles
+  a three-element LLSD array in `setValue`/`getValue`, which is all
   `LLUICtrl::setControlVariable` needs to wire both directions.
 - `centre`/`min_value`/`max_value` describe the setting: lift is 0 over
   [-0.5, 0.5]; gamma and gain are 1 over [0.5, 1.5]; a split-tone tint is 0.5
@@ -1038,9 +1040,8 @@ itself in one of the ways it understands, in this order:
    wheel's `label` (a text box the control holds and names `...label`).
 2. Otherwise a `text` on the same line to its left: the row's middle falls
    within the text's height and the text ends at the control's left edge. This
-   is how dropdown, colour and vector rows are captioned already. A vector
-   row's spinners are captioned this way even though they have labels, because
-   their labels are channel letters.
+   is how dropdown and colour rows are captioned already. A setting row -- a
+   vector's too -- says its own caption.
 3. Otherwise, for a switch on a section header, the section's title.
 4. Otherwise the setting's key made into words — the `Render`/`Alchemy` prefix
    dropped and the words split, so `RenderReferenceWipeMode` reads "Reference
@@ -1222,7 +1223,10 @@ only; apply per row, not on the parent panel. Reference patterns:
   Advanced section apply while `RenderHDREnabled` is on (on GL above 4.05, the
   pipeline's own test), and so do Cross Filter and its Advanced section, which
   streak what the bloom pyramid holds; Glow (Legacy) and its Advanced section
-  apply while it is off. An effect that only runs on one side of the fork
+  apply while it is off. Cross Filter also needs a texture barrier, so on a
+  driver with neither GL 4.5 nor a texture barrier extension its sections stay
+  hidden under HDR too, as the renderer leaves it off there. An effect that only
+  runs on one side of the fork, or only with some capability,
   belongs in the table in `refreshBloomSections()`, not just behind an
   `enabled_control`. `refreshBloomSections()` hides the other side's accordion tabs
   and re-arranges the accordion, live on the setting's signal. A tab's
@@ -1288,7 +1292,7 @@ Any plain `slider` with `max_val` below 1.0 (or ≤ 0) **must** set an explicit
 `text_width` (56 fits a signed 4-decimal value). Without it `LLSliderCtrl`
 auto-sizes the value box from `log10(max_value)` and truncates the number. A
 `setting_row` works the width out itself in exactly those cases (§4), so this
-is only for sliders that are not rows — vector-bank sliders, for instance.
+is only for sliders that are not rows.
 
 ### 8. Cadence and tooltips
 
@@ -1405,9 +1409,11 @@ deleted stays deleted. Nothing is ever copied over a file that already exists.
 - For a new row: Ctrl+F, type its caption, and confirm it is listed under the
   name its row shows (not its setting key — §4i says what a row needs for that)
   and that Return lands on it, scrolled into view with its caption lit.
+- For a new section: hover its header and confirm its `header_tool_tip`
+  appears, then hover a gap in its panel and confirm nothing does.
 - For anything on an accordion header: click it and confirm the section does
   **not** expand or collapse, then hover it with the section expanded and
-  confirm its own tooltip appears rather than the title's. Those are the two
+  confirm its own tooltip appears rather than the section's. Those are the two
   interceptions in §3b, and the tooltip one only shows up when expanded — test
   it collapsed and it will look fine.
 - If you added a print effect: take a snapshot with "No post-processing" ticked

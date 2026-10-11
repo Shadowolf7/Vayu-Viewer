@@ -2529,7 +2529,13 @@ S32 LLVOVolume::setTEMaterialID(const U8 te, const LLMaterialID& pMaterialID)
     LL_DEBUGS("MaterialTEs") << " " << pMaterialID.asString() << LL_ENDL;
     if (res)
     {
-        LLMaterialMgr::instance().getTE(getRegion()->getRegionID(), pMaterialID, te, boost::bind(&LLVOVolume::setTEMaterialParamsCallbackTE, getID(), _1, _2, _3));
+        // A client-only object's params are set on it directly; no sim ever
+        // gives it a material id, and resolving the null one it keeps would
+        // replace them with no material when its faces are deselected.
+        if (!isLocalOnly())
+        {
+            LLMaterialMgr::instance().getTE(getRegion()->getRegionID(), pMaterialID, te, boost::bind(&LLVOVolume::setTEMaterialParamsCallbackTE, getID(), _1, _2, _3));
+        }
 
         setChanged(ALL_CHANGED);
         if (!mDrawable.isNull())
@@ -4014,40 +4020,6 @@ void LLVOVolume::updateRiggingInfo()
 
 //----------------------------------------------------------------------------
 
-void LLVOVolume::generateSilhouette(LLSelectNode* nodep, const LLVector3& view_point)
-{
-    LLVolume *volume = getVolume();
-
-    if (volume)
-    {
-        LLVector3 view_vector;
-        view_vector = view_point;
-
-        //transform view vector into volume space
-        view_vector -= getRenderPosition();
-        //mDrawable->mDistanceWRTCamera = view_vector.length();
-        LLQuaternion worldRot = getRenderRotation();
-        view_vector = view_vector * ~worldRot;
-        if (!isVolumeGlobal())
-        {
-            LLVector3 objScale = getScale();
-            LLVector3 invObjScale(1.f / objScale.mV[VX], 1.f / objScale.mV[VY], 1.f / objScale.mV[VZ]);
-            view_vector.scaleVec(invObjScale);
-        }
-
-        updateRelativeXform();
-        LLMatrix4 trans_mat = mRelativeXform;
-        if (mDrawable->isStatic())
-        {
-            trans_mat.translate(getRegion()->getOriginAgent());
-        }
-
-        volume->generateSilhouetteVertices(nodep->mSilhouetteVertices, nodep->mSilhouetteNormals, view_vector, trans_mat, mRelativeXformInvTrans, nodep->getTESelectMask());
-
-        nodep->mSilhouetteExists = true;
-    }
-}
-
 void LLVOVolume::deleteFaces()
 {
     S32 face_count = mNumFaces;
@@ -4611,6 +4583,7 @@ void LLVOVolume::updateReflectionProbePtr()
     {
         if (mReflectionProbe.notNull())
         {
+            mReflectionProbe->orphan();
             mReflectionProbe = nullptr;
         }
 

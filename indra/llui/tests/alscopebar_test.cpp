@@ -24,7 +24,7 @@
 
 #include "linden_common.h"
 
-#include "../alscopebar.h"
+#include "alscopebar.h"
 
 #include "../llcombobox.h"
 #include "../lllineeditor.h"
@@ -36,13 +36,6 @@
 #include "alheadlessui_fixture.h"
 
 #include "../test/lltut.h"
-
-class LLAvatarName;
-const std::string gScopeTestAnonName("Anon");
-const std::string& rlvGetAnonym(const LLAvatarName& av_name)
-{
-    return gScopeTestAnonName;
-}
 
 namespace tut
 {

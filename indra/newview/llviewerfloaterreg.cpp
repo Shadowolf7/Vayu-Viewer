@@ -39,6 +39,8 @@
 #include "alfloaterdirectory.h"
 #include "alfloaterevent.h"
 #include "alfloaterexploresounds.h"
+#include "alfloaterfeedback.h"
+#include "alfloaterfeedbackpreview.h"
 #include "alfloatergenerictext.h"
 #include "alfloatergroupprofile.h"
 #include "alfloaterlightbox.h"
@@ -50,6 +52,7 @@
 #include "alfloatertransactionlog.h"
 #include "alfloaterwebprofile.h"
 #include "allegacynotificationwellwindow.h"
+#include "alrecovery.h"
 
 #include "fsfloaterposer.h" // <FS:AR> [FIRE-30873]: Poser
 #include "fsfloaterposestand.h"
@@ -59,9 +62,6 @@
 #include "llfloater360capture.h"
 #include "llfloaterabout.h"
 #include "llfloaterauction.h"
-// [SL:KB] - Patch: Build-AssetRecovery | Checked: 2011-11-24 (Catznip-3.2)
-#include "llfloaterassetrecovery.h"
-// [/SL:KB]
 #include "llfloaterautoreplacesettings.h"
 #include "llfloateravatarpicker.h"
 #include "llfloateravatarwelcomepack.h"
@@ -165,11 +165,7 @@
 #include "llfloatersceneloadstats.h"
 #include "llfloaterscripting.h"
 #include "llfloaterscriptdebug.h"
-#include "llfloaterscriptedprefs.h"
 #include "llfloaterscriptlimits.h"
-// [SL:KB] - Patch: UI-FloaterSearchReplace | Checked: 2010-10-26 (Catznip-2.3)
-#include "llfloatersearchreplace.h"
-// [/SL:KB]
 #include "llfloatersellland.h"
 #include "llfloatersettingscolor.h"
 #include "llfloatersettingsdebug.h"
@@ -185,6 +181,8 @@
 #include "llfloatertos.h"
 #include "llfloatertoybox.h"
 #include "llfloatertranslationsettings.h"
+#include "alscriptstudio.h"
+#include "alfloaterscriptpreferences.h"
 #include "alfloaterxuistudio.h"
 #include "alfloaterxuilibrary.h"
 #include "llfloaterwebcontent.h"
@@ -207,7 +205,6 @@
 #include "llpreviewanim.h"
 #include "llpreviewgesture.h"
 #include "llpreviewnotecard.h"
-#include "llpreviewscript.h"
 #include "llpreviewsound.h"
 #include "llpreviewtexture.h"
 #include "llscriptfloater.h"
@@ -247,6 +244,8 @@ public:
             const std::list<std::string> blacklist_clicked = {
                 "camera_presets",
                 "delete_pref_preset",
+                "feedback", // A link must not say what a report is about.
+                "feedback_preview",
                 "forget_username",
                 "god_tools",
                 "group_picker",
@@ -263,7 +262,6 @@ public:
                 "upload_anim_anim",
                 "upload_image",
                 "upload_model",
-                "upload_script",
                 "upload_sound",
                 "bulk_upload"
             };
@@ -285,6 +283,8 @@ public:
                 "env_fixed_environmentent_water",
                 "env_fixed_environmentent_sky",
                 "env_edit_extdaycycle",
+                "feedback",
+                "feedback_preview",
                 "font_test",
                 "forget_username",
                 "god_tools",
@@ -311,7 +311,6 @@ public:
                 "upload_anim_anim",
                 "upload_image",
                 "upload_model",
-                "upload_script",
                 "upload_sound",
                 "bulk_upload",
                 "slapp_test"
@@ -505,15 +504,15 @@ void LLViewerFloaterReg::registerFloaters()
     LLFloaterReg::add("preview_conversation", "floater_conversation_preview.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLFloaterConversationPreview>);
     LLFloaterReg::add("preview_gesture", "floater_preview_gesture.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLPreviewGesture>, "preview");
     LLFloaterReg::add("preview_notecard", "floater_preview_notecard.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLPreviewNotecard>, "preview");
-    LLFloaterReg::add("preview_script", "floater_script_preview.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLPreviewLSL>, "preview");
-    LLFloaterReg::add("preview_scriptedit", "floater_live_lsleditor.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLLiveLSLEditor>, "preview");
+    // What the notecard window kept against a crash goes back to it; a
+    // script's, to Script Studio.
+    ALRecovery::takeWindowsTo([](const ALRecoveryEntry& entry) { return entry.notecard && LLPreviewNotecard::recover(entry); });
     LLFloaterReg::add("preview_sound", "floater_preview_sound.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLPreviewSound>, "preview");
     LLFloaterReg::add("preview_texture", "floater_preview_texture.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLPreviewTexture>, "preview");
     LLFloaterReg::add("preview_trash", "floater_preview_trash.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLFloaterPreviewTrash>);
     LLFloaterReg::add("publish_classified", "floater_publish_classified.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLFloaterPublishClassified>);
     LLFloaterReg::add("save_pref_preset", "floater_save_pref_preset.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLFloaterSavePrefPreset>);
     LLFloaterReg::add("save_camera_preset", "floater_save_camera_preset.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLFloaterSaveCameraPreset>);
-    LLFloaterReg::add("script_colors", "floater_script_ed_prefs.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLFloaterScriptEdPrefs>);
 
     LLFloaterReg::add("material_editor", "floater_material_editor.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLMaterialEditor>);
     LLFloaterReg::add("live_material_editor", "floater_live_material_editor.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLMaterialEditor>);
@@ -566,13 +565,14 @@ void LLViewerFloaterReg::registerFloaters()
     LLFloaterReg::add("profile", "floater_profile.xml",(LLFloaterBuildFunc)&LLFloaterReg::build<LLFloaterProfile>);
     LLFloaterReg::add("slapp_test", "floater_test_slapp.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLFloaterSLappTest>);
 
+    LLFloaterReg::add("script_studio", "floater_script_studio.xml", &ALScriptStudio::build);
+    LLFloaterReg::add("script_studio_prefs", "floater_script_studio_prefs.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<ALFloaterScriptPreferences>);
     LLFloaterReg::add("xui_studio", "floater_xui_studio.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<ALFloaterXUIStudio>);
     LLFloaterReg::add("xui_library", "floater_xui_library.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<ALFloaterXUILibrary>);
     LLFloaterReg::add("upload_anim_bvh", "floater_animation_bvh_preview.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLFloaterBvhPreview>, "upload");
     LLFloaterReg::add("upload_anim_anim", "floater_animation_anim_preview.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLFloaterAnimPreview>, "upload");
     LLFloaterReg::add("upload_image", "floater_image_preview.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLFloaterImagePreview>, "upload");
     LLFloaterReg::add("upload_model", "floater_model_preview.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLFloaterModelPreview>, "upload");
-    LLFloaterReg::add("upload_script", "floater_script_preview.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLFloaterScriptPreview>, "upload");
     LLFloaterReg::add("upload_sound", "floater_sound_preview.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLFloaterSoundPreview>, "upload");
 
     LLFloaterReg::add("web_content", "floater_web_content.xml", (LLFloaterBuildFunc)&LLFloaterWebContent::create);
@@ -583,15 +583,14 @@ void LLViewerFloaterReg::registerFloaters()
     // Alchemy Floaters
     LLFloaterReg::add("ao", "floater_ao.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<FloaterAO>);
     LLFloaterReg::add("asset_hex_editor", "floater_hex_editor.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLFloaterHexEditor>);
-// [SL:KB] - Patch: Build-AssetRecovery | Checked: 2011-11-24 (Catznip-3.2)
-    LLFloaterReg::add("asset_recovery", "floater_asset_recovery.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLFloaterAssetRecovery>);
-// [/SL:KB]
 // [SL:KB] - Patch: World-Derender | Checked: Catznip-3.2
     LLFloaterReg::add("blocked", "floater_al_blocked.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<ALFloaterBlocked>);
 // [/SL:KB]
     LLFloaterReg::add("chatbar", "floater_al_chatbar.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<ALChatBar>);
     LLFloaterReg::add("chat_alerts", "floater_chat_alerts.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLFloaterChatAlerts>);
     LLFloaterReg::add("delete_queue", "floater_script_queue.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLFloaterDeleteQueue>);
+    LLFloaterReg::add("feedback", "floater_al_feedback.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<ALFloaterFeedback>);
+    LLFloaterReg::add("feedback_preview", "floater_al_feedback_preview.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<ALFloaterFeedbackPreview>);
     LLFloaterReg::add("generic_text", "floater_al_generic_text.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<ALFloaterGenericText>);
     LLFloaterReg::add("group_profile", "floater_al_group_profile.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<ALFloaterGroupProfile>);
     LLFloaterReg::add("legacy_profile", "floater_al_profile_legacy.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<ALFloaterProfileLegacy>);
@@ -605,9 +604,6 @@ void LLViewerFloaterReg::registerFloaters()
     LLFloaterReg::add("progress_view", "floater_al_progress_view.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<ALFloaterProgressView>);
     LLFloaterReg::add("quick_settings", "floater_quick_settings.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLFloater>);
     LLFloaterReg::add("region_tracker", "floater_al_region_tracker.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<ALFloaterRegionTracker>);
-// [SL:KB] - Patch: UI-FloaterSearchReplace | Checked: 2010-10-26 (Catznip-2.3)
-    LLFloaterReg::add("search_replace", "floater_search_replace.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<LLFloaterSearchReplace>);
-// [/SL:KB]
     LLFloaterReg::add("sound_explorer", "floater_explore_sounds.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<ALFloaterExploreSounds>);
     LLFloaterReg::add("transaction_log", "floater_al_transaction_log.xml", (LLFloaterBuildFunc)&LLFloaterReg::build<ALFloaterTransactionLog>);
     LLFloaterReg::add("webprofile", "floater_al_web_profile.xml", (LLFloaterBuildFunc)&ALFloaterWebProfile::create);

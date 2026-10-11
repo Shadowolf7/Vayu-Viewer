@@ -86,6 +86,28 @@ const F32 DROP_SHADOW_SOFT_STRENGTH = 0.3f;
 
 namespace
 {
+    // A batch of glyph quads on its way to the GL. A drawing thread keeps
+    // one on the heap: as thread_local arrays a batch was 20 KB of static
+    // TLS, which glibc takes out of the stack of every thread, those that
+    // never draw a glyph too, and FMOD's mixer was left too little to run.
+    template<S32 VERTICES>
+    struct GlyphBatch
+    {
+        LLVector4a vertices[VERTICES];
+        LLVector2  uvs[VERTICES];
+        LLColor4U  colors[VERTICES];
+    };
+
+    template<S32 VERTICES>
+    GlyphBatch<VERTICES>& thread_glyph_batch(std::unique_ptr<GlyphBatch<VERTICES>>& batch)
+    {
+        if (!batch)
+        {
+            batch = std::make_unique<GlyphBatch<VERTICES>>();
+        }
+        return *batch;
+    }
+
     // Slice-local result of itemizing + shaping a measurement window. Every
     // position here is a byte offset. Each
     // pair in `ranges` is [first, second) within `slice`; `glyphs[i]` points
@@ -152,6 +174,35 @@ namespace
                 cur_x = (F32)ll_round(cur_x);
         }
         return no_padding ? cur_x : (cur_x + padding);
+    }
+
+    // Where a glyph's bitmap lands for a given pen position: the integer
+    // pixel and the subpixel phase, decided together so that a fraction close
+    // to one bumps the pixel rather than leaving the bitmap a pixel off the
+    // position its phase was rasterized for.
+    void place_glyph(const LLFontGlyphInfo* gi, F32 pen, U8& phase, S32& dest_int_x)
+    {
+        if (gi->mPhaseCount > 1)
+        {
+            const F32 frac_x = pen - floorf(pen);
+            const U32 raw =
+                (U32)floorf(frac_x * (F32)LLFontGlyphInfo::kNumPhases + 0.5f);
+            if (raw >= LLFontGlyphInfo::kNumPhases)
+            {
+                phase = 0;
+                dest_int_x = (S32)floorf(pen) + 1;
+            }
+            else
+            {
+                phase = (U8)raw;
+                dest_int_x = (S32)floorf(pen);
+            }
+        }
+        else
+        {
+            phase = 0;
+            dest_int_x = ll_round(pen);
+        }
     }
 
     // Build the shape layout for `slice` against `root_face`. One
@@ -636,9 +687,11 @@ S32 LLFontGL::renderBytes(std::string_view utf8text, S32 begin_offset, F32 x, F3
     // single-glyph path) and at 720 vertices per batch fills GL submit
     // payloads that 30 was leaving on the table.
     static constexpr S32 GLYPH_BATCH_SIZE = 120;
-    static thread_local LLVector4a vertices[GLYPH_BATCH_SIZE * 6];
-    static thread_local LLVector2 uvs[GLYPH_BATCH_SIZE * 6];
-    static thread_local LLColor4U colors[GLYPH_BATCH_SIZE * 6];
+    static thread_local std::unique_ptr<GlyphBatch<GLYPH_BATCH_SIZE * 6>> glyph_batch;
+    auto& batch = thread_glyph_batch(glyph_batch);
+    LLVector4a* const vertices = batch.vertices;
+    LLVector2* const uvs = batch.uvs;
+    LLColor4U* const colors = batch.colors;
 
     // Italic slant_offset depends only on style; hoist it out of the per-glyph
     // path so drawGlyphShadow/drawGlyphForeground don't recompute it.
@@ -751,34 +804,11 @@ S32 LLFontGL::renderBytes(std::string_view utf8text, S32 begin_offset, F32 x, F3
         }
     };
 
-    // Where a glyph's bitmap lands for a given pen position. Shared so the
-    // cluster measurement below and the emission that follows it cannot drift
-    // apart: they have to agree on the subpixel phase, since the phase decides
-    // which slot is consulted and so how wide the glyph is.
-    auto place_glyph = [](const LLFontGlyphInfo* gi, F32 pen, U8& phase, S32& dest_int_x)
-    {
-        if (gi->mPhaseCount > 1)
-        {
-            const F32 frac_x = pen - floorf(pen);
-            const U32 raw =
-                (U32)floorf(frac_x * (F32)LLFontGlyphInfo::kNumPhases + 0.5f);
-            if (raw >= LLFontGlyphInfo::kNumPhases)
-            {
-                phase = 0;
-                dest_int_x = (S32)floorf(pen) + 1;
-            }
-            else
-            {
-                phase = (U8)raw;
-                dest_int_x = (S32)floorf(pen);
-            }
-        }
-        else
-        {
-            phase = 0;
-            dest_int_x = ll_round(pen);
-        }
-    };
+    // Where a glyph's bitmap lands for a given pen position: place_glyph,
+    // shared by the cluster measurement below, the emission that follows
+    // it, and renderGlyphs, so none of them can drift apart on the subpixel
+    // phase, which decides which slot is consulted and so how wide the
+    // glyph is.
 
     // Itemize + shape the slice via the shared helper. Strict-monospace
     // gets emoji-cluster ranges so ASCII keeps the codepoint path's exact
@@ -1131,6 +1161,169 @@ S32 LLFontGL::renderUTF8(std::string_view text, S32 begin_offset, S32 x, S32 y, 
 S32 LLFontGL::renderUTF8(std::string_view text, S32 begin_offset, S32 x, S32 y, const LLColor4 &color, HAlign halign, VAlign valign, U8 style, ShadowType shadow) const
 {
     return renderUTF8(text, begin_offset, (F32)x, (F32)y, color, halign, valign, style, shadow);
+}
+
+void LLFontGL::renderGlyphs(const Placed* glyphs, const LLColor4U* colors, size_t count, F32 x, F32 y, U8 style) const
+{
+    const GlyphRun run{ glyphs, colors, count, x, y };
+    renderGlyphRuns(&run, 1, style);
+}
+
+void LLFontGL::renderGlyphRuns(const GlyphRun* runs, size_t run_count, U8 style) const
+{
+    LL_PROFILE_ZONE_SCOPED_CATEGORY_UI;
+    if (!sDisplayFont || run_count == 0 || !mFontFreetype)
+    {
+        return;
+    }
+    // Only what this face cannot draw for itself is added by hand.
+    const U8             style_to_add = (style | mFontDescriptor.getStyle()) & ~mFontFreetype->getStyle();
+    const F32            slant_offset = (style_to_add & ITALIC) ? (-mFontFreetype->getAscenderHeight() * 0.2f) : 0.f;
+    const EFontGlyphType glyph_type   = sForceMonochromeEmoji ? EFontGlyphType::Grayscale : EFontGlyphType::Color;
+
+    ALTextTransform transform;
+    gGL.setSceneBlendType(LLRender::BT_ALPHA);
+
+    static constexpr S32           GLYPH_BATCH_SIZE = 120;
+    static thread_local std::unique_ptr<GlyphBatch<GLYPH_BATCH_SIZE * 6>> glyph_batch;
+    auto&                          batch        = thread_glyph_batch(glyph_batch);
+    LLVector4a* const              vertices     = batch.vertices;
+    LLVector2* const               uvs          = batch.uvs;
+    LLColor4U* const               batch_colors = batch.colors;
+    S32                            glyph_count = 0;
+
+    // The atlas the pending quads were built against, re-bound at every
+    // submit for the reason renderBytes gives: rasterizing a missed glyph
+    // between accumulation and flush leaves another sheet bound.
+    const ALFontFace*              current_face      = nullptr;
+    const LLFontBitmapCache*       font_bitmap_cache = nullptr;
+    LLImageGL*                     batch_image       = nullptr;
+    std::pair<EFontGlyphType, S32> bitmap_entry      = std::make_pair(EFontGlyphType::Grayscale, -1);
+    F32                            inv_width         = 0.f;
+    F32                            inv_height        = 0.f;
+
+    auto flush_batch = [&]()
+    {
+        if (glyph_count > 0)
+        {
+            if (batch_image)
+            {
+                gGL.getTextureSlot(0)->bindSampled(batch_image, ALSamplers::PointWrap);
+            }
+            gGL.begin(LLRender::TRIANGLES);
+            gGL.vertexBatchPreTransformed(vertices, uvs, batch_colors, glyph_count * 6);
+            gGL.end();
+            glyph_count = 0;
+        }
+    };
+    auto use_atlas = [&](const ALFontFace* face, std::pair<EFontGlyphType, S32> entry)
+    {
+        if (face == current_face && entry == bitmap_entry)
+        {
+            return;
+        }
+        flush_batch();
+        bitmap_entry = entry;
+        if (face != current_face)
+        {
+            current_face      = face;
+            font_bitmap_cache = current_face ? current_face->getBitmapCache() : nullptr;
+            if (font_bitmap_cache)
+            {
+                inv_width  = 1.f / font_bitmap_cache->getBitmapWidth();
+                inv_height = 1.f / font_bitmap_cache->getBitmapHeight();
+            }
+        }
+        batch_image = font_bitmap_cache ? font_bitmap_cache->getImageGL(bitmap_entry.first, bitmap_entry.second) : nullptr;
+        if (batch_image)
+        {
+            gGL.getTextureSlot(0)->bindSampled(batch_image, ALSamplers::PointWrap);
+        }
+    };
+
+    for (size_t r = 0; r < run_count; ++r)
+    {
+        const GlyphRun&  run    = runs[r];
+        const LLColor4U* colors = run.colors;
+        const F32        base_x = run.x * sScaleX;
+        const F32        base_y = run.y * sScaleY;
+        for (size_t i = 0; i < run.count; ++i)
+        {
+            const Placed& g = run.glyphs[i];
+            if (!g.face)
+            {
+                continue;
+            }
+            // The cache lives on the root face and its atlas; the glyph's own
+            // face is only where it came from.
+            const LLFontGlyphInfo* gi = mFontFreetype->getGlyphInfoByIndex(g.face, g.glyph_id, glyph_type);
+            if (!gi)
+            {
+                continue;
+            }
+            const F32 pen_x = base_x + g.x * sScaleX;
+            const F32 pen_y = base_y + g.y * sScaleY;
+            U8        phase;
+            S32       dest_int_x;
+            place_glyph(gi, pen_x, phase, dest_int_x);
+            const auto& slot = gi->mPhaseSlots[phase];
+            use_atlas(gi->mSourceFace, slot.mBitmapEntry);
+            if (!batch_image)
+            {
+                continue;
+            }
+            const F32     glyph_x = (F32)(dest_int_x + slot.mXBearing);
+            const F32     glyph_y = (F32)ll_round(pen_y) + (F32)slot.mYBearing;
+            const LLRectf uv_rect(slot.mXBitmapOffset * inv_width,
+                                  (slot.mYBitmapOffset + slot.mHeight + PAD_UVY) * inv_height,
+                                  (slot.mXBitmapOffset + slot.mWidth) * inv_width,
+                                  (slot.mYBitmapOffset - PAD_UVY) * inv_height);
+            const LLRectf screen_rect(glyph_x, glyph_y, glyph_x + (F32)slot.mWidth, glyph_y - (F32)slot.mHeight);
+            if (glyph_count >= GLYPH_BATCH_SIZE)
+            {
+                flush_batch();
+            }
+            // A colour glyph carries its own colours and takes only the alpha.
+            const LLColor4U color = bitmap_entry.first == EFontGlyphType::Grayscale
+                                        ? colors[i]
+                                        : LLColor4U(255, 255, 255, colors[i].mV[VALPHA]);
+            drawGlyphForeground(glyph_count, vertices, uvs, batch_colors, screen_rect, uv_rect, color, style_to_add, slant_offset);
+        }
+    }
+    flush_batch();
+}
+
+F32 LLFontGL::placeGlyphs(std::string_view text, HAlign halign, std::vector<Placed>& out) const
+{
+    out.clear();
+    if (!mFontFreetype || text.empty())
+    {
+        return 0.f;
+    }
+    // Shaped and measured as renderBytes shapes and measures it: the width a
+    // right-aligned or centred string is moved back by is the same number.
+    const std::vector<ALShapedGlyph>& shaped       = ALFontShaping::shapeLine(mFontFreetype, text, 0, text.size());
+    const bool                        subpixel_pen = mFontFreetype->useSubpixelPen();
+    F32                               shift        = 0.f;
+    if (halign != LEFT)
+    {
+        const F32 unscaled = shaped_run_width(mFontFreetype, shaped, /*no_padding=*/false, subpixel_pen) / sScaleX;
+        const S32 scaled   = ll_round(unscaled * sScaleX);
+        shift              = static_cast<F32>(halign == RIGHT ? -scaled : -(scaled / 2));
+    }
+    // The pen moves as renderBytes moves it.
+    out.reserve(shaped.size());
+    F32 cur = 0.f;
+    for (const ALShapedGlyph& sg : shaped)
+    {
+        out.push_back(Placed{ sg.face, sg.glyph_id, (cur + sg.x_offset) / sScaleX, sg.y_offset / sScaleY });
+        cur += sg.x_advance;
+        if (!subpixel_pen)
+        {
+            cur = static_cast<F32>(ll_round(cur));
+        }
+    }
+    return shift / sScaleX;
 }
 
 // font metrics - override for LLFontFreetype that returns units of virtual pixels
@@ -1904,6 +2097,31 @@ std::vector<std::string> LLFontGL::getDeclaredFontNames()
     if (!sFontRegistry)
         return {};
     return sFontRegistry->getDeclaredFontNames();
+}
+
+// static
+F32 LLFontGL::pointsOf(const std::string& family, const std::string& size_name)
+{
+    F32 points = 0.f;
+    return sFontRegistry && sFontRegistry->nameToSize(family, size_name, points) ? points : 0.f;
+}
+
+// static
+LLFontGL* LLFontGL::getFontAtPoints(const std::string& family, F32 points, U8 style)
+{
+    if (!sFontRegistry || points <= 0.f)
+    {
+        return nullptr;
+    }
+    // Named for its points, so that each size is made once and every text
+    // at it shares the font.
+    const std::string name = llformat("%.1fpt", points);
+    F32               known = 0.f;
+    if (!sFontRegistry->nameToSize(name, known))
+    {
+        sFontRegistry->declareSize(name, points);
+    }
+    return getFont(LLFontDescriptor(family, name, style));
 }
 
 // static

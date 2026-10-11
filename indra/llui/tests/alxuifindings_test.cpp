@@ -24,16 +24,9 @@
 
 #include "linden_common.h"
 
-#include "../alxuifindings.h"
+#include "alxuifindings.h"
 
 #include "../test/lltut.h"
-
-class LLAvatarName;
-const std::string gFindingsTestAnonName("Anon");
-const std::string& rlvGetAnonym(const LLAvatarName& av_name)
-{
-    return gFindingsTestAnonName;
-}
 
 namespace tut
 {
@@ -96,7 +89,7 @@ namespace tut
         // A file with nothing to say is still a file that was looked at, and
         // that is not the same answer as one nobody has checked.
         ensure("one nobody checked", !store.checked("three.xml"));
-        store.replace("three.xml", {});
+        store.replace("three.xml", std::vector<ALXUILint::Finding>());
         ensure("one that was", store.checked("three.xml"));
         ensure_equals("with nothing in it", store.countIn("three.xml"), 0);
         ensure_equals("and nothing added to the whole", store.size(), 4u);
@@ -220,5 +213,29 @@ namespace tut
             total += count;
         }
         ensure_equals("and they add up to what is held", total, 4);
+    }
+    // Checked again, a file keeps its place among the files, and its
+    // findings theirs among everyone's: the file in front is re-checked on
+    // every rebuild, and its rows do not jump to the end of the list.
+    template<> template<>
+    void alxuifindings_object::test<6>()
+    {
+        ALXUIFindings store;
+        fill(store);
+        store.replace("three.xml", {
+            one(ALXUILint::Rule::Overlap, ALXUILint::Severity::Warning, "c", "overlaps d") });
+
+        store.replace("one.xml", {
+            one(ALXUILint::Rule::Overlap, ALXUILint::Severity::Warning, "a", "overlaps b") });
+        ensure("still first of the files", store.files() == std::vector<std::string>({ "one.xml", "two.xml", "three.xml" }));
+        const auto selected = store.select(ALXUIFindings::Query());
+        ensure_equals("three findings", selected.found.size(), size_t(3));
+        ensure_equals("its own first", selected.found.front()->what, std::string("a"));
+
+        // Let go of and checked again, it is a file checked anew, at the end.
+        store.forget("one.xml");
+        store.replace("one.xml", std::vector<ALXUILint::Finding>());
+        ensure("at the end", store.files() == std::vector<std::string>({ "two.xml", "three.xml", "one.xml" }));
+        ensure_equals("counted once", store.files().size(), size_t(3));
     }
 }

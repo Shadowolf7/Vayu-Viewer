@@ -24,20 +24,13 @@
 
 #include "linden_common.h"
 
-#include "../alxuitranslate.h"
+#include "alxuitranslate.h"
 
-#include "../alxuiedit.h"
+#include "alxuiedit.h"
 
 #include "../test/lltut.h"
 
 #include <pugixml.hpp>
-
-class LLAvatarName;
-const std::string gTranslateTestAnonName("Anon");
-const std::string& rlvGetAnonym(const LLAvatarName& av_name)
-{
-    return gTranslateTestAnonName;
-}
 
 namespace tut
 {

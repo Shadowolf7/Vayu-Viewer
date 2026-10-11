@@ -526,6 +526,10 @@ public:
     void registerInventoryListener(LLVOInventoryListener* listener, void* user_data);
     void removeInventoryListener(LLVOInventoryListener* listener);
     bool isInventoryPending();
+    // The last request for the inventory came back with an error, and
+    // what the listeners were told was nothing: not an object with
+    // nothing in it. Cleared by the next request.
+    bool isInventoryRequestFailed() const { return mInvRequestFailed; }
     void clearInventoryListeners();
     bool hasInventoryListeners();
     void requestInventory();
@@ -976,6 +980,7 @@ protected:
     EInventoryRequestState  mInvRequestState;
     U64                     mInvRequestXFerId;
     bool                    mInventoryDirty;
+    bool                    mInvRequestFailed = false;
 
     LLViewerRegion  *mRegionp;                  // Region that this object belongs to.
     bool            mDead;
@@ -1087,14 +1092,14 @@ public:
 inline void LLViewerObject::setRotation(const LLQuaternion& quat, bool damped)
 {
     LLPrimitive::setRotation(quat);
-    setChanged(ROTATED | SILHOUETTE);
+    setChanged(ROTATED);
     updateDrawable(damped);
 }
 
 inline void LLViewerObject::setRotation(const F32 x, const F32 y, const F32 z, bool damped)
 {
     LLPrimitive::setRotation(x, y, z);
-    setChanged(ROTATED | SILHOUETTE);
+    setChanged(ROTATED);
     updateDrawable(damped);
 }
 

@@ -30,6 +30,7 @@
 #include "lltut.h"
 #include "linden_common.h"
 #include "llfile.h"
+#include "lluuid.h"
 
 namespace tut
 {
@@ -45,21 +46,32 @@ namespace tut
         return path.append(element);
     }
 
-    static std::filesystem::path get_testdir(const std::filesystem::path& tempdir)
+    // Each named for its test alone, by `unique`: two runs at once, or a
+    // test that failed before it cleaned up, cannot meet another's files.
+    static std::filesystem::path get_testdir(const std::filesystem::path& tempdir, const std::string& unique)
     {
-        return append_filename(tempdir, std::u8string(u8"test_dir"));
+        return append_filename(tempdir, std::u8string(u8"test_dir_") + std::u8string(unique.begin(), unique.end()));
     }
 
-    static std::filesystem::path get_testdir_unicode(const std::filesystem::path& tempdir)
+    static std::filesystem::path get_testdir_unicode(const std::filesystem::path& tempdir, const std::string& unique)
     {
         // Example Unicode directory name: "test_ユニコード_dir"
-        return append_filename(tempdir, std::u8string(u8"test_\xE3\x83\xA6\xE3\x83\x8B\xE3\x82\xB3\xE3\x83\xBC\xE3\x83\x89_dir"));
+        return append_filename(tempdir, std::u8string(u8"test_\xE3\x83\xA6\xE3\x83\x8B\xE3\x82\xB3\xE3\x83\xBC\xE3\x83\x89_dir_") +
+                                            std::u8string(unique.begin(), unique.end()));
     }
 
     struct llfile_test
     {
+        std::string           unique = LLUUID::generateNewID().asString();
         std::filesystem::path tempdir = LLFile::tmpdir();
-        std::filesystem::path testdir = get_testdir(tempdir);
+        std::filesystem::path testdir = get_testdir(tempdir, unique);
+
+        // whatever a test leaves in its folders goes with it
+        ~llfile_test()
+        {
+            clear_entire_dir(testdir);
+            clear_entire_dir(get_testdir_unicode(tempdir, unique));
+        }
     };
     typedef test_group<llfile_test> llfile_test_t;
     typedef llfile_test_t::object   llfile_test_object_t;
@@ -159,6 +171,7 @@ namespace tut
         const size_t numints = 1024;
 
         // Testing the LLFile class implementation
+        LLFile::mkdir(testdir);
         std::filesystem::path testfile = testdir;
         testfile.append("llfile_test.bin");
 
@@ -228,6 +241,11 @@ namespace tut
         std::filesystem::path testfile = testdir;
         testfile.append("llfile_test.bin");
 
+        // a file already there, for noreplace to refuse
+        LLFile::mkdir(testdir);
+        const char* testdata = "testdata";
+        LLFile::write(testfile, testdata, 0, strlen(testdata));
+
         std::error_code ec;
         LLFile file(testfile, LLFile::out | LLFile::noreplace, ec);
         ensure("LLFile constructor should not have opened the already existing file", !file);
@@ -255,7 +273,7 @@ namespace tut
     void llfile_test_object_t::test<5>()
     {
         // Test file and directory operations with Unicode paths and filenames
-        std::filesystem::path testdir_unicode = get_testdir_unicode(tempdir);
+        std::filesystem::path testdir_unicode = get_testdir_unicode(tempdir, unique);
 
         // Unicode filename: "ファイル_テスト.bin" (means "file_test.bin" in Japanese)
         std::string unicode_filename = "\xE3\x83\x95\xE3\x82\xA1\xE3\x82\xA4\xE3\x83\xAB_\xE3\x83\x86\xE3\x82\xB9\xE3\x83\x88.bin";
@@ -295,5 +313,119 @@ namespace tut
         rc = LLFile::remove(testdir_unicode);
         ensure("LLFile::remove() failed for Unicode directory", rc == 0);
         ensure("Unicode test directory should not exist after removal", !LLFile::exists(testdir_unicode));
+    }
+
+    template<> template<>
+    void llfile_test_object_t::test<6>()
+    {
+        // Ordinary file names pass isSafeFileName()
+        ensure("xml", LLFile::isSafeFileName("lsl_keywords.xml"));
+        ensure("two extensions", LLFile::isSafeFileName("secondlife.d.luau"));
+        ensure("no extension", LLFile::isSafeFileName("keywords"));
+        ensure("inner dots", LLFile::isSafeFileName("a..b"));
+        ensure("inner space", LLFile::isSafeFileName("my file.txt"));
+        ensure("hidden", LLFile::isSafeFileName(".luaurc"));
+        ensure("leading dots", LLFile::isSafeFileName("..name"));
+        ensure("unicode", LLFile::isSafeFileName("\xE3\x83\x95\xE3\x82\xA1\xE3\x82\xA4\xE3\x83\xAB.bin"));
+    }
+
+    template<> template<>
+    void llfile_test_object_t::test<7>()
+    {
+        // Nothing, the directory itself or its parent, and names Windows would
+        // shorten when creating them
+        ensure("empty", !LLFile::isSafeFileName(""));
+        ensure("dot", !LLFile::isSafeFileName("."));
+        ensure("dot dot", !LLFile::isSafeFileName(".."));
+        ensure("three dots", !LLFile::isSafeFileName("..."));
+        ensure("trailing dot", !LLFile::isSafeFileName("name."));
+        ensure("trailing space", !LLFile::isSafeFileName("name.xml "));
+    }
+
+    template<> template<>
+    void llfile_test_object_t::test<8>()
+    {
+        // Separators of either platform, at either end or inside
+        ensure("parent posix", !LLFile::isSafeFileName("../../evil.xml"));
+        ensure("parent windows", !LLFile::isSafeFileName("..\\..\\evil.xml"));
+        ensure("absolute posix", !LLFile::isSafeFileName("/etc/evil"));
+        ensure("absolute windows", !LLFile::isSafeFileName("\\Windows\\evil.dll"));
+        ensure("unc", !LLFile::isSafeFileName("\\\\host\\share\\evil"));
+        ensure("subdirectory posix", !LLFile::isSafeFileName("sub/evil.xml"));
+        ensure("subdirectory windows", !LLFile::isSafeFileName("sub\\evil.xml"));
+        ensure("trailing separator", !LLFile::isSafeFileName("evil/"));
+    }
+
+    template<> template<>
+    void llfile_test_object_t::test<9>()
+    {
+        // Drive and stream colons, the rest of what Windows refuses in a name,
+        // and control characters, a NUL above all: a C string would cut a
+        // harmless prefix off a harmful name there
+        ensure("drive absolute", !LLFile::isSafeFileName("C:\\evil.dll"));
+        ensure("drive relative", !LLFile::isSafeFileName("C:evil.dll"));
+        ensure("stream", !LLFile::isSafeFileName("name.xml:evil"));
+        ensure("star", !LLFile::isSafeFileName("a*b"));
+        ensure("question", !LLFile::isSafeFileName("a?b"));
+        ensure("quote", !LLFile::isSafeFileName("a\"b"));
+        ensure("less", !LLFile::isSafeFileName("a<b"));
+        ensure("greater", !LLFile::isSafeFileName("a>b"));
+        ensure("pipe", !LLFile::isSafeFileName("a|b"));
+        ensure("tab", !LLFile::isSafeFileName("a\tb"));
+        ensure("newline", !LLFile::isSafeFileName("a\nb"));
+        ensure("unit separator", !LLFile::isSafeFileName("a\x1F" "b"));
+        ensure("only nul", !LLFile::isSafeFileName(std::string(1, '\0')));
+        ensure("inner nul", !LLFile::isSafeFileName(std::string("name.xml\0evil", 13)));
+        ensure("trailing nul", !LLFile::isSafeFileName(std::string("name.xml\0", 9)));
+    }
+
+    template<> template<>
+    void llfile_test_object_t::test<10>()
+    {
+        // The length limit is inclusive
+        ensure("at limit", LLFile::isSafeFileName(std::string(255, 'a')));
+        ensure("over limit", !LLFile::isSafeFileName(std::string(256, 'a')));
+    }
+
+    template<> template<>
+    void llfile_test_object_t::test<11>()
+    {
+        // Windows device names, in any case, with or without an extension
+        ensure("con", !LLFile::isSafeFileName("CON"));
+        ensure("prn", !LLFile::isSafeFileName("PRN"));
+        ensure("aux", !LLFile::isSafeFileName("AUX"));
+        ensure("nul", !LLFile::isSafeFileName("NUL"));
+        ensure("conin", !LLFile::isSafeFileName("CONIN$"));
+        ensure("conout", !LLFile::isSafeFileName("CONOUT$"));
+        ensure("com0", !LLFile::isSafeFileName("COM0"));
+        ensure("com9", !LLFile::isSafeFileName("COM9"));
+        ensure("lpt0", !LLFile::isSafeFileName("LPT0"));
+        ensure("lpt9", !LLFile::isSafeFileName("LPT9"));
+        ensure("com superscript one", !LLFile::isSafeFileName("COM\xC2\xB9"));
+        ensure("lpt superscript three", !LLFile::isSafeFileName("LPT\xC2\xB3"));
+
+        ensure("lower case", !LLFile::isSafeFileName("con"));
+        ensure("mixed case", !LLFile::isSafeFileName("cOm1"));
+        ensure("lower case conout", !LLFile::isSafeFileName("conout$"));
+
+        ensure("extension", !LLFile::isSafeFileName("NUL.xml"));
+        ensure("two extensions", !LLFile::isSafeFileName("nul.tar.gz"));
+        ensure("superscript with extension", !LLFile::isSafeFileName("com\xC2\xB2.txt"));
+        ensure("spaces before extension", !LLFile::isSafeFileName("CON  .xml"));
+    }
+
+    template<> template<>
+    void llfile_test_object_t::test<12>()
+    {
+        // Names that only look like devices are files
+        ensure("longer word", LLFile::isSafeFileName("CONSOLE.xml"));
+        ensure("two digits", LLFile::isSafeFileName("COM10"));
+        ensure("no digit", LLFile::isSafeFileName("LPT"));
+        ensure("device prefix", LLFile::isSafeFileName("nul_keywords.xml"));
+        ensure("device suffix", LLFile::isSafeFileName("icon.xml"));
+        ensure("device extension", LLFile::isSafeFileName("keywords.con"));
+        ensure("leading space", LLFile::isSafeFileName(" CON"));
+        ensure("only spaces before extension", LLFile::isSafeFileName(" .xml"));
+        ensure("hidden device", LLFile::isSafeFileName(".con"));
     }
 } // namespace tut

@@ -37,6 +37,7 @@
 #include <type_traits>
 #include <utility>
 #include <cstdio>
+#include <cstring>                  // std::strlen()
 #include <cwchar>                   // std::wcslen()
 //#include <locale>
 #include <iomanip>
@@ -308,7 +309,15 @@ public:
     LL_COMMON_API static void formatNumber(string_type& numStr, string_view_type decimals);
     LL_COMMON_API static bool formatDatetime(string_type& replacement, string_view_type token, string_view_type param, S32 secFromEpoch);
     LL_COMMON_API static S32 format(string_type& s, const format_map_t& substitutions);
+    // The same over two maps, the first's value taken where both have a
+    // key: what a caller's arguments laid over LLTrans's defaults come
+    // to, without merging the maps -- a copy of every default for every
+    // string formatted, which is what the merge cost.
+    LL_COMMON_API static S32 format(string_type& s, const format_map_t& substitutions, const format_map_t& fallback);
     LL_COMMON_API static S32 format(string_type& s, const LLSD& substitutions);
+    // The map over an LLSD map: a notification's own substitutions under
+    // the defaults, without the defaults copied into every notification.
+    LL_COMMON_API static S32 format(string_type& s, const format_map_t& substitutions, const LLSD& fallback);
     LL_COMMON_API static bool simpleReplacement(string_type& replacement, string_view_type token, const format_map_t& substitutions);
     LL_COMMON_API static bool simpleReplacement(string_type& replacement, string_view_type token, const LLSD& substitutions);
     LL_COMMON_API static void setLocale (std::string inLocale);
@@ -472,7 +481,8 @@ public:
     LL_COMMON_API static void       testHarness();
 #endif
 
-private:
+    // The next bracketed token from `start`: where it begins, its parts
+    // split at commas, and `start` moved past it. What format() reads by.
     LL_COMMON_API static size_type getSubstitution(const string_type& instr, size_type& start, std::vector<string_type >& tokens);
 };
 
@@ -842,6 +852,10 @@ LL_COMMON_API std::string utf8str_sanitize(std::string_view utf8str);
 // Cost is one pass over the line containing `byte_pos`.
 LL_COMMON_API size_t utf8str_step_grapheme_forward(std::string_view utf8str, size_t byte_pos);
 LL_COMMON_API size_t utf8str_step_grapheme_backward(std::string_view utf8str, size_t byte_pos);
+// Where each grapheme cluster that begins before `end` begins, in order:
+// the same stops utf8str_step_grapheme_forward makes one at a time, walked
+// with one break iterator rather than one a step.
+LL_COMMON_API std::vector<size_t> utf8str_grapheme_starts(std::string_view utf8str, size_t end);
 
 // Snap `byte_pos` onto a grapheme cluster boundary when it sits strictly inside
 // a cluster. The backward variant snaps to the cluster's start, the forward
@@ -889,6 +903,10 @@ LL_COMMON_API size_t utf8str_caret_word_backward(std::string_view utf8str, size_
 // crosses lines and returns an empty range at the end of the text.
 LL_COMMON_API std::pair<size_t, size_t> utf8str_word_range_at(std::string_view utf8str, size_t byte_pos);
 LL_COMMON_API std::pair<size_t, size_t> utf8str_next_word_range(std::string_view utf8str, size_t byte_pos);
+// Every word of the text, in order: the ranges utf8str_next_word_range finds
+// one at a time, walked with one break iterator a line rather than from the
+// line's start for each. Written to `out`, which is emptied first.
+LL_COMMON_API void utf8str_word_ranges(std::string_view utf8str, std::vector<std::pair<size_t, size_t>>& out);
 
 // Positions in `utf8str` where UAX #14 permits a line to end, written to `out`
 // in ascending order and expressed as where the next line would begin. The

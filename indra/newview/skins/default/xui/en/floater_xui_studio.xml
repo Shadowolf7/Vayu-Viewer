@@ -103,8 +103,8 @@
     <floater.string name="GutterTitle">[ATTR], layer by layer</floater.string>
     <floater.string name="GutterLayer">Layer</floater.string>
     <floater.string name="GutterSays">Says</floater.string>
-    <floater.string name="GutterWriteHere">Write here</floater.string>
-    <floater.string name="GutterListTip">Every layer of this file, and what each says about [ATTR]; a dot marks the one the merge takes. Choose a layer and press Write here to give it the value in force.</floater.string>
+    <floater.string name="GutterWriteHere">Write Here</floater.string>
+    <floater.string name="GutterListTip">Every layer of this file, and what each says about [ATTR]; a dot marks the one the merge takes. Choose a layer and press Write Here to give it the value in force.</floater.string>
     <floater.string name="GutterForceTip">A dot marks the layer whose value is in force</floater.string>
     <floater.string name="GutterLayerTip">The skin and the language the layer belongs to, in the order they are merged</floater.string>
     <floater.string name="GutterSaysTip">What this layer writes for [ATTR], or nothing where it does not write it</floater.string>
@@ -214,6 +214,8 @@
     <floater.string name="EditNoNestedFile">This element does not name a file of its own.</floater.string>
     <floater.string name="EditNestedMissing">[FILE] is named here but is not in the catalog.</floater.string>
     <floater.string name="LayerMissing">-</floater.string>
+    <floater.string name="SourceEdited">Source edited: [FILE]</floater.string>
+    <floater.string name="SourceEditedBroken">[FILE] does not parse yet (line [LINE]: [MESSAGE]); the last text that did stays in force until it does</floater.string>
     <floater.string name="Yes">yes</floater.string>
     <floater.string name="No">no</floater.string>
     <floater.string name="LayoutSize">size</floater.string>
@@ -546,7 +548,7 @@
             </menu_item_call>
             <menu_item_separator layout="topleft" />
             <menu_item_call
-             label="Colour Settings"
+             label="Color Settings"
              layout="topleft"
              name="colors">
                 <menu_item_call.on_click function="XUIStudio.Menu" parameter="colors" />
@@ -764,7 +766,7 @@
                          min_dim="80"
                          name="file_list_area"
                          width="376">
-                            <scroll_list
+                            <pane_list
                              column_padding="0"
                              draw_heading="true"
                              multi_select="true"
@@ -776,25 +778,25 @@
                              tool_tip="Every XUI file the skins hold, and which of them have a copy of each. Choose one to build it on the canvas."
                              top="0"
                              width="376">
-                                <scroll_list.columns
+                                <pane_list.columns
                                  label="Kind"
                                  name="kind"
                                  width="58" />
-                                <scroll_list.columns
+                                <pane_list.columns
                                  dynamic_width="true"
                                  label="File"
                                  name="name" />
-                                <scroll_list.columns
+                                <pane_list.columns
                                  label="L"
                                  name="lang"
                                  tool_tip="The chosen language has a file"
                                  width="20" />
-                                <scroll_list.columns
+                                <pane_list.columns
                                  label="S"
                                  name="skin"
                                  tool_tip="The chosen skin has a file"
                                  width="20" />
-                            </scroll_list>
+                            </pane_list>
                         </layout_panel>
                         <layout_panel
                          auto_resize="false"
@@ -983,7 +985,7 @@
                              height="30"
                              layout="topleft"
                              left="0"
-                             name="find_bar"
+                             name="scope_bar"
                              tool_tip="A search said as a sentence: what kind of thing to look for, how the words have to match, the words, and which layers to look in. Return runs it, and changing a word runs it again."
                              top="0"
                              width="376" />
@@ -995,7 +997,7 @@
                          min_dim="60"
                          name="find_results_area"
                          width="376">
-                            <scroll_list
+                            <pane_list
                              column_padding="0"
                              draw_heading="true"
                              multi_select="true"
@@ -1007,23 +1009,23 @@
                              tool_tip="Where the words were found, gathered by file. Choose a row to open that file and select the element it is in."
                              top="0"
                              width="376">
-                                <scroll_list.columns
+                                <pane_list.columns
                                  label="File"
                                  name="file"
                                  width="110" />
-                                <scroll_list.columns
+                                <pane_list.columns
                                  label="Line"
                                  name="line"
                                  width="36" />
-                                <scroll_list.columns
+                                <pane_list.columns
                                  label="Layer"
                                  name="layer"
                                  width="60" />
-                                <scroll_list.columns
+                                <pane_list.columns
                                  dynamic_width="true"
                                  label="Match"
                                  name="snippet" />
-                            </scroll_list>
+                            </pane_list>
                         </layout_panel>
                     </layout_stack>
                 </panel>
@@ -1052,7 +1054,7 @@
                          min_dim="80"
                          name="documents_area"
                          width="376">
-                            <scroll_list
+                            <pane_list
                              column_padding="0"
                              draw_heading="true"
                              follows="all"
@@ -1063,25 +1065,25 @@
                              tool_tip="Double-click to look at one; a dot means it has work the disk has not heard about"
                              top="0"
                              width="376">
-                                <scroll_list.columns
+                                <pane_list.columns
                                  label=""
                                  name="dirty"
                                  tool_tip="a dot means unsaved"
                                  width="16" />
-                                <scroll_list.columns
+                                <pane_list.columns
                                  dynamic_width="true"
                                  label="File"
                                  name="file" />
-                                <scroll_list.columns
+                                <pane_list.columns
                                  label="Layer"
                                  name="layer"
                                  width="90" />
-                                <scroll_list.columns
+                                <pane_list.columns
                                  label="Steps"
                                  name="steps"
                                  tool_tip="how many edits are in it to put back"
                                  width="46" />
-                            </scroll_list>
+                            </pane_list>
                         </layout_panel>
                         <layout_panel
                          auto_resize="false"
@@ -1201,7 +1203,7 @@
                              top="2"
                              use_ellipses="true"
                              word_wrap="true" />
-                            <scroll_list
+                            <pane_list
                              column_padding="0"
                              draw_heading="true"
                              follows="all"
@@ -1212,19 +1214,19 @@
                              tool_tip="What the chosen tag takes, and what it already carries: an attribute written as what it carries says nothing the widget does not say itself"
                              top_pad="2"
                              width="376">
-                                <scroll_list.columns
+                                <pane_list.columns
                                  dynamic_width="true"
                                  label="Attribute"
                                  name="attribute" />
-                                <scroll_list.columns
+                                <pane_list.columns
                                  label="Type"
                                  name="type"
                                  width="96" />
-                                <scroll_list.columns
+                                <pane_list.columns
                                  label="Carries"
                                  name="carries"
                                  width="96" />
-                            </scroll_list>
+                            </pane_list>
                         </layout_panel>
                         <layout_panel
                          auto_resize="false"
@@ -1463,7 +1465,7 @@
                  left_pad="8"
                  menu_filename="menu_xui_studio_backdrop.xml"
                  name="canvas_backdrop"
-                 tool_tip="What is behind the preview: nothing, a pattern that shows what a translucent window does to what is under it, a checkerboard that shows what is transparent, the colour of a window, or a light grey"
+                 tool_tip="What is behind the preview: nothing, a pattern that shows what a translucent window does to what is under it, a checkerboard that shows what is transparent, the color of a window, or a light grey"
                  top_delta="0"
                  width="26" />
                 <check_box
@@ -1664,7 +1666,7 @@
                              layout="topleft"
                              name="findings_list_panel"
                              width="742">
-                                <scroll_list
+                                <pane_list
                                  column_padding="0"
                                  draw_heading="true"
                                  multi_select="true"
@@ -1676,33 +1678,33 @@
                                  tool_tip="What the parser, the factory, the layer merge and the rules found; double-click selects the element"
                                  top="0"
                                  width="742">
-                                    <scroll_list.columns
+                                    <pane_list.columns
                                      label=""
                                      name="severity"
                                      tool_tip="How bad it is: an error means the element does not work, a warning that it probably does not do what the file says, and a note is worth a look and often on purpose"
                                      width="52" />
-                                    <scroll_list.columns
+                                    <pane_list.columns
                                      label="Rule"
                                      name="rule"
                                      width="110" />
-                                    <scroll_list.columns
+                                    <pane_list.columns
                                      label="Line"
                                      name="line"
                                      width="44" />
-                                    <scroll_list.columns
+                                    <pane_list.columns
                                      dynamic_width="true"
                                      label="Where"
                                      name="where" />
-                                    <scroll_list.columns
+                                    <pane_list.columns
                                      dynamic_width="true"
                                      label="What"
                                      name="message" />
-                                    <scroll_list.columns
+                                    <pane_list.columns
                                      dynamic_width="true"
                                      label="Fix"
                                      name="fix"
                                      tool_tip="What this tool would do about it, where it knows" />
-                                </scroll_list>
+                                </pane_list>
                             </layout_panel>
                             <layout_panel
                              auto_resize="false"
@@ -1788,7 +1790,7 @@
                                 <button
                                  follows="left|top"
                                  height="22"
-                                 label="Repair file"
+                                 label="Repair File"
                                  layout="topleft"
                                  left_pad="12"
                                  name="translate_repair_file"
@@ -1798,7 +1800,7 @@
                                 <button
                                  follows="left|top"
                                  height="22"
-                                 label="Repair language"
+                                 label="Repair Language"
                                  layout="topleft"
                                  left_pad="4"
                                  name="translate_repair_all"
@@ -1808,7 +1810,7 @@
                                 <button
                                  follows="left|top"
                                  height="22"
-                                 label="Repair roots"
+                                 label="Repair Roots"
                                  layout="topleft"
                                  left_pad="4"
                                  name="translate_repair_roots"
@@ -1818,11 +1820,11 @@
                                 <button
                                  follows="left|top"
                                  height="22"
-                                 label="Remove orphans"
+                                 label="Remove Orphans"
                                  layout="topleft"
                                  left_pad="12"
                                  name="translate_remove_orphans"
-                                 tool_tip="Take out of every file of this language each value written for something the base no longer has: an element of a lost name, an element with no name, an attribute the base's element does not carry. What the base has moved is left for Repair, and what it has at more than one path is left for you."
+                                 tool_tip="Take out of every file of this language each value written for something the base no longer has: an element of a lost name, an element with no name, an attribute the base's element does not carry. What the base has moved is left for Repair File, and what it has at more than one path is left for you."
                                  top_delta="0"
                                  width="110" />
                                 <text
@@ -1843,7 +1845,7 @@
                              min_dim="48"
                              name="translate_table"
                              width="742">
-                                <scroll_list
+                                <pane_list
                                  column_padding="0"
                                  draw_heading="true"
                                  multi_select="true"
@@ -1855,33 +1857,33 @@
                                  tool_tip="One row per field a translator writes; double-click selects the element"
                                  top="0"
                                  width="742">
-                                    <scroll_list.columns
+                                    <pane_list.columns
                                      label="Where"
                                      name="path"
                                      width="160" />
-                                    <scroll_list.columns
+                                    <pane_list.columns
                                      label="Field"
                                      name="field"
                                      width="80" />
-                                    <scroll_list.columns
+                                    <pane_list.columns
                                      dynamic_width="true"
                                      label="English"
                                      name="english" />
-                                    <scroll_list.columns
+                                    <pane_list.columns
                                      dynamic_width="true"
                                      label="Translation"
                                      name="translation" />
-                                    <scroll_list.columns
+                                    <pane_list.columns
                                      label="State"
                                      name="state"
                                      tool_tip="Whether the language has this value, is missing it, or writes it at a path the base has moved on from"
                                      width="120" />
-                                    <scroll_list.columns
+                                    <pane_list.columns
                                      label="Fits"
                                      name="fits"
                                      tool_tip="Whether the translation fits its widget in the second variant"
                                      width="36" />
-                                </scroll_list>
+                                </pane_list>
                             </layout_panel>
                             <layout_panel
                              auto_resize="false"
@@ -1950,7 +1952,7 @@
                              min_dim="60"
                              name="notifications_area"
                              width="742">
-                                <scroll_list
+                                <pane_list
                                  column_padding="0"
                                  draw_heading="true"
                                  follows="all"
@@ -1961,23 +1963,23 @@
                                  tool_tip="Every template notifications.xml declares; select one to build the panel it would produce"
                                  top="0"
                                  width="742">
-                                    <scroll_list.columns
+                                    <pane_list.columns
                                      label="Name"
                                      name="name"
                                      width="240" />
-                                    <scroll_list.columns
+                                    <pane_list.columns
                                      label="Type"
                                      name="type"
                                      width="90" />
-                                    <scroll_list.columns
+                                    <pane_list.columns
                                      label="Buttons"
                                      name="buttons"
                                      width="60" />
-                                    <scroll_list.columns
+                                    <pane_list.columns
                                      dynamic_width="true"
                                      label="Message"
                                      name="message" />
-                                </scroll_list>
+                                </pane_list>
                             </layout_panel>
                             <layout_panel
                              auto_resize="false"
@@ -2018,6 +2020,7 @@
                      tool_tip="Everything done to the files this tool has open, with a mark where the present is"
                      width="742">
                         <history_list
+                         start_label="The files as they were opened"
                          empty_headline="Nothing done yet."
                          empty_sentence="Edits show up here as you make them, newest first. Double-click one to put the files back the way they were just after it."
                          follows="all"
@@ -2099,7 +2102,7 @@
                              min_dim="60"
                              name="channels_area"
                              width="742">
-                                <scroll_list
+                                <pane_list
                                  column_padding="0"
                                  draw_heading="true"
                                  follows="all"
@@ -2110,23 +2113,23 @@
                                  tool_tip="Every notification through every channel since this floater opened, in the order the channels process them"
                                  top="0"
                                  width="742">
-                                    <scroll_list.columns
+                                    <pane_list.columns
                                      label="Channel"
                                      name="channel"
                                      width="140" />
-                                    <scroll_list.columns
+                                    <pane_list.columns
                                      label="Notification"
                                      name="name"
                                      width="200" />
-                                    <scroll_list.columns
+                                    <pane_list.columns
                                      label="Time"
                                      name="time"
                                      width="80" />
-                                    <scroll_list.columns
+                                    <pane_list.columns
                                      dynamic_width="true"
                                      label="Message"
                                      name="message" />
-                                </scroll_list>
+                                </pane_list>
                             </layout_panel>
                         </layout_stack>
                     </panel>
@@ -2220,7 +2223,7 @@
                  name="layout_tab"
                  tool_tip="Layout: where the element ended up, and which of its numbers decided that"
                  width="478">
-                    <scroll_list
+                    <pane_list
                      column_padding="0"
                      draw_heading="true"
                      multi_select="true"
@@ -2232,15 +2235,15 @@
                      tool_tip="What decides where this element is: its own numbers, the numbers the file writes, and what its parent does with them."
                      top="0"
                      width="478">
-                        <scroll_list.columns
+                        <pane_list.columns
                          label="Property"
                          name="property"
                          width="160" />
-                        <scroll_list.columns
+                        <pane_list.columns
                          dynamic_width="true"
                          label="Value"
                          name="value" />
-                    </scroll_list>
+                    </pane_list>
                 </panel>
                 <panel
                  label="Source"
@@ -2280,7 +2283,7 @@
                             <button
                              follows="top|right"
                              height="20"
-                             label="Open in editor"
+                             label="Open in Editor"
                              layout="topleft"
                              left_pad="4"
                              name="jump_btn"
@@ -2295,7 +2298,7 @@
                          min_dim="60"
                          name="source_layers_panel"
                          width="478">
-                            <scroll_list
+                            <pane_list
                              column_padding="0"
                              draw_heading="true"
                              follows="all"
@@ -2306,24 +2309,24 @@
                              tool_tip="Every layer of this file: what each says about the chosen field, and which one the merge takes"
                              top="0"
                              width="478">
-                                <scroll_list.columns
+                                <pane_list.columns
                                  label=""
                                  name="force"
                                  tool_tip="a dot marks the one in force"
                                  width="16" />
-                                <scroll_list.columns
+                                <pane_list.columns
                                  label="Layer"
                                  name="layer"
                                  width="110" />
-                                <scroll_list.columns
+                                <pane_list.columns
                                  dynamic_width="true"
                                  label="Says"
                                  name="value" />
-                                <scroll_list.columns
+                                <pane_list.columns
                                  label="Line"
                                  name="line"
                                  width="44" />
-                            </scroll_list>
+                            </pane_list>
                         </layout_panel>
                         <layout_panel
                          auto_resize="false"
@@ -2335,7 +2338,7 @@
                             <button
                              follows="left|top"
                              height="22"
-                             label="Write here"
+                             label="Write Here"
                              layout="topleft"
                              left="0"
                              name="write_override"
@@ -2348,7 +2351,7 @@
                              layout="topleft"
                              left_pad="6"
                              name="override_field"
-                             tool_tip="The field the list below is about, and what Write here writes: the value in force, into the layer chosen there"
+                             tool_tip="The field the list below is about, and what Write Here writes: the value in force, into the layer chosen there"
                              top_delta="4"
                              use_ellipses="true"
                              width="380" />
@@ -2360,16 +2363,15 @@
                          min_dim="60"
                          name="source_text_panel"
                          width="478">
-                            <text_editor
+                            <code_editor
                              follows="all"
                              font="Monospace"
                              height="240"
-                             ignore_tab="false"
                              layout="topleft"
                              left="0"
                              name="source_text"
-                             tool_tip="The element as each layer of the file writes it, in the order they are merged"
-                             read_only="true"
+                             tool_tip="The layer's file as it stands, to edit: what is typed goes into the document once the typing pauses, the tree and the preview following; the schema completes tags, attributes and values, and the findings on this file are marked"
+                             syntax="xml"
                              top="0"
                              width="476"
                              word_wrap="false" />
@@ -2384,7 +2386,7 @@
                  name="bindings_tab"
                  tool_tip="Bindings: the callbacks the file names, and whether anything answers to them"
                  width="478">
-                    <scroll_list
+                    <pane_list
                      column_padding="0"
                      draw_heading="true"
                      multi_select="true"
@@ -2396,19 +2398,19 @@
                      tool_tip="The callbacks the file names, and whether anything is registered to answer to each name."
                      top="0"
                      width="478">
-                        <scroll_list.columns
+                        <pane_list.columns
                          label="Kind"
                          name="kind"
                          width="130" />
-                        <scroll_list.columns
+                        <pane_list.columns
                          dynamic_width="true"
                          label="Name"
                          name="name" />
-                        <scroll_list.columns
+                        <pane_list.columns
                          label="Status"
                          name="status"
                          width="120" />
-                    </scroll_list>
+                    </pane_list>
                 </panel>
                 <panel
                  label="State"
@@ -2418,7 +2420,7 @@
                  name="state_tab"
                  tool_tip="State: what the built widget says about itself right now"
                  width="478">
-                    <scroll_list
+                    <pane_list
                      column_padding="0"
                      draw_heading="true"
                      multi_select="true"
@@ -2430,15 +2432,15 @@
                      tool_tip="What the built widget says about itself as it is now, read again while this tab is showing."
                      top="0"
                      width="478">
-                        <scroll_list.columns
+                        <pane_list.columns
                          label="Property"
                          name="property"
                          width="130" />
-                        <scroll_list.columns
+                        <pane_list.columns
                          dynamic_width="true"
                          label="Value"
                          name="value" />
-                    </scroll_list>
+                    </pane_list>
                 </panel>
                 <panel
                  label="Findings"
@@ -2448,7 +2450,7 @@
                  name="findings_tab"
                  tool_tip="Findings: what the parser, the merge and the rules said about this element"
                  width="478">
-                    <scroll_list
+                    <pane_list
                      column_padding="0"
                      draw_heading="true"
                      multi_select="true"
@@ -2460,23 +2462,23 @@
                      tool_tip="The findings on the selected element and everything below it"
                      top="0"
                      width="478">
-                        <scroll_list.columns
+                        <pane_list.columns
                          label=""
                          name="severity"
                          width="52" />
-                        <scroll_list.columns
+                        <pane_list.columns
                          label="Rule"
                          name="rule"
                          width="90" />
-                        <scroll_list.columns
+                        <pane_list.columns
                          label="Where"
                          name="where"
                          width="110" />
-                        <scroll_list.columns
+                        <pane_list.columns
                          dynamic_width="true"
                          label="What"
                          name="message" />
-                    </scroll_list>
+                    </pane_list>
                 </panel>
             </tab_container>
         </layout_panel>

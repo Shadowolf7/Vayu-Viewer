@@ -24,9 +24,9 @@
 
 #include "linden_common.h"
 
-#include "../alxuiselection.h"
-#include "../alxuisourcemap.h"
-#include "../alxuitreemodel.h"
+#include "alxuiselection.h"
+#include "alxuisourcemap.h"
+#include "alxuitreemodel.h"
 #include "../lldraghandle.h"
 #include "../llfloater.h"
 #include "../llfolderview.h"
@@ -34,6 +34,7 @@
 #include "../lluictrlfactory.h"
 
 #include "alheadlessui_fixture.h"
+#include "aluistatescope.h"
 
 #include "../test/lltut.h"
 
@@ -41,13 +42,6 @@
 #include <memory>
 
 #include <boost/unordered_map.hpp>
-
-class LLAvatarName;
-const std::string gTreeModelTestAnonName("Anon");
-const std::string& rlvGetAnonym(const LLAvatarName& av_name)
-{
-    return gTreeModelTestAnonName;
-}
 
 // Two functors the folder view declares and the viewer's inventory code
 // defines; linking the folder view pulls them, and nothing here runs them.
@@ -182,7 +176,7 @@ namespace tut
             skip("no UI: LLUI_TEST_APP_DIR does not point at the source tree");
         }
         std::unique_ptr<LLFloaterView> fv(floaterView());
-        gFloaterView = fv.get();
+        ll_test::FloaterViewScope floater_view(fv.get());
 
         LLXMLNodePtr root;
         LLFloater* floater = build(fv.get(), root);
@@ -218,7 +212,6 @@ namespace tut
 
         delete floater;
         fv.reset();
-        gFloaterView = nullptr;
     }
 
     // The filter matches by name and by tag and hides code-built rows on
@@ -232,7 +225,7 @@ namespace tut
             skip("no UI: LLUI_TEST_APP_DIR does not point at the source tree");
         }
         std::unique_ptr<LLFloaterView> fv(floaterView());
-        gFloaterView = fv.get();
+        ll_test::FloaterViewScope floater_view(fv.get());
 
         LLXMLNodePtr root;
         LLFloater* floater = build(fv.get(), root);
@@ -249,15 +242,15 @@ namespace tut
 
         ALXUITreeFilter& filter = model.getFilter();
         ensure("no filter passes everything", filter.check(outer) && filter.check(drag));
-        filter.setFilterSubString("OUT");
+        filter.setWords("OUT");
         ensure("a name matches, case folded", filter.check(outer));
         ensure("and another does not", !filter.check(hidden));
         LLFolderViewFilter::Match match = filter.getFilterMatch(outer);
         ensure_equals("the match is where the name has it", match.mOffset, 0u);
         ensure_equals("and as long as the term", match.mLength, 3u);
-        filter.setFilterSubString("panel");
+        filter.setWords("panel");
         ensure("a tag matches", filter.check(outer));
-        filter.setFilterSubString("");
+        filter.setWords("");
         filter.setShowCodeBuilt(false);
         ensure("a code-built row is hidden on request", !filter.check(drag));
         ensure("a file's row is not", filter.check(outer));
@@ -297,7 +290,6 @@ namespace tut
 
         delete floater2;
         fv.reset();
-        gFloaterView = nullptr;
     }
 
     // An item told to contain itself is refused. Taken as its own child it
@@ -313,7 +305,7 @@ namespace tut
             skip("no UI: LLUI_TEST_APP_DIR does not point at the source tree");
         }
         std::unique_ptr<LLFloaterView> fv(floaterView());
-        gFloaterView = fv.get();
+        ll_test::FloaterViewScope floater_view(fv.get());
 
         LLXMLNodePtr root;
         LLFloater* floater = build(fv.get(), root);
@@ -340,7 +332,6 @@ namespace tut
 
         delete floater;
         fv.reset();
-        gFloaterView = nullptr;
     }
 
     // A drag over a row lands before it, into it or after it by where on the
@@ -356,7 +347,7 @@ namespace tut
             skip("no UI: LLUI_TEST_APP_DIR does not point at the source tree");
         }
         std::unique_ptr<LLFloaterView> fv(floaterView());
-        gFloaterView = fv.get();
+        ll_test::FloaterViewScope floater_view(fv.get());
 
         // A combo box builds a line editor and a button of its own, so its
         // row is a folder holding rows no element describes.
@@ -511,6 +502,48 @@ namespace tut
         delete host;
         delete floater;
         fv.reset();
-        gFloaterView = nullptr;
+    }
+
+    template<> template<>
+    void alxuitreemodel_object::test<5>()
+    {
+        set_test_name("a tree filtered: each row by the filter, the words lit where they are, a holder lit by what passes under it; a pass out of time stops");
+        if (!ui.ok())
+        {
+            skip("no UI: LLUI_TEST_APP_DIR does not point at the source tree");
+        }
+        std::unique_ptr<LLFloaterView> fv(floaterView());
+        ll_test::FloaterViewScope floater_view(fv.get());
+        LLXMLNodePtr root;
+        LLFloater*   floater = build(fv.get(), root);
+        ALXUISourceMap map;
+        map.build(floater, root);
+        // A label with a capital, which the words find all the same.
+        floater->findChild<LLView>("inner", true)->setName("Inner");
+        ALXUITreeModel model;
+        model.build(floater, map);
+        ALXUITreeItem* top   = model.rootItem();
+        ALXUITreeItem* outer = model.itemFor(ALXUISelection::fromString("outer"));
+        ALXUITreeItem* inner = model.itemFor(ALXUISelection::fromString("outer/Inner"));
+        ensure("rows", top && outer && inner);
+
+        ALXUITreeFilter& filter = model.getFilter();
+        filter.setWords("INNER");
+        filter.resetTime(60000);
+        ensure("a pass with time finishes", top->filter(filter));
+        const S32 now = filter.getCurrentGeneration();
+        ensure("the row the words are in passes", inner->passedFilter(now));
+        ensure("lit where they are", inner->getFilterStringOffset() == 0 && inner->getFilterStringSize() == 5);
+        ALXUITreeItem* drag = model.itemFor(dragHandle(floater));
+        ensure("a row they are not in, holding nothing, does not", drag && !drag->passedFilter(now));
+        ensure("one holding a row that does, does", outer->passedFilter(now) && outer->descendantsPassedFilter(now));
+        ensure("unlit, the words not being in it", !outer->hasFilterStringMatch());
+        ensure("and so does the top", top->descendantsPassedFilter(now));
+
+        filter.setWords("inner");
+        filter.setWords("in");
+        filter.resetTime(0);
+        ensure("a pass out of time stops", !top->filter(filter));
+        ensure("before the top is reached", top->getLastFilterGeneration() < filter.getCurrentGeneration());
     }
 }

@@ -17,7 +17,13 @@ endif()
 target_sources(
   llcommon
   PRIVATE
+    alfilewrite.cpp
+    alserialworker.cpp
     alparamtype.cpp
+    alrecoverystore.cpp
+    alregex.cpp
+    alsavehistory.cpp
+    alwatchedfile.cpp
     apply.cpp
     commoncontrol.cpp
     indra_constants.cpp
@@ -71,7 +77,6 @@ target_sources(
     llmortician.cpp
     llmutex.cpp
     llpointer.cpp
-    llptrto.cpp
     llpredicate.cpp
     llprocess.cpp
     llprocessor.cpp
@@ -114,9 +119,17 @@ target_sources(
   llcommon
   PUBLIC
     FILE_SET HEADERS
-    FILES
+      FILES
+        alfilewrite.h
+        allinebreaks.h
+        alserialworker.h
         alparamtype.h
+        alrandmap.h
+        alrecoverystore.h
+        alregex.h
+        alsavehistory.h
         alsimd.h
+        alwatchedfile.h
         always_return.h
         apply.h
         chrono.h
@@ -204,7 +217,6 @@ target_sources(
         llqueuedthread.h
         llrand.h
         llrefcount.h
-        llregex.h
         llregistry.h
         llrun.h
         llsafehandle.h
@@ -242,9 +254,6 @@ target_sources(
         llwatchdog.h
         llwin32headers.h
         llworkerthread.h
-        hbfastmap.h
-        hbfastset.h
-        hbintrinsics.h
         hbxxh.h
         lockstatic.h
         stdtypes.h
@@ -277,13 +286,12 @@ target_link_libraries(
     ll::boost
     ll::oslibraries
     ll::tracy
-    ll::parallel-hashmap
     ll::xxhash
     ll::simdjson
     ll::simdutf
     ll::fmt
     Threads::Threads
-  PRIVATE ll::fastfloat ll::icu
+  PRIVATE ll::fastfloat ll::icu ll::re2
 )
 
 if(AL_BUILD_TESTS)
@@ -291,6 +299,12 @@ if(AL_BUILD_TESTS)
   # files could not stand alone. Every test here links the library.
   foreach(
     test
+    alfilewrite
+    alrecoverystore
+    alregex
+    alsavehistory
+    alserialworker
+    alwatchedfile
     apply
     bitpack
     classic_callback
@@ -319,6 +333,7 @@ if(AL_BUILD_TESTS)
     llpounceable
     llprocessor
     llprocinfo
+    llptrto
     llrand
     llsd
     llsdjson
@@ -327,6 +342,7 @@ if(AL_BUILD_TESTS)
     llstreamtools
     llstring
     llstring_utf
+    lltimer
     lltrace
     lltreeiterators
     llunits
@@ -342,15 +358,17 @@ if(AL_BUILD_TESTS)
 
   # These drive a Python peer: LEAP's protocol is to an external script,
   # llprocess spawns one, and llsdserialize round-trips through the llsd
-  # package as an independent implementation.
+  # package as an independent implementation. A peer that imports a script a
+  # test wrote to the temp folder would leave its bytecode there.
   foreach(test llleap llprocess llsdserialize)
-    al_add_test(${test} PROJECT llcommon LIBRARIES llcommon PYTHON)
+    al_add_test(
+      ${test}
+      PROJECT llcommon
+      LIBRARIES llcommon
+      PYTHON
+      ENVIRONMENT PYTHONDONTWRITEBYTECODE=1
+    )
   endforeach()
-
-  ## llexception_test.cpp isn't a regression test, and doesn't need to be run
-  ## every build. It's to help a developer make implementation choices about
-  ## throwing and catching exceptions.
-  ##al_add_test(llexception PROJECT llcommon LIBRARIES llcommon)
 
   # The SIMD ops layer, at the tree's tier and, where the tiers differ, at
   # each of them; a variant the host cannot run skips.
@@ -375,7 +393,12 @@ if(AL_BUILD_TESTS)
       INTERPROCEDURAL_OPTIMIZATION_RELEASE OFF
   )
   if(COMPILER_IS_MSVC)
-    target_compile_options(alsimd_asm_probe PRIVATE /FAs)
+    # Visual Studio points /Fa at the object's directory itself; Ninja leaves
+    # it to cl, which writes the listing to the build tree's root.
+    target_compile_options(
+      alsimd_asm_probe
+      PRIVATE /FAs "/Fa$<PATH:GET_PARENT_PATH,$<TARGET_OBJECTS:alsimd_asm_probe>>/"
+    )
     set(alsimd_asm_syntax masm)
   elseif(COMPILER_IS_CLANG_CL)
     target_compile_options(alsimd_asm_probe PRIVATE /clang:-save-temps=obj)
@@ -409,4 +432,18 @@ if(AL_BUILD_TESTS)
 
   # Skip precompiled header for tests that need special handling
   set_source_files_properties(tests/llsd_test.cpp PROPERTIES SKIP_PRECOMPILE_HEADERS TRUE)
+
+  # GCC 15 at -O3 takes the weak_ptr that LLInstanceTrackerSubclass::getWeak()
+  # copies from mSelf, scalarised, for one read before it is set -- a false
+  # positive on test 1's queue.getWeak(), and under -Werror a failed build.
+  if(COMPILER_IS_GCC)
+    set_source_files_properties(
+      tests/workqueue_test.cpp
+      PROPERTIES COMPILE_OPTIONS -Wno-uninitialized
+    )
+  endif()
+
+  # The viewer's own patterns under Boost.Regex and under RE2, side by side,
+  # over the text each is run on.
+  al_add_bench(alregex PROJECT llcommon LIBRARIES llcommon)
 endif()

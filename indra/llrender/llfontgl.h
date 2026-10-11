@@ -36,6 +36,7 @@
 #include "llpointer.h"
 #include "llrect.h"
 #include "v2math.h"
+#include "v4coloru.h"
 
 class LLColor4;
 // Key used to request a font.
@@ -124,6 +125,50 @@ public:
     // those buffers out from under the draw that invoked it, and the shadow
     // would come out carrying the nested string's glyphs.
     typedef std::function<void()> pass_boundary_cb_t;
+
+    // One glyph placed by a caller that laid a line out for itself: the face
+    // the glyph came from and its index there, as ALFontShaping gave them,
+    // and where its pen sits in logical pixels from the origin renderGlyphs
+    // is given -- the shaped x offset added in, the y offset as it was. What
+    // a text view keeps per line, so that a line is shaped once and drawn
+    // every frame from that. A glyph with no face draws nothing: a tab's
+    // gap, an atom's box.
+    struct Placed
+    {
+        const LLFontFreetype* face     = nullptr;
+        U32                   glyph_id = 0;
+        F32                   x        = 0.f;
+        F32                   y        = 0.f;
+    };
+
+    // Draws glyphs the caller has shaped and placed, each in its own colour,
+    // from (x, y), the run's baseline in logical pixels. Nothing is shaped,
+    // measured, aligned or clipped here; that is the caller's layout. The
+    // glyph indices are this face's, so a style it does not carry is drawn
+    // the way it would be for itself -- bold doubled, italic slanted -- and
+    // no other face is consulted.
+    void renderGlyphs(const Placed* glyphs, const LLColor4U* colors, size_t count, F32 x, F32 y, U8 style = NORMAL) const;
+
+    // Runs of glyphs as renderGlyphs draws one, each from its own (x, y) in
+    // its own colours, all under one transform and in as few batches as
+    // their atlases allow: every row of a text view drawn in one call,
+    // rather than a push and a pop of the transform, and a draw, for each.
+    struct GlyphRun
+    {
+        const Placed*    glyphs = nullptr;
+        const LLColor4U* colors = nullptr;
+        size_t           count  = 0;
+        F32              x      = 0.f;
+        F32              y      = 0.f;
+    };
+    void renderGlyphRuns(const GlyphRun* runs, size_t count, U8 style = NORMAL) const;
+
+    // A string's glyphs placed as renderBytes lays them down, shaped through
+    // the same cache, for renderGlyphs and renderGlyphRuns to draw. Returns
+    // how far along x the run starts for `halign`, which is what to add to
+    // the x it is drawn from: a right-aligned string's width back, measured
+    // as renderBytes measures it.
+    F32 placeGlyphs(std::string_view text, HAlign halign, std::vector<Placed>& out) const;
 
     // The draw: `begin_offset`, `max_bytes` and the count returned all index
     // the UTF-8.
@@ -326,6 +371,13 @@ public:
     static LLFontGL* getFontSansSerifHuge();
     static LLFontGL* getFontSansSerifBold();
     static LLFontGL* getFont(const LLFontDescriptor& desc);
+    // The points a size name is for a family, as fonts.xml says; 0 where
+    // it says none.
+    static F32       pointsOf(const std::string& family, const std::string& size_name);
+    // A family and style at a size in points of its own, not one of the
+    // names fonts.xml gives: a text zoomed. Null where there is no such
+    // family.
+    static LLFontGL* getFontAtPoints(const std::string& family, F32 points, U8 style);
     // Use with legacy names like "SANSSERIF_SMALL" or "OCRA"
     static LLFontGL* getFontByName(const std::string& name);
     static LLFontGL* getFontDefault(); // default fallback font

@@ -33,8 +33,8 @@
 #include "llfonttextcache.h"
 #include "llspellcheckmenuhandler.h"
 #include "llstyle.h"
-#include "llkeywords.h"
 #include "llpanel.h"
+#include "llpointer.h"
 #include "llurlmatch.h"
 
 #include <string>
@@ -44,6 +44,8 @@
 #include <boost/signals2.hpp>
 
 class LLScrollContainer;
+class LLTextSegment;
+typedef LLPointer<LLTextSegment> LLTextSegmentPtr;
 class LLContextMenu;
 class LLUrlMatch;
 class LLTextBase;
@@ -96,8 +98,6 @@ public:
     //virtual void              setColor(const LLUIColor &color);
     virtual LLStyleConstSP      getStyle() const;
     virtual void                setStyle(LLStyleConstSP style);
-    virtual void                setToken( LLKeywordToken* token );
-    virtual LLKeywordToken*     getToken() const;
     virtual void                setToolTip(const std::string& tooltip);
     virtual void                dump() const;
 
@@ -146,8 +146,6 @@ public:
     /*virtual*/ const LLUIColor&     getColor() const                    { return mStyle->getColor(); }
     /*virtual*/ LLStyleConstSP      getStyle() const                    { return mStyle; }
     /*virtual*/ void                setStyle(LLStyleConstSP style)  { mStyle = style; }
-    /*virtual*/ void                setToken( LLKeywordToken* token )   { mToken = token; }
-    /*virtual*/ LLKeywordToken*     getToken() const                    { return mToken; }
     /*virtual*/ void                setToolTip(const std::string& tooltip);
     /*virtual*/ void                dump() const;
 
@@ -172,7 +170,6 @@ protected:
 protected:
     class LLTextBase&   mEditor;
     LLStyleConstSP      mStyle;
-    LLKeywordToken*     mToken;
     std::string         mTooltip;
     boost::signals2::connection mImageLoadedConnection;
 
@@ -349,10 +346,6 @@ public:
     friend class LLNormalTextSegment;
     friend class LLEmbeddedItemSegment;
     friend class LLUICtrlFactory;
-
-    typedef boost::signals2::signal<bool (const LLUUID& user_id)> is_friend_signal_t;
-    typedef boost::signals2::signal<bool (const LLUUID& blocked_id, const std::string from)> is_blocked_signal_t;
-    typedef boost::signals2::signal<bool (const LLUUID& obj_id)> is_obj_reachable_signal_t;
 
     struct LineSpacingParams : public LLInitParam::ChoiceBlock<LineSpacingParams>
     {
@@ -592,9 +585,6 @@ public:
     virtual void            appendImageSegment(const LLStyle::Params& style_params);
     virtual void            appendWidget(const LLInlineViewSegment::Params& params, const std::string& text, bool allow_undo);
     boost::signals2::connection setURLClickedCallback(const commit_signal_t::slot_type& cb);
-    boost::signals2::connection setIsFriendCallback(const is_friend_signal_t::slot_type& cb);
-    boost::signals2::connection setIsObjectBlockedCallback(const is_blocked_signal_t::slot_type& cb);
-    boost::signals2::connection setIsObjectReachableCallback(const is_obj_reachable_signal_t::slot_type& cb);
 
     void                    setWordWrap(bool wrap);
     LLScrollContainer*      getScrollContainer() const { return mScroller; }
@@ -890,11 +880,6 @@ protected:
 
     // Fired when a URL link is clicked
     commit_signal_t*            mURLClickSignal;
-
-    // Used to check if user with given ID is avatar's friend
-    is_friend_signal_t*         mIsFriendSignal;
-    is_blocked_signal_t*        mIsObjectBlockedSignal;
-    is_obj_reachable_signal_t*  mIsObjectReachableSignal;
 
 // [SL:KB] - Patch: Control-TextParser | Checked: 2012-07-10 (Catznip-3.3)
     S32                         mHighlightsMask;    // category mask for matching highlights

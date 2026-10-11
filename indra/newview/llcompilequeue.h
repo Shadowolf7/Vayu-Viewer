@@ -35,6 +35,8 @@
 
 #include "llevents.h"
 
+#include <map>
+
 class LLScrollListCtrl;
 
 //~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -59,7 +61,6 @@ public:
     /*virtual*/ bool postBuild() override;
 
     void setCompileTarget(std::string target) { mCompileTarget = target; }
-
     // addObject() accepts an object id.
     void addObject(const LLUUID& id, std::string name);
 

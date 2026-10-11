@@ -49,7 +49,7 @@
 #include "llfloaterimcontainer.h"
 #include "llrootview.h"
 #include "lllayoutstack.h"
-#include "llscripteditorws.h"
+#include "alscriptworkspace.h"
 
 // [RLVa:KB] - Checked: RLVa-2.0.0
 #include "rlvactions.h"
@@ -756,21 +756,19 @@ void LLFloaterIMNearbyChatHandler::processChat(const LLChat& chat_msg,
         return;
     }
 
-    if (LLScriptEditorWSServer::isEnabled() &&
-        gSavedSettings.getBOOL("ExternalWebsocketForwardDebug") &&
-        (chat_msg.mChatType == CHAT_TYPE_DEBUG_MSG ||
-         chat_msg.mChatType == CHAT_TYPE_OWNER))
+    // What scripts say, for Script Studio's output and the external
+    // editor bridge, both of which listen to the workspace.
+    if (chat_msg.mChatType == CHAT_TYPE_DEBUG_MSG || chat_msg.mChatType == CHAT_TYPE_OWNER)
     {
-        LLScriptEditorWSServer::ptr_t server =
-            LLScriptEditorWSServer::getServer();
-        if (server)
-        {
-            const auto channel =
-                chat_msg.mChatType == CHAT_TYPE_OWNER
-                    ? LLPublishedObjectMgr::RuntimeEventAggregator::Channel::OWNER_SAY
-                    : LLPublishedObjectMgr::RuntimeEventAggregator::Channel::DEBUG;
-            server->forwardChatToIDE(chat_msg, channel);
-        }
+        ALScriptWorkspace::instance().ingestChat(chat_msg);
+    }
+    // And what the agent's own objects say aloud, to the agent alone, or
+    // in an IM -- which comes here as chat, with the object's place.
+    else if (chat_msg.mSourceType == CHAT_SOURCE_OBJECT && chat_msg.mOwnerID == gAgentID &&
+             (chat_msg.mChatType == CHAT_TYPE_WHISPER || chat_msg.mChatType == CHAT_TYPE_NORMAL || chat_msg.mChatType == CHAT_TYPE_SHOUT ||
+              chat_msg.mChatType == CHAT_TYPE_DIRECT))
+    {
+        ALScriptWorkspace::instance().ingestChat(chat_msg, args.has("slurl"));
     }
 
     // don't show toast and add message to chat history on receive debug message

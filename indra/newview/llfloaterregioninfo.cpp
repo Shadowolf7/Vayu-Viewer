@@ -28,10 +28,13 @@
 #include "llviewerprecompiledheaders.h"
 #include "llfloaterregioninfo.h"
 
+#include "alnotecarditems.h"
+
 #include <algorithm>
 #include <functional>
 
 #include "lldir.h"
+#include "llnotecard.h"
 #include "lldispatcher.h"
 #include "llglheaders.h"
 #include "llregionflags.h"
@@ -47,7 +50,6 @@
 
 #include "llagent.h"
 #include "llappviewer.h"
-#include "llavataractions.h"
 #include "llavatarname.h"
 #include "llfloateravatarpicker.h"
 #include "llbutton.h"
@@ -2494,8 +2496,6 @@ bool LLPanelEstateInfo::postBuild()
 
     getChild<LLUICtrl>("externally_visible_radio")->setFocus(true);
 
-    getChild<LLTextBox>("estate_owner")->setIsFriendCallback(LLAvatarActions::isFriend);
-
     return LLPanelRegionInfo::postBuild();
 }
 
@@ -2745,7 +2745,6 @@ bool LLPanelEstateCovenant::postBuild()
 {
     mEstateNameText = getChild<LLTextBox>("estate_name_text");
     mEstateOwnerText = getChild<LLTextBox>("estate_owner_text");
-    mEstateOwnerText->setIsFriendCallback(LLAvatarActions::isFriend);
     mLastModifiedText = getChild<LLTextBox>("covenant_timestamp_text");
     mEditor = getChild<LLViewerTextEditor>("covenant_editor");
     LLButton* reset_button = getChild<LLButton>("reset_covenant");
@@ -2887,13 +2886,17 @@ void LLPanelEstateCovenant::onLoadComplete(const LLUUID& asset_uuid,
 
             if( (file_length > 19) && !strncmp( &buffer[0], "Linden text version", 19 ) )
             {
-                if( !panelp->mEditor->importBuffer( &buffer[0], file_length+1 ) )
+                LLNotecard         notecard(LLNotecard::MAX_SIZE);
+                std::istringstream in(std::string(&buffer[0], file_length));
+                if (!notecard.importStream(in))
                 {
                     LL_WARNS() << "Problem importing estate covenant." << LL_ENDL;
                     LLNotificationsUtil::add("ProblemImportingEstateCovenant");
                 }
                 else
                 {
+                    // The items a covenant carries are not shown here.
+                    panelp->mEditor->setText(ALNotecardItems::withoutItems(notecard.getText()));
                     panelp->sendChangeCovenantID(asset_uuid);
                 }
             }

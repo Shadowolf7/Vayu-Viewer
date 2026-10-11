@@ -38,12 +38,15 @@
 
 namespace tut
 {
+namespace
+{
     struct llquat_test
     {
     };
     typedef test_group<llquat_test> llquat_test_t;
     typedef llquat_test_t::object llquat_test_object_t;
     tut::llquat_test_t tut_llquat_test("LLQuaternion");
+}
 
     //test case for LLQuaternion::LLQuaternion(void) fn.
     template<> template<>
@@ -305,10 +308,13 @@ namespace tut
         LLQuaternion quat3(2341.340f, 2352.345f, 233.25f, 7645.5f);
         LLQuaternion quat4(674.067f, 893.0897f, 578.0f, 231.0f);
         result = quat3 * quat4;
-        ensure("2. LLQuaternion Operator* failed", (4543086.5f == result.mQ[0]) &&
-                                            (8567578.0f == result.mQ[1]) &&
-                                            (3967591.25f == result.mQ[2]) &&
-                                            is_approx_equal(-2047783.25f, result.mQ[3]));
+        // Products in the millions: the build contracts and reassociates
+        // the arithmetic, so the last bit or two of each is the
+        // machine's, not the one the constants were written on.
+        ensure("2. LLQuaternion Operator* failed", is_approx_equal_fraction(4543086.5f, result.mQ[0], 2) &&
+                                            is_approx_equal_fraction(8567578.0f, result.mQ[1], 2) &&
+                                            is_approx_equal_fraction(3967591.25f, result.mQ[2], 2) &&
+                                            is_approx_equal_fraction(-2047783.25f, result.mQ[3], 2));
 
         //inline LLQuaternion operator+(const LLQuaternion &a, const LLQuaternion &b)fn.
         result = quat1 + quat2;

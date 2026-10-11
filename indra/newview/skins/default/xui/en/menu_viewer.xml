@@ -77,8 +77,6 @@
         <menu_item_check.on_click
          function="Floater.Toggle"
          parameter="music_ticker" />
-        <menu_item_check.on_enable
-         function="EnableMusicTicker" />
       </menu_item_check>
       <menu_item_separator/>
       <menu_item_call
@@ -172,6 +170,13 @@
             <menu_item_call.on_click
              function="Floater.Toggle"
              parameter="preferences" />
+        </menu_item_call>
+        <menu_item_call
+         label="Lightbox..."
+         name="Lightbox Settings">
+            <menu_item_call.on_click
+             function="Floater.Toggle"
+             parameter="lightbox" />
         </menu_item_call>
          <menu_item_call
          label="Toolbar buttons..."
@@ -879,6 +884,16 @@
              parameter="360capture" />
         </menu_item_call>
         <menu_item_check
+         label="Lightbox"
+         name="Lightbox">
+            <menu_item_check.on_check
+             function="Floater.Visible"
+             parameter="lightbox" />
+            <menu_item_check.on_click
+             function="Floater.Toggle"
+             parameter="lightbox" />
+        </menu_item_check>
+        <menu_item_check
          label="Scopes"
          name="Scopes">
             <menu_item_check.on_check
@@ -1502,8 +1517,8 @@ function="World.EnvPreset"
           <menu_item_call.on_click
              function="Tools.LookAtSelection"
              parameter="focus" />
-          <menu_item_call.on_enable
-             function="Tools.SomethingSelectedNoHUD" />
+          <!--<menu_item_call.on_enable
+             function="Tools.SomethingSelectedNoHUD" />-->
         </menu_item_call>
         <menu_item_call
            label="Zoom to Selection"
@@ -1512,8 +1527,8 @@ function="World.EnvPreset"
           <menu_item_call.on_click
              function="Tools.LookAtSelection"
              parameter="zoom" />
-          <menu_item_call.on_enable
-             function="Tools.SomethingSelectedNoHUD" />
+          <!--<menu_item_call.on_enable
+             function="Tools.SomethingSelectedNoHUD" />-->
         </menu_item_call>
 		 
         <menu_item_separator/>
@@ -1589,6 +1604,17 @@ function="World.EnvPreset"
            name="Scripts"
            tear_off="true">
           <menu_item_check
+             label="Script Studio..."
+             name="Script Studio Build">
+            <menu_item_check.on_check
+             function="Floater.IsOpen"
+             parameter="script_studio" />
+            <menu_item_check.on_click
+             function="Floater.ToggleOrBringToFront"
+             parameter="script_studio" />
+          </menu_item_check>
+          <menu_item_separator/>
+          <menu_item_check
              label="Script warnings/errors..."
              name="Script debug">
             <menu_item_check.on_check
@@ -1599,7 +1625,7 @@ function="World.EnvPreset"
              parameter="script_debug" />
           </menu_item_check>
           <menu_item_call
-             label="Recompile Scripts (Mono)"
+             label="Recompile Scripts as LSL (Mono)"
              name="Mono">
             <menu_item_call.on_click
                function="Tools.SelectedScriptAction"
@@ -1608,7 +1634,7 @@ function="World.EnvPreset"
                function="EditableSelectedMono" />
           </menu_item_call>
           <menu_item_call
-             label="Recompile Scripts (LSL)"
+             label="Recompile Scripts as LSL (LSO)"
              name="LSL">
             <menu_item_call.on_click
                function="Tools.SelectedScriptAction"
@@ -1617,7 +1643,7 @@ function="World.EnvPreset"
                function="EditableSelected" />
           </menu_item_call>
           <menu_item_call
-             label="Recompile Scripts (Lua)"
+             label="Recompile Scripts as SLua"
              name="Lua">
             <menu_item_call.on_click
                function="Tools.SelectedScriptAction"
@@ -1626,7 +1652,7 @@ function="World.EnvPreset"
                function="EditableSelectedLua" />
           </menu_item_call>
           <menu_item_call
-             label="Recompile Scripts (LSL on Luau)"
+             label="Recompile Scripts as LSL (Luau)"
              name="LSL on Luau">
             <menu_item_call.on_click
                function="Tools.SelectedScriptAction"
@@ -1821,6 +1847,15 @@ function="World.EnvPreset"
                      control="RenderHiddenSelections" />
                     <menu_item_check.on_click
                      function="Tools.ShowHiddenSelection" />
+                </menu_item_check>
+                <menu_item_check
+                 label="Show Selection Wireframe"
+                 name="Show Selection Wireframe">
+                    <menu_item_check.on_check
+                     control="AlchemySelectionWireframe" />
+                    <menu_item_check.on_click
+                     function="ToggleControl"
+                     parameter="AlchemySelectionWireframe" />
                 </menu_item_check>
                 <menu_item_check
                  label="Show Light Radius for Selection"
@@ -2210,8 +2245,8 @@ function="World.EnvPreset"
                  function="ReportAbuse" />
             </menu_item_call>
         <menu_item_call
-             label="Report Bug"
-             name="Report Bug">
+             label="Send Feedback..."
+             name="Send Feedback">
                 <menu_item_call.on_click
                  function="Advanced.ReportBug"/>
             </menu_item_call>
@@ -3539,6 +3574,14 @@ function="World.EnvPreset"
                 parameter="mem_leaking" />
                </menu_item_call>
         </menu>
+        <menu_item_call
+         label="Send Test Feedback..."
+         name="Send Test Feedback">
+            <menu_item_call.on_click
+             function="Advanced.SendTestFeedback" />
+            <menu_item_call.on_enable
+             function="Feedback.CanSend" />
+        </menu_item_call>
       <menu
          create_jump_keys="true"
          label="Video"
@@ -3923,6 +3966,53 @@ function="World.EnvPreset"
          label="Rendering"
          name="Rendering"
          tear_off="true">
+            <menu
+             create_jump_keys="true"
+             label="Far Plane"
+             name="Far Plane"
+             tear_off="true">
+                <menu_item_check
+                 label="Projection Overlay"
+                 name="Projection Overlay">
+                    <menu_item_check.on_check
+                     function="CheckControl"
+                     parameter="AlchemyRenderFarPlaneOverlay" />
+                    <menu_item_check.on_click
+                     function="ToggleControl"
+                     parameter="AlchemyRenderFarPlaneOverlay" />
+                </menu_item_check>
+                <menu_item_separator />
+                <menu_item_check
+                 label="Projection: Automatic"
+                 name="Projection Automatic">
+                    <menu_item_check.on_check
+                     function="Advanced.CheckFarPlaneForce"
+                     parameter="0" />
+                    <menu_item_check.on_click
+                     function="Advanced.SetFarPlaneForce"
+                     parameter="0" />
+                </menu_item_check>
+                <menu_item_check
+                 label="Projection: Finite (2x draw distance)"
+                 name="Projection Finite">
+                    <menu_item_check.on_check
+                     function="Advanced.CheckFarPlaneForce"
+                     parameter="1" />
+                    <menu_item_check.on_click
+                     function="Advanced.SetFarPlaneForce"
+                     parameter="1" />
+                </menu_item_check>
+                <menu_item_check
+                 label="Projection: Infinite (reverse-Z)"
+                 name="Projection Infinite">
+                    <menu_item_check.on_check
+                     function="Advanced.CheckFarPlaneForce"
+                     parameter="2" />
+                    <menu_item_check.on_click
+                     function="Advanced.SetFarPlaneForce"
+                     parameter="2" />
+                </menu_item_check>
+            </menu>
             <menu_item_check
              label="Axes"
              name="Axes">
@@ -3987,8 +4077,6 @@ function="World.EnvPreset"
             <menu_item_check.on_click
              function="Advanced.ClickRenderShadowOption"
              parameter="RenderShadowDetail" />
-            <menu_item_check.on_enable
-                 function="Advanced.EnableRenderDeferredOptions" />
           </menu_item_check>
           <menu_item_check
                    label="   SSAO and Shadow Smoothing"
@@ -3999,8 +4087,6 @@ function="World.EnvPreset"
             <menu_item_check.on_click
              function="ToggleControl"
              parameter="RenderDeferredSSAO" />
-            <menu_item_check.on_enable
-                 function="Advanced.EnableRenderDeferredOptions" />
           </menu_item_check>
           <menu_item_separator />
 
@@ -4093,6 +4179,16 @@ function="World.EnvPreset"
                 <menu_item_check.on_click
                  function="Advanced.HandleAttachedLightParticles"
                  parameter="RenderAttachedParticles" />
+            </menu_item_check>
+            <menu_item_check
+             label="Hover Glow Objects"
+             name="Hover Glow Objects">
+                <menu_item_check.on_check
+                 function="CheckControl"
+                 parameter="RenderHoverGlowEnable" />
+                <menu_item_check.on_click
+                 function="ToggleControl"
+                 parameter="RenderHoverGlowEnable" />
             </menu_item_check>
             <menu_item_check
               label="Render Avatar Cloth"
@@ -4557,6 +4653,13 @@ function="World.EnvPreset"
              <menu_item_call.on_click
               function="Floater.Toggle"
               parameter="xui_studio" />
+            </menu_item_call>
+            <menu_item_call
+             label="Script Studio"
+             name="Script Studio">
+             <menu_item_call.on_click
+              function="Floater.Toggle"
+              parameter="script_studio" />
             </menu_item_call>
             <menu_item_call
              label="Show Color settings"

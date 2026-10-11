@@ -108,6 +108,7 @@ LLViewerObjectList::LLViewerObjectList()
     mNumOrphans = 0;
     mNumNewObjects = 0;
     mWasPaused = false;
+    mAgentPaused = false;
     mNumDeadObjectUpdates = 0;
     mNumUnknownUpdates = 0;
 }
@@ -942,29 +943,12 @@ void LLViewerObjectList::update(LLAgent &agent)
     static LLCachedControl<bool> animate_textures(gSavedSettings, "AnimateTextures", true);
     gAnimateTextures = animate_textures;
 
-    // update global timer
-    F32 last_time = gFrameTimeSeconds;
-    U64Microseconds time = totalTime();              // this will become the new gFrameTime when the update is done
-    // Time _can_ go backwards, for example if the user changes the system clock.
-    // It doesn't cause any fatal problems (just some oddness with stats), so we shouldn't assert here.
-//  llassert(time > gFrameTime);
-    F64Seconds time_diff = time - gFrameTime;
-    gFrameTime  = time;
-    F64Seconds time_since_start = gFrameTime - gStartTime;
-    gFrameTimeSeconds = time_since_start;
-
-    gFrameIntervalSeconds = gFrameTimeSeconds - last_time;
-    if (gFrameIntervalSeconds < 0.f)
-    {
-        gFrameIntervalSeconds = 0.f;
-    }
-
     //clear avatar LOD change counter
     LLVOAvatar::sNumLODChangesThisFrame = 0;
 
     updateDeferredSeatKills();
 
-    const F64 frame_time = LLFrameTimer::getElapsedSeconds();
+    const F64 frame_time = LLFrameTimer::getUptimeSeconds();
 
     LLViewerObject *objectp = NULL;
 
@@ -1073,8 +1057,9 @@ void LLViewerObjectList::update(LLAgent &agent)
     // don't factor frames that were paused into the stats
     if (! mWasPaused)
     {
-        LLViewerStats::getInstance()->updateFrameStats(time_diff);
+        LLViewerStats::getInstance()->updateFrameStats(F64Seconds(gFrameIntervalSeconds.value()));
     }
+    mWasPaused = mAgentPaused;
 
     /*
     // Debugging code for viewing orphans, and orphaned parents
@@ -1440,6 +1425,7 @@ void LLViewerObjectList::cleanupReferences(LLViewerObject *objectp)
     LL_DEBUGS("ObjectUpdate") << " dereferencing id " << objectp->mID << LL_ENDL;
 
     mUUIDObjectMap.erase(objectp->mID);
+    mPresenceSignal(objectp->mID, false);
 
     //if (objectp->getRegion())
     //{
@@ -2105,6 +2091,7 @@ LLViewerObject *LLViewerObjectList::createObjectViewer(const LLPCode pcode, LLVi
     }
 
     mUUIDObjectMap[fullid] = objectp;
+    mPresenceSignal(fullid, true);
 
     mObjects.push_back(objectp);
 
@@ -2128,6 +2115,7 @@ LLViewerObject *LLViewerObjectList::createObjectFromCache(const LLPCode pcode, L
 
     objectp->mLocalID = local_id;
     mUUIDObjectMap[uuid] = objectp;
+    mPresenceSignal(uuid, true);
     setUUIDAndLocal(uuid,
                     local_id,
                     regionp->getHost().getAddress(),
@@ -2167,6 +2155,7 @@ LLViewerObject *LLViewerObjectList::createObject(const LLPCode pcode, LLViewerRe
     }
 
     mUUIDObjectMap[fullid] = objectp;
+    mPresenceSignal(fullid, true);
     setUUIDAndLocal(fullid,
                     local_id,
                     gMessageSystem->getSenderIP(),
@@ -2387,7 +2376,7 @@ void LLViewerObjectList::findOrphans(LLViewerObject* objectp, U32 ip, U32 port)
             addDebugBeacon(objectp->getPositionAgent(),"");
 #endif
             gPipeline.markMoved(objectp->mDrawable);
-            objectp->setChanged(LLXform::MOVED | LLXform::SILHOUETTE);
+            objectp->setChanged(LLXform::MOVED);
 
             // Flag the object as no longer orphaned
             childp->mOrphaned = false;

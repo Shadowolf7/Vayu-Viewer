@@ -24,24 +24,18 @@
 
 #include "linden_common.h"
 
-#include "../alxuisourcemap.h"
+#include "alxuisourcemap.h"
 #include "../lldraghandle.h"
 #include "../llfloater.h"
 #include "../llpanel.h"
 #include "../lluictrlfactory.h"
 
 #include "alheadlessui_fixture.h"
+#include "aluistatescope.h"
 
 #include "../test/lltut.h"
 
 #include <cstring>
-
-class LLAvatarName;
-const std::string gSourceMapTestAnonName("Anon");
-const std::string& rlvGetAnonym(const LLAvatarName& av_name)
-{
-    return gSourceMapTestAnonName;
-}
 
 namespace tut
 {
@@ -151,7 +145,7 @@ namespace tut
         }
 
         std::unique_ptr<LLFloaterView> fv(floaterView());
-        gFloaterView = fv.get();
+        ll_test::FloaterViewScope floater_view(fv.get());
 
         LLXMLNodePtr root;
         LLFloater* floater = build(fv.get(), root);
@@ -203,6 +197,5 @@ namespace tut
 
         delete floater;
         fv.reset();
-        gFloaterView = nullptr;
     }
 }

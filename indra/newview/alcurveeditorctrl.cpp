@@ -25,6 +25,7 @@
 #include "llviewerprecompiledheaders.h"
 
 #include "alcurveeditorctrl.h"
+#include "alsurface.h"
 
 #include "llfocusmgr.h"
 #include "lllocalcliprect.h"
@@ -46,7 +47,7 @@ constexpr S32 GRAB_SLOP = 4;
 
 ALCurveEditorCtrl::Params::Params()
 :   background_color("background_color", LLUIColorTable::instance().getColor("PanelDefaultBackgroundColor")),
-    border_color("border_color", LLUIColorTable::instance().getColor("DefaultShadowLight")),
+    border_color("border_color", ALSurface::well()),
     grid_color("grid_color", LLUIColorTable::instance().getColor("DefaultShadowDark")),
     curve_color("curve_color", LLUIColorTable::instance().getColor("White")),
     handle_color("handle_color", LLUIColorTable::instance().getColor("White")),
@@ -168,8 +169,7 @@ bool ALCurveEditorCtrl::handleMouseDown(S32 x, S32 y, MASK mask)
     graphToPixel(mHandles[index].mX, mHandles[index].mY, hx, hy);
     mGrabOffsetX = x - hx;
     mGrabOffsetY = y - hy;
-    mLastPointerX = x;
-    mLastPointerY = y;
+    mDrag.press(x, y);
 
     gFocusMgr.setMouseCapture(this);
     setFocus(true);
@@ -193,13 +193,12 @@ bool ALCurveEditorCtrl::handleHover(S32 x, S32 y, MASK mask)
     // llviewerwindow.cpp), not only on motion. A press that never moves must
     // not commit: it would rewrite the value at pixel resolution, dirty the
     // Look and put a step on the undo stack for a click -- and the first
-    // half of a double-click is exactly such a press.
-    if (x == mLastPointerX && y == mLastPointerY)
+    // half of a double-click is exactly such a press. The gesture says a
+    // move only where the pointer went somewhere.
+    if (!mDrag.moved(x, y))
     {
         return true;
     }
-    mLastPointerX = x;
-    mLastPointerY = y;
 
     F32 gx, gy;
     pixelToGraph(x - mGrabOffsetX, y - mGrabOffsetY, gx, gy);
@@ -232,9 +231,20 @@ bool ALCurveEditorCtrl::handleMouseUp(S32 x, S32 y, MASK mask)
         return LLUICtrl::handleMouseUp(x, y, mask);
     }
 
+    mDrag.release();
     gFocusMgr.setMouseCapture(nullptr);
     mDragIndex = -1;
     return true;
+}
+
+// Taken away mid-drag -- a menu, another window -- the drag is over: the
+// handle is no longer the one being dragged, and is not drawn as it.
+// What the drag committed as it went stands, as a release would leave it.
+void ALCurveEditorCtrl::onMouseCaptureLost()
+{
+    mDrag.cancel();
+    mDragIndex = -1;
+    LLUICtrl::onMouseCaptureLost();
 }
 
 bool ALCurveEditorCtrl::handleDoubleClick(S32 x, S32 y, MASK mask)
@@ -255,6 +265,7 @@ bool ALCurveEditorCtrl::handleDoubleClick(S32 x, S32 y, MASK mask)
     {
         gFocusMgr.setMouseCapture(nullptr);
     }
+    mDrag.cancel();
     mDragIndex = -1;
 
     const S32 index = hitTest(x, y);

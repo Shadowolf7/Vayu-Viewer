@@ -24,7 +24,7 @@
 
 #include "linden_common.h"
 
-#include "../alxuioverlay.h"
+#include "alxuioverlay.h"
 
 #include "alxmllayermerge.h"
 #include "llxmlnode.h"
@@ -32,15 +32,6 @@
 #include "../test/lltut.h"
 
 #include <string>
-
-// llui reaches the viewer for this one, and linking any of the library pulls
-// the object that calls it. Nothing under test goes near it.
-class LLAvatarName;
-const std::string gOverlayTestAnonName("Anon");
-const std::string& rlvGetAnonym(const LLAvatarName& av_name)
-{
-    return gOverlayTestAnonName;
-}
 
 namespace tut
 {

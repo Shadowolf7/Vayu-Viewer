@@ -129,6 +129,29 @@ public:
     virtual bool addToAcceleratorList(std::list<LLMenuKeyboardBinding*> *listp);
     void setAllowKeyRepeat(bool allow) { mAllowKeyRepeat = allow; }
     bool getAllowKeyRepeat() const { return mAllowKeyRepeat; }
+    // The key and the modifiers that take the item from the keyboard, or
+    // KEY_NONE; and the two as the platform writes them, "Ctrl+S" or the
+    // Mac's symbols, or nothing.
+    KEY         getAcceleratorKey() const { return mAcceleratorKey; }
+    MASK        getAcceleratorMask() const { return mAcceleratorMask; }
+    std::string getAcceleratorString() const;
+    // The keys drawn beside a context menu's item where they belong to
+    // someone else -- a keymap a person may change -- rather than to the
+    // menu; KEY_NONE for none.
+    void        setShownAccelerator(KEY key, MASK mask)
+    {
+        mAcceleratorKey  = key;
+        mAcceleratorMask = mask;
+        buildDrawLabel();
+    }
+    // Keys drawn beside the item that it does not answer to itself -- two
+    // in turn, which the window it is in waits for -- or none. A key it
+    // answers to stands in their place.
+    void        setShownKeys(const std::string& keys)
+    {
+        mShownKeys = keys;
+        buildDrawLabel();
+    }
 
     // change the label
     void setLabel( const LLStringExplicit& label ) { mLabel = label; }
@@ -230,6 +253,7 @@ protected:
 protected:
     KEY mAcceleratorKey;
     MASK mAcceleratorMask;
+    std::string mShownKeys;
     // mLabel contains the actual label specified by the user.
     LLUIString mLabel;
 

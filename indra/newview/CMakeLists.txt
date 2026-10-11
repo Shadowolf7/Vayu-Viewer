@@ -32,6 +32,15 @@ if(AL_BUILD_VIEWER)
     "${CMAKE_CURRENT_SOURCE_DIR}/skins/default/html/common/equirectangular/js/OrbitControls.js"
     COPYONLY
   )
+endif()
+
+# What the tests read from this source tree as the viewer does: the grid's
+# LSL definitions, and the fonts the UI tests lay text out in with
+# LLUI_TEST_APP_DIR as their application directory. Staged for a build of
+# the tests alone as well, which would otherwise find no definitions and
+# lay text out in whatever fonts the host has.
+if(AL_BUILD_VIEWER OR AL_BUILD_TESTS)
+  # LSL Definitions
   find_package(unofficial-lsl-definitions CONFIG REQUIRED)
   configure_file(
     "${LSL_DEFINITIONS_DIR}/lsl_keywords.xml"
@@ -43,12 +52,25 @@ if(AL_BUILD_VIEWER)
     "${CMAKE_CURRENT_SOURCE_DIR}/app_settings/keywords_lua_default.xml"
     COPYONLY
   )
+  # The rest of the definitions, for the analyzers: the Luau type
+  # definitions, their documentation and the LSL builtins, laid out as the
+  # install step lays them out, so that a build-tree run finds them in the
+  # same place an installed viewer does.
+  foreach(definition builtins.txt secondlife.d.luau secondlife.docs.json)
+    configure_file(
+      "${LSL_DEFINITIONS_DIR}/${definition}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/app_settings/syntax_default/${definition}"
+      COPYONLY
+    )
+  endforeach()
 
   find_package(unofficial-alchemy-fonts CONFIG REQUIRED)
   message(VERBOSE "Copying fonts from ${ALCHEMY_FONTS_DIR}")
   file(GLOB FONT_FILE_GLOB_LIST "${ALCHEMY_FONTS_DIR}/*")
   file(COPY ${FONT_FILE_GLOB_LIST} DESTINATION "${CMAKE_CURRENT_SOURCE_DIR}/fonts")
+endif()
 
+if(AL_BUILD_VIEWER)
   # Copy over the Emoji/shortcodes mapping XML files (and create dependency
   # if they are changed, CMake will run again and copy over new versions)
   find_package(unofficial-emoji-shortcodes CONFIG REQUIRED)
@@ -91,26 +113,10 @@ if(AL_BUILD_VIEWER)
       "${CMAKE_CURRENT_SOURCE_DIR}/res/ll_icon.ico"
       ONLY_IF_DIFFERENT
     )
-    file(
-      COPY_FILE "${BRANDING_SOURCE_DIR}/viewer/icons/${ICON_PATH}/vayu_256.BMP"
-      "${CMAKE_CURRENT_SOURCE_DIR}/res/ll_icon.BMP"
-      ONLY_IF_DIFFERENT
-    )
-    file(
-      COPY_FILE "${BRANDING_SOURCE_DIR}/viewer/icons/${ICON_PATH}/vayu_256.BMP"
-      "${CMAKE_CURRENT_SOURCE_DIR}/res-sdl/ll_icon.BMP"
-      ONLY_IF_DIFFERENT
-    )
   elseif(DARWIN)
     file(
       COPY_FILE "${BRANDING_SOURCE_DIR}/viewer/icons/${ICON_PATH}/vayu.icns"
       "${CMAKE_CURRENT_SOURCE_DIR}/vayu.icns"
-      ONLY_IF_DIFFERENT
-    )
-  elseif(LINUX)
-    file(
-      COPY_FILE "${BRANDING_SOURCE_DIR}/viewer/icons/${ICON_PATH}/vayu_256.BMP"
-      "${CMAKE_CURRENT_SOURCE_DIR}/res-sdl/ll_icon.BMP"
       ONLY_IF_DIFFERENT
     )
   endif()
@@ -135,6 +141,7 @@ if(AL_BUILD_VIEWER)
     alchatautocomplete.cpp
     alchatbar.cpp
     alchatcommand.cpp
+    alchattimestamp.cpp
     alcheatcodes.cpp
     alclassifieditem.cpp
     alcolorwheelctrl.cpp
@@ -144,10 +151,14 @@ if(AL_BUILD_VIEWER)
     aldaycyclelandmarks.cpp
     alderenderlist.cpp
     aldroptarget.cpp
+    alfarplane.cpp
+    alfarplaneoverlay.cpp
     alfloaterblocked.cpp
     alfloaterdirectory.cpp
     alfloaterevent.cpp
     alfloaterexploresounds.cpp
+    alfloaterfeedback.cpp
+    alfloaterfeedbackpreview.cpp
     alfloatergenerictext.cpp
     alfloatergroupprofile.cpp
     alfloaterlightbox.cpp
@@ -161,18 +172,101 @@ if(AL_BUILD_VIEWER)
     alfloatertransactionlog.cpp
     alsceneexplorerpredicate.cpp
     alscopedata.cpp
+    alscriptanalysis.cpp
+    alscriptanalysislane.cpp
+    alscriptanalyzers.cpp
+    alscriptcontentsindex.cpp
+    alscriptcrumbsbar.cpp
+    alscriptdiskmasters.cpp
+    alscriptexplorermodel.cpp
+    alscriptexplorerpane.cpp
+    alscriptexplorertree.cpp
+    alscriptexternaleditor.cpp
+    alfloaterscriptpreferences.cpp
+    alscriptinspectorpane.cpp
+    alscriptincluderesolver.cpp
+    alscriptinventoryindex.cpp
+    alscriptkeymap.cpp
+    alscriptkeypresets.cpp
+    alpanelscriptaliases.cpp
+    alpanelscriptkeymap.cpp
+    alscriptlinkbadges.cpp
+    alscriptlinkpane.cpp
+    alscriptlinkscripts.cpp
+    alscriptlookup.cpp
+    alscriptmasteradopt.cpp
+    alscriptmasterfanout.cpp
+    alscriptmastertoasts.cpp
+    alscriptmasterupload.cpp
+    alscriptobjectcheck.cpp
+    alscriptrecompile.cpp
+    alscriptnavigation.cpp
+    alscriptmodules.cpp
+    alscriptnoticebar.cpp
+    alscriptitemdrop.cpp
+    alnotecardembedded.cpp
+    alnotecardworld.cpp
+    alscriptoutlinepane.cpp
+    alscriptoutputpane.cpp
+    alscriptpreprocessor.cpp
+    alscriptproblemspane.cpp
+    alscriptreferencespane.cpp
+    alscriptregionusage.cpp
+    alscriptsaveflow.cpp
+    alscriptsearch.cpp
+    alscriptsearchpane.cpp
+    alscriptsnippets.cpp
+    alscriptstudioaccount.cpp
+    alscriptstudiocaret.cpp
+    alscriptstudiochecking.cpp
+    alscriptstudiocommands.cpp
+    alscriptstudiocomparepairs.cpp
+    alscriptstudiocomparewith.cpp
+    alscriptstudioexpandedcompare.cpp
+    alscriptstudiodiskmasters.cpp
+    alscriptstudiodoc.cpp
+    alscriptstudiofileio.cpp
+    alscriptstudioglue.cpp
+    alscriptstudiofiles.cpp
+    alscriptstudioorphans.cpp
+    alscriptstudioplaces.cpp
+    alscriptstudiohistory.cpp
+    alscriptstudiomasters.cpp
+    alscriptstudiomerging.cpp
+    alscriptstudiorecovery.cpp
+    alscriptstudioselections.cpp
+    alrecovery.cpp
+    alrecoverykeeper.cpp
+    alscriptstudiosaving.cpp
+    alscriptstudioviewer.cpp
+    alscriptstudiovim.cpp
+    alfollowednotecard.cpp
+    alscriptstudiosnippetnotecard.cpp
+    alscriptstudiovimrc.cpp
+    alscriptstudioweighing.cpp
+    alscriptstudiowords.cpp
+    alscripttheme.cpp
+    alscripttypes.cpp
+    alscriptweightspane.cpp
+    alscriptworkspace.cpp
     alterrainsurfacemaps.cpp
+    alfloaterscriptstudio.cpp
     alfloaterwebprofile.cpp
     alfloaterxuilibrary.cpp
     alfloaterxuistudio.cpp
     alviewcapture.cpp
     algradehistory.cpp
+    alhoverglow.cpp
     allegacynotificationwellwindow.cpp
     allightboxdirectory.cpp
     almotionpredictor.cpp
     alobjectproperties.cpp
     alagentlocationformat.cpp
     alcrashreporter.cpp
+    alcrashreporter_run.cpp
+    alfeedback.cpp
+    alfeedback_send.cpp
+    alfeedbackoutbox.cpp
     alpanelaomini.cpp
     alparceliconstrip.cpp
     alpanelaopulldown.cpp
@@ -197,6 +291,7 @@ if(AL_BUILD_VIEWER)
     alpanelstreaminfo.cpp
     alpickitem.cpp
     alsceneexplorermodel.cpp
+    alselectionoutline.cpp
     alstreaminfo.cpp
     altoolalign.cpp
     altoolscenepicker.cpp
@@ -326,7 +421,6 @@ if(AL_BUILD_VIEWER)
     llflexibleobject.cpp
     llfloater360capture.cpp
     llfloaterabout.cpp
-    llfloaterassetrecovery.cpp
     llfloateravatarwelcomepack.cpp
     llfloaterbvhpreview.cpp
     llfloaterauction.cpp
@@ -374,7 +468,6 @@ if(AL_BUILD_VIEWER)
     llfloatergesture.cpp
     llfloatergestureautocompletepicker.cpp
     llfloatergodtools.cpp
-    llfloatergotoline.cpp
     llfloatergridstatus.cpp
     llfloatergroupbulkban.cpp
     llfloatergroupinvite.cpp
@@ -439,10 +532,8 @@ if(AL_BUILD_VIEWER)
     llfloatersaveprefpreset.cpp
     llfloatersceneloadstats.cpp
     llfloaterscriptdebug.cpp
-    llfloaterscriptedprefs.cpp
     llfloaterscripting.cpp
     llfloaterscriptlimits.cpp
-    llfloatersearchreplace.cpp
     llfloatersellland.cpp
     llfloatersettingscolor.cpp
     llfloatersettingsdebug.cpp
@@ -525,6 +616,7 @@ if(AL_BUILD_VIEWER)
     llkeyconflict.cpp
     lllandmarkactions.cpp
     lllandmarklist.cpp
+    lllivelslfile.cpp
     lllegacyatmospherics.cpp
     lllistcontextmenu.cpp
     lllistview.cpp
@@ -695,7 +787,6 @@ if(AL_BUILD_VIEWER)
     llpreviewanim.cpp
     llpreviewgesture.cpp
     llpreviewnotecard.cpp
-    llpreviewscript.cpp
     llpreviewsound.cpp
     llpreviewtexture.cpp
     llproductinforequest.cpp
@@ -712,7 +803,6 @@ if(AL_BUILD_VIEWER)
     llscenemonitor.cpp
     llsceneview.cpp
     llscreenchannel.cpp
-    llscripteditor.cpp
     llscripteditorws.cpp
     llscriptfloater.cpp
     llscrollingpanelparam.cpp
@@ -928,6 +1018,7 @@ if(AL_BUILD_VIEWER)
     alchatautocomplete.h
     alchatbar.h
     alchatcommand.h
+    alchattimestamp.h
     alclassifieditem.h
     alcolorwheelctrl.h
     alcolorwheelmodel.h
@@ -936,10 +1027,14 @@ if(AL_BUILD_VIEWER)
     aldaycyclelandmarks.h
     alderenderlist.h
     aldroptarget.h
+    alfarplane.h
+    alfarplaneoverlay.h
     alfloaterblocked.h
     alfloaterdirectory.h
     alfloaterevent.h
     alfloaterexploresounds.h
+    alfloaterfeedback.h
+    alfloaterfeedbackpreview.h
     alfloatergenerictext.h
     alfloatergroupprofile.h
     alfloaterlightbox.h
@@ -953,19 +1048,108 @@ if(AL_BUILD_VIEWER)
     alfloatertransactionlog.h
     alsceneexplorerpredicate.h
     alscopedata.h
+    alscriptanalysis.h
+    alscriptanalysislane.h
+    alscriptanalyzers.h
+    alscriptcontentsindex.h
+    alscriptcrumbsbar.h
+    alscriptdiskmasters.h
+    alscriptexplorermodel.h
+    alscriptexplorerpane.h
+    alscriptexplorertree.h
+    alscriptexternaleditor.h
+    alfloaterscriptpreferences.h
+    alscriptinspectorpane.h
+    alscriptincluderesolver.h
+    alscriptinventoryindex.h
+    alscriptjobqueue.h
+    alscriptkeymap.h
+    alscriptkeypresets.h
+    alpanelscriptaliases.h
+    alpanelscriptkeymap.h
+    alscriptlinkbadges.h
+    alscriptlinkpane.h
+    alscriptlinkscripts.h
+    alscriptlookup.h
+    alscriptobjectcheck.h
+    alscriptrecompile.h
+    alscriptnavigation.h
+    alscriptmodules.h
+    alscriptnoticebar.h
+    alscriptitemdrop.h
+    alnotecardembedded.h
+    alnotecardworld.h
+    alscriptoutlinepane.h
+    alscriptoutputpane.h
+    alscriptpreprocessor.h
+    alscriptproblemspane.h
+    alscriptreferencespane.h
+    alscriptregionusage.h
+    alscriptsaveflow.h
+    alscriptsearch.h
+    alscriptsearchpane.h
+    alscriptsnippets.h
+    alscriptstudio.h
+    alscriptstudioaccount.h
+    alscriptstudiocaret.h
+    alscriptstudiochecking.h
+    alscriptstudiocommands.h
+    alscriptstudiocomparepairs.h
+    alscriptstudiocomparewith.h
+    alscriptstudioexpandedcompare.h
+    alscriptstudiodoc.h
+    alscriptstudiofileio.h
+    alscriptstudioglue.h
+    alscriptstudiofiles.h
+    alscriptstudioorphans.h
+    alscriptstudiopane.h
+    alscriptstudioplaces.h
+    alscriptstudiohistory.h
+    alscriptstudiomerging.h
+    alscriptmasteradopt.h
+    alscriptmasterfanout.h
+    alscriptmastertoasts.h
+    alscriptmasterupload.h
+    alscriptstudiodiskmasters.h
+    alscriptstudiomasters.h
+    alscriptstudiorecovery.h
+    alscriptstudioselections.h
+    alrecovery.h
+    alrecoverykeeper.h
+    alscriptstudiosaving.h
+    alscriptstudiovim.h
+    alfollowednotecard.h
+    alscriptstudiosnippetnotecard.h
+    alscriptstudiovimrc.h
+    alscriptstudioweighing.h
+    alscriptstudiowords.h
+    alscriptstudioanalysis.h
+    alscriptstudiosaves.h
+    alscriptstudioservices.h
+    alscriptstudiotabs.h
+    alscriptstudioviewer.h
+    alscripttheme.h
+    alscripttypes.h
+    alscriptweightspane.h
+    alscriptworkspace.h
     alterrainsurfacemaps.h
     altexturetable.h
+    alfloaterscriptstudio.h
     alfloaterwebprofile.h
     alfloaterxuilibrary.h
     alfloaterxuistudio.h
     alviewcapture.h
     algradehistory.h
+    alhoverglow.h
+    alhuddepth.h
     allegacynotificationwellwindow.h
     allightboxdirectory.h
     almotionpredictor.h
     alobjectproperties.h
     alagentlocationformat.h
     alcrashreporter.h
+    alfeedback.h
+    alfeedbackoutbox.h
     alpanelaomini.h
     alparceliconstrip.h
     alpanelaopulldown.h
@@ -990,6 +1174,7 @@ if(AL_BUILD_VIEWER)
     alpanelstreaminfo.h
     alpickitem.h
     alsceneexplorermodel.h
+    alselectionoutline.h
     alstreaminfo.h
     altoolalign.h
     altoolscenepicker.h
@@ -1122,7 +1307,6 @@ if(AL_BUILD_VIEWER)
     llflexibleobject.h
     llfloater360capture.h
     llfloaterabout.h
-    llfloaterassetrecovery.h
     llfloateravatarwelcomepack.h
     llfloaterbvhpreview.h
     llfloaterauction.h
@@ -1170,7 +1354,6 @@ if(AL_BUILD_VIEWER)
     llfloatergesture.h
     llfloatergestureautocompletepicker.h
     llfloatergodtools.h
-    llfloatergotoline.h
     llfloatergridstatus.h
     llfloatergroupbulkban.h
     llfloatergroupinvite.h
@@ -1239,10 +1422,8 @@ if(AL_BUILD_VIEWER)
     llfloatersaveprefpreset.h
     llfloatersceneloadstats.h
     llfloaterscriptdebug.h
-    llfloaterscriptedprefs.h
     llfloaterscripting.h
     llfloaterscriptlimits.h
-    llfloatersearchreplace.h
     llfloatersellland.h
     llfloatersettingscolor.h
     llfloatersettingsdebug.h
@@ -1323,6 +1504,7 @@ if(AL_BUILD_VIEWER)
     llkeyconflict.h
     lllandmarkactions.h
     lllandmarklist.h
+    lllivelslfile.h
     lllightconstants.h
     lllistcontextmenu.h
     lllistview.h
@@ -1479,7 +1661,6 @@ if(AL_BUILD_VIEWER)
     llpreviewanim.h
     llpreviewgesture.h
     llpreviewnotecard.h
-    llpreviewscript.h
     llpreviewsound.h
     llpreviewtexture.h
     llproductinforequest.h
@@ -1498,7 +1679,6 @@ if(AL_BUILD_VIEWER)
     llscenemonitor.h
     llsceneview.h
     llscreenchannel.h
-    llscripteditor.h
     llscripteditorws.h
     llscriptfloater.h
     llscriptruntimeperms.h
@@ -1709,6 +1889,12 @@ if(AL_BUILD_VIEWER)
     roles_constants.h
   )
 
+  # Discord rich presence, over the SDK from the private registry.
+  if(AL_USE_DISCORD)
+    list(APPEND viewer_SOURCES aldiscordmanager.cpp)
+    list(APPEND viewer_HEADERS aldiscordmanager.h)
+  endif()
+
   # The version as one line, for the hosted build's metadata.
   file(
     WRITE "${CMAKE_CURRENT_BINARY_DIR}/viewer_version.txt"
@@ -1756,8 +1942,8 @@ if(AL_BUILD_VIEWER)
   endif()
 
   if(LINUX)
-    list(APPEND viewer_SOURCES llappviewersdl.cpp)
-    list(APPEND viewer_HEADERS llappviewersdl.h)
+    list(APPEND viewer_SOURCES llappviewersdl.cpp llvelopack.cpp)
+    list(APPEND viewer_HEADERS llappviewersdl.h llvelopack.h)
   endif()
 
   # The crash reporter's body, where its SDK is.
@@ -1813,8 +1999,6 @@ if(AL_BUILD_VIEWER)
       res/lltooltranslate.cur
       res/lltoolzoomin.cur
       res/lltoolzoomout.cur
-      res-sdl/ll_icon.BMP
-      res/ll_icon.BMP
       res/ll_icon.ico
       res/resource.h
       res/toolpickobject.cur
@@ -1934,6 +2118,7 @@ if(AL_BUILD_VIEWER)
     ${AL_VIEWER_BINARY_NAME}
     PRIVATE
       al::flags
+      alscript
       llaudio
       llcharacter
       llimage
@@ -2001,6 +2186,12 @@ if(AL_BUILD_VIEWER)
   )
   add_dependencies(${AL_VIEWER_BINARY_NAME} copy_input_dependencies)
 
+  # The About floater names the LibVLC the VLC plugin was built with, where
+  # it was built; Linux plays media with GStreamer and has no VLC by default.
+  if(AL_BUILD_VLC_PLUGIN)
+    set_property(SOURCE llappviewer.cpp APPEND PROPERTY COMPILE_DEFINITIONS LL_LIBVLC=1)
+  endif()
+
   if(WINDOWS)
     target_link_libraries(${AL_VIEWER_BINARY_NAME} PRIVATE d3d11 dxgi)
 
@@ -2050,27 +2241,13 @@ if(AL_BUILD_VIEWER)
         XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER "${MACOSX_BUNDLE_GUI_IDENTIFIER}"
     )
 
-    # Support generating dsym for non-xcode generators
-    if(NOT XCODE)
-      if(AL_USE_SENTRY)
-        set(VIEWER_DEBUG_BUNDLE "${SYMBOLS_STAGING_DIR}/dSYMs/${product}.dSYM")
-        find_program(DSYMUTIL_PROGRAM dsymutil REQUIRED)
-        add_custom_command(
-          TARGET ${AL_VIEWER_BINARY_NAME}
-          POST_BUILD
-          COMMAND
-            ${DSYMUTIL_PROGRAM} -o ${VIEWER_DEBUG_BUNDLE} $<TARGET_FILE:${AL_VIEWER_BINARY_NAME}>
-          COMMENT "Generating Alchemy.dSYM"
-        )
-      endif()
-    endif()
-
     target_link_libraries(${AL_VIEWER_BINARY_NAME} PRIVATE llphysicsextensionsos)
 
     # The bundle's localised strings carry the version.
     file(READ "${CMAKE_CURRENT_SOURCE_DIR}/English.lproj/InfoPlist.strings" infoplist_strings)
     string(
-      REPLACE "%%VERSION%%"
+      REPLACE
+      "%%VERSION%%"
       "${VIEWER_SHORT_VERSION}.${VIEWER_VERSION_REVISION}"
       infoplist_strings
       "${infoplist_strings}"
@@ -2231,95 +2408,57 @@ ${settings_install}</map>
   include(ViewerPackage)
 
   # After every link, stage the tree the viewer runs from: the install rules
-  # applied to the build directory the viewer already sits in.
+  # applied to the build directory the viewer already sits in. The install's
+  # manifest, which the next install anywhere overwrites, is kept per
+  # configuration as the list of what ships.
+  set(staged_manifest "${CMAKE_CURRENT_BINARY_DIR}/install_manifest_staged_$<CONFIG>.txt")
   add_custom_command(
     TARGET ${AL_VIEWER_BINARY_NAME}
     POST_BUILD
     COMMAND
       ${CMAKE_COMMAND} --install ${CMAKE_BINARY_DIR} --config $<CONFIG> --prefix
       ${VIEWER_STAGING_DIR}
+    COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_BINARY_DIR}/install_manifest.txt ${staged_manifest}
     COMMENT "Staging the viewer into ${VIEWER_STAGING_DIR}"
     VERBATIM
   )
 
-  if(AL_BUILD_PACKAGE AND AL_ENABLE_CRASH_REPORTING)
-    if(AL_USE_SENTRY)
-      # The debug information Sentry symbolicates crash reports with, staged
-      # per platform as <channel>.sym.tar.xz or the dSYM archive. It is part
-      # of the default build: CPack's package target is created at generate
-      # time, so nothing can be made to depend on it.
-      if(WINDOWS)
-        # Redirect symbols to staging directory for upload.
-        set_target_properties(
-          ${AL_VIEWER_BINARY_NAME}
-          PROPERTIES PDB_OUTPUT_DIRECTORY "${SYMBOLS_STAGING_DIR}"
-        )
-
-        set(VIEWER_APP_SYMBOLS_ARCHIVE "${SYMBOLS_STAGING_DIR}.sym.tar.xz")
-
-        # Just pack up a tarball containing only the .pdb files for the
-        # executables.
-        add_custom_command(
-          OUTPUT "${VIEWER_APP_SYMBOLS_ARCHIVE}"
-          COMMAND tar cJf "${AL_CHANNEL}.sym.tar.xz" "${AL_CHANNEL}"
-          DEPENDS "${AL_VIEWER_BINARY_NAME}"
-          WORKING_DIRECTORY "${SYMBOLS_STAGING_DIR}/.."
-          COMMENT "Packing viewer PDBs into ${VIEWER_APP_SYMBOLS_ARCHIVE}"
-          VERBATIM
-        )
-        add_custom_target(generate_symbols ALL DEPENDS "${VIEWER_APP_SYMBOLS_ARCHIVE}")
-        add_dependencies(generate_symbols ${AL_VIEWER_BINARY_NAME})
-      endif()
-      if(DARWIN)
-        set(VIEWER_APP_XCARCHIVE "${SYMBOLS_STAGING_DIR}.xcarchive.zip")
-
-        # we only need an xcarchive with dSYMs (including the application)
-        set_target_properties(
-          ${AL_VIEWER_BINARY_NAME}
-          PROPERTIES
-            XCODE_ATTRIBUTE_DEBUG_INFORMATION_FORMAT "dwarf-with-dsym"
-            XCODE_ATTRIBUTE_DWARF_DSYM_FOLDER_PATH "${SYMBOLS_STAGING_DIR}/dSYMs"
-        )
-
-        add_custom_command(
-          OUTPUT "${VIEWER_APP_XCARCHIVE}"
-          COMMAND zip -r "${VIEWER_APP_XCARCHIVE}" "${AL_CHANNEL}"
-          WORKING_DIRECTORY "${SYMBOLS_STAGING_DIR}/.."
-          DEPENDS "${AL_VIEWER_BINARY_NAME}"
-          COMMENT "Generating ${VIEWER_APP_XCARCHIVE} for upload"
-          VERBATIM
-        )
-        add_custom_target(generate_symbols ALL DEPENDS "${VIEWER_APP_XCARCHIVE}")
-      endif()
-      if(LINUX)
-        # The debug information, split from the build-tree binary before the
-        # package strips its own copy; the two share a GNU build ID, which is
-        # how they are paired again.
-        find_program(OBJCOPY_PROGRAM objcopy REQUIRED)
-        set(VIEWER_APP_SYMBOLS_ARCHIVE "${SYMBOLS_STAGING_DIR}.sym.tar.xz")
-        set(
-          VIEWER_DEBUG_FILE
-          "${SYMBOLS_STAGING_DIR}/$<TARGET_FILE_NAME:${AL_VIEWER_BINARY_NAME}>.debug"
-        )
-        add_custom_command(
-          OUTPUT "${VIEWER_APP_SYMBOLS_ARCHIVE}"
-          COMMAND ${CMAKE_COMMAND} -E make_directory "${SYMBOLS_STAGING_DIR}"
-          COMMAND
-            ${OBJCOPY_PROGRAM} --only-keep-debug --compress-debug-sections=zlib
-            $<TARGET_FILE:${AL_VIEWER_BINARY_NAME}> "${VIEWER_DEBUG_FILE}"
-          COMMAND tar cJf "${AL_CHANNEL}.sym.tar.xz" "${AL_CHANNEL}"
-          DEPENDS "${AL_VIEWER_BINARY_NAME}"
-          WORKING_DIRECTORY "${SYMBOLS_STAGING_DIR}/.."
-          COMMENT "Packing the viewer's debug information into ${VIEWER_APP_SYMBOLS_ARCHIVE}"
-          VERBATIM
-        )
-        add_custom_target(generate_symbols ALL DEPENDS "${VIEWER_APP_SYMBOLS_ARCHIVE}")
-      endif()
-    endif()
+  # The symbol store (ViewerSymbols.cmake): every binary in the staged tree
+  # with its debug information beside it, which Sentry symbolicates crash
+  # reports with and a debugger reads a shipped build with. Made on request
+  # rather than by every build.
+  if(WINDOWS)
+    cmake_path(GET CMAKE_LINKER PARENT_PATH linker_dir)
+    find_program(DUMPBIN_PROGRAM dumpbin HINTS "${linker_dir}")
+    set(
+      symbols_options
+      -DAL_SYMBOLS_FORMAT=pe
+      "-DAL_SYMBOLS_DUMPBIN=${DUMPBIN_PROGRAM}"
+      "-DAL_SYMBOLS_VCPKG=${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}"
+    )
+  elseif(DARWIN)
+    find_program(DSYMUTIL_PROGRAM dsymutil)
+    set(symbols_options -DAL_SYMBOLS_FORMAT=macho "-DAL_SYMBOLS_DSYMUTIL=${DSYMUTIL_PROGRAM}")
+  else()
+    set(
+      symbols_options
+      -DAL_SYMBOLS_FORMAT=elf
+      "-DAL_SYMBOLS_OBJCOPY=${CMAKE_OBJCOPY}"
+      "-DAL_SYMBOLS_READELF=${CMAKE_READELF}"
+    )
   endif()
-
+  add_custom_target(
+    symbols
+    COMMAND
+      ${CMAKE_COMMAND} ${symbols_options} "-DAL_SYMBOLS_MANIFEST=${staged_manifest}"
+      "-DAL_SYMBOLS_VIEWER=$<TARGET_FILE:${AL_VIEWER_BINARY_NAME}>"
+      "-DAL_SYMBOLS_PREFIX=${VIEWER_STAGING_DIR}" "-DAL_SYMBOLS_DIR=${SYMBOLS_DIR}" -P
+      "${INDRA_SOURCE_DIR}/cmake/ViewerSymbols.cmake"
+    COMMENT "Making the symbol store in ${SYMBOLS_DIR}"
+    VERBATIM
+  )
+  add_dependencies(symbols ${AL_VIEWER_BINARY_NAME})
 elseif(AL_BUILD_TESTS)
-
   # Create a dummy executable for test projects to generate against when viewer build is disabled
   add_executable(${AL_VIEWER_BINARY_NAME} cmake_dummy.cpp)
   target_link_libraries(${AL_VIEWER_BINARY_NAME} PRIVATE al::flags)
@@ -2341,20 +2480,75 @@ if(AL_BUILD_TESTS)
   )
   set(test_project ${AL_VIEWER_BINARY_NAME})
 
+  # What Script Studio's tests have in common -- a tab, its save's flow, a
+  # notecard's items, the places and words, the account's recovery, and
+  # the units a unit under test is given --
+  # built once for all of them, rather than once in each. Static: a test
+  # takes only the objects it uses, so one that fakes part of them keeps
+  # its fakes.
+  add_library(
+    al_studio_test_common
+    STATIC
+    alnotecardembedded.cpp
+    alrecovery.cpp
+    alscriptexternaleditor.cpp
+    alscriptlookup.cpp
+    alscriptnavigation.cpp
+    alscriptnoticebar.cpp
+    alscriptsaveflow.cpp
+    alscriptstudiodoc.cpp
+    alscriptstudiofileio.cpp
+    alscriptstudiofiles.cpp
+    alscriptstudioorphans.cpp
+    alscriptstudioplaces.cpp
+    alscriptstudiorecovery.cpp
+    alscriptstudioviewer.cpp
+    alscriptstudioweighing.cpp
+    alscriptstudiowords.cpp
+    alscripttypes.cpp
+    alscriptweightspane.cpp
+    tests/alscriptstudio_stubs.cpp
+  )
+  get_property(studio_test_includes TARGET ${test_project} PROPERTY INTERFACE_INCLUDE_DIRECTORIES)
+  target_include_directories(
+    al_studio_test_common
+    PRIVATE
+      ${studio_test_includes}
+      ${INDRA_SOURCE_DIR}/test
+      ${INDRA_SOURCE_DIR}/llmath
+      ${INDRA_SOURCE_DIR}/llui
+  )
+  target_link_libraries(al_studio_test_common PRIVATE al::flags PUBLIC llui alscript ${test_libs})
+  set_target_properties(al_studio_test_common PROPERTIES FOLDER "Tests/${test_project}")
+
+  # What the tests take of the rest of the viewer, faked once. Objects, which
+  # a test links whole, since what reaches for them is a library the linker
+  # may read after an archive of them; a test names them where it needs them.
+  add_library(newview_test_fakes OBJECT tests/newview_test_fakes.cpp)
+  target_link_libraries(newview_test_fakes PRIVATE al::flags llcommon)
+  set_target_properties(newview_test_fakes PROPERTIES FOLDER "Tests/${test_project}")
+  # The viewer's settings group, gSavedSettings, for a test whose code reads
+  # it: a group made as the process starts, so linked by those tests alone.
+  add_library(newview_test_settings OBJECT tests/newview_test_settings.cpp)
+  target_link_libraries(newview_test_settings PRIVATE al::flags llxml)
+  set_target_properties(newview_test_settings PROPERTIES FOLDER "Tests/${test_project}")
+
   # A unit test compiles one viewer source file on its own. Each line is one
   # such file and its test under tests/.
   foreach(
     test
     alagentlocationformat
+    alchattimestamp
     alcolorwheelmodel
     alcrashreporter
     alcurvemodel
     aldaycyclelandmarks
+    alfarplane
+    alfeedback
     algradehistory
     almotionpredictor
     alsceneexplorerpredicate
     alwhitebalancesolver
-    llagentaccess
     lldateutil
     llviewerhelputil
     llversioninfo
@@ -2364,6 +2558,17 @@ if(AL_BUILD_TESTS)
   )
     al_add_test(${test} UNIT PROJECT ${test_project} LIBRARIES ${test_libs})
   endforeach()
+  # A parcel's information handed to its observers and to the URL entries
+  # that name it: llui's own, rather than stubs of them.
+  al_add_test(
+    llremoteparcelrequest
+    UNIT
+    PROJECT ${test_project}
+    LIBRARIES newview_test_fakes llui ${test_libs}
+  )
+  # The agent's maturity, read and written through a settings group of each
+  # test's own.
+  al_add_test(llagentaccess UNIT PROJECT ${test_project} LIBRARIES llxml ${test_libs})
   # The vectorscope bins on the colour wheels' own chroma plane, so the scope
   # data test links the model that defines it rather than keeping a second copy
   # of the basis that could drift from it.
@@ -2373,6 +2578,33 @@ if(AL_BUILD_TESTS)
     PROJECT ${test_project}
     LIBRARIES ${test_libs}
     SOURCES alcolorwheelmodel.cpp
+  )
+  # The selection outline's id and edge passes, the viewer's own shader files
+  # read from the source tree, on LLWindowManager's hidden window.
+  al_add_test(
+    alselectionoutline_gl
+    GL
+    PROJECT ${test_project}
+    LIBRARIES llrender
+    INCLUDES ${INDRA_SOURCE_DIR}/llprimitive
+    DEFINES "AL_TEST_SHADER_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/app_settings/shaders\""
+  )
+  # The window's depth under the HUD: cleared in the HUD's rects, then the
+  # scene's written back with the viewer's own copy shader.
+  al_add_test(
+    alhuddepth_gl
+    GL
+    PROJECT ${test_project}
+    LIBRARIES llrender
+    DEFINES "AL_TEST_SHADER_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/app_settings/shaders\""
+  )
+  # The outbox keeps what the pure feedback code makes.
+  al_add_test(
+    alfeedbackoutbox
+    UNIT
+    PROJECT ${test_project}
+    LIBRARIES ${test_libs}
+    SOURCES alfeedback.cpp
   )
   al_add_test(
     lllogininstance
@@ -2396,6 +2628,445 @@ if(AL_BUILD_TESTS)
     SOURCES tests/llviewertexture_stub.cpp
   )
 
+  # An inventory item dropped on a script: its name or its key, over the
+  # studio's own window.
+  al_add_test(
+    alscriptitemdrop
+    UNIT
+    PROJECT ${test_project}
+    LIBRARIES al_studio_test_common newview_test_fakes llui alscript ${test_libs}
+    DEFINES "LLUI_TEST_APP_DIR=\"${INDRA_SOURCE_DIR}/newview\""
+  )
+
+  # A notecard's items in its text, over a fake of the viewer's side.
+  al_add_test(
+    alnotecardembedded
+    UNIT
+    PROJECT ${test_project}
+    LIBRARIES newview_test_fakes llui alscript ${test_libs}
+    DEFINES "LLUI_TEST_APP_DIR=\"${INDRA_SOURCE_DIR}/newview\""
+  )
+
+  # What each prim holds, as one index for every studio window, over a
+  # fake of the world.
+  al_add_test(
+    alscriptcontentsindex
+    UNIT
+    PROJECT ${test_project}
+    LIBRARIES llui alscript ${test_libs}
+  )
+
+  # What the region reserves for the objects in hand, the world faked: the
+  # answers read, each object asked once a minute, the attachments at once.
+  al_add_test(alscriptregionusage UNIT PROJECT ${test_project} LIBRARIES llui alscript ${test_libs})
+
+  # What the Script Studio's explorer lists, and the rows it makes of them,
+  # with nothing of the world.
+  al_add_test(
+    alscriptexplorermodel
+    UNIT
+    PROJECT ${test_project}
+    LIBRARIES newview_test_fakes llui alscript ${test_libs}
+    SOURCES alscriptcontentsindex.cpp
+  )
+
+  # The explorer's rows shown as the inventory's folder view, from the source
+  # tree's skins and fonts.
+  al_add_test(
+    alscriptexplorertree
+    UNIT
+    PROJECT ${test_project}
+    LIBRARIES newview_test_fakes llui alscript ${test_libs}
+    SOURCES alscriptexplorermodel.cpp alscriptcontentsindex.cpp
+    DEFINES "LLUI_TEST_APP_DIR=\"${INDRA_SOURCE_DIR}/newview\""
+  )
+
+  # The Script Studio's Output tab over the studio's own window, the
+  # window's side faked.
+  al_add_test(
+    alscriptoutputpane
+    UNIT
+    PROJECT ${test_project}
+    LIBRARIES al_studio_test_common newview_test_fakes llui alscript ${test_libs}
+    DEFINES "LLUI_TEST_APP_DIR=\"${INDRA_SOURCE_DIR}/newview\""
+  )
+
+  # The Script Studio's Problems tab over the studio's own window, the
+  # window's side faked, and a tab's problems gathered for it.
+  al_add_test(
+    alscriptproblemspane
+    UNIT
+    PROJECT ${test_project}
+    LIBRARIES al_studio_test_common newview_test_fakes llui alscript ${test_libs}
+    DEFINES "LLUI_TEST_APP_DIR=\"${INDRA_SOURCE_DIR}/newview\""
+  )
+
+  # The Script Studio's Search tab over the studio's own window, the
+  # window's side faked; and what Replace All does with a script found.
+  al_add_test(
+    alscriptsearchpane
+    UNIT
+    PROJECT ${test_project}
+    LIBRARIES al_studio_test_common newview_test_fakes llui alscript ${test_libs}
+    SOURCES alscriptsearch.cpp
+    DEFINES "LLUI_TEST_APP_DIR=\"${INDRA_SOURCE_DIR}/newview\""
+  )
+
+  # A window's unsaved text kept in a recovery store of the test's.
+  al_add_test(
+    alrecoverykeeper
+    UNIT
+    PROJECT ${test_project}
+    LIBRARIES al_studio_test_common newview_test_fakes llui alscript ${test_libs}
+  )
+
+  # A Script Studio window's saves kept in a history of the test's, listed,
+  # compared and put back over tabs of their own editors.
+  al_add_test(
+    alscriptstudiohistory
+    UNIT
+    PROJECT ${test_project}
+    LIBRARIES al_studio_test_common newview_test_fakes llui alscript ${test_libs}
+    DEFINES "LLUI_TEST_APP_DIR=\"${INDRA_SOURCE_DIR}/newview\""
+  )
+
+  # A Script Studio window's Compare With over tabs of their own editors:
+  # what a tab is offered, and each kind of thing chosen set beside it.
+  al_add_test(
+    alscriptstudiocomparewith
+    UNIT
+    PROJECT ${test_project}
+    SOURCES alscriptstudiohistory.cpp
+    LIBRARIES al_studio_test_common newview_test_fakes llui alscript ${test_libs}
+    DEFINES "LLUI_TEST_APP_DIR=\"${INDRA_SOURCE_DIR}/newview\""
+  )
+
+  # A Script Studio window's comparison lined up by its texts' functions,
+  # over tabs of their own editors: each text's outline asked for as it is
+  # another, and the two paired.
+  al_add_test(
+    alscriptstudiocomparepairs
+    UNIT
+    PROJECT ${test_project}
+    LIBRARIES al_studio_test_common newview_test_fakes llui alscript ${test_libs}
+    DEFINES "LLUI_TEST_APP_DIR=\"${INDRA_SOURCE_DIR}/newview\""
+  )
+
+  # A Script Studio window's source beside what a save sends of it, lined
+  # up by the preprocessor's map, over tabs of their own editors.
+  al_add_test(
+    alscriptstudioexpandedcompare
+    UNIT
+    PROJECT ${test_project}
+    LIBRARIES al_studio_test_common newview_test_fakes llui alscript ${test_libs}
+    DEFINES "LLUI_TEST_APP_DIR=\"${INDRA_SOURCE_DIR}/newview\""
+  )
+
+  # A Script Studio window's merges over tabs of their own editors and
+  # comparisons: begun, settled, and compared where they cannot be.
+  al_add_test(
+    alscriptstudiomerging
+    UNIT
+    PROJECT ${test_project}
+    LIBRARIES al_studio_test_common newview_test_fakes llui alscript ${test_libs}
+    DEFINES "LLUI_TEST_APP_DIR=\"${INDRA_SOURCE_DIR}/newview\""
+  )
+
+  # A Script Studio window's selections held and compared, over tabs of
+  # their own editors and comparisons.
+  al_add_test(
+    alscriptstudioselections
+    UNIT
+    PROJECT ${test_project}
+    LIBRARIES al_studio_test_common newview_test_fakes llui alscript ${test_libs}
+    DEFINES "LLUI_TEST_APP_DIR=\"${INDRA_SOURCE_DIR}/newview\""
+  )
+
+  # A Script Studio window's unsaved texts kept in a recovery store of the
+  # test's, and taken up again over tabs of their own editors.
+  al_add_test(
+    alscriptstudiorecovery
+    UNIT
+    PROJECT ${test_project}
+    LIBRARIES al_studio_test_common newview_test_fakes llui alscript ${test_libs}
+    DEFINES "LLUI_TEST_APP_DIR=\"${INDRA_SOURCE_DIR}/newview\""
+  )
+
+  # The scripter's snippets: the shipped and their own, read, written and
+  # kept whole on disk.
+  al_add_test(
+    alscriptsnippets
+    UNIT
+    PROJECT ${test_project}
+    LIBRARIES llui ${test_libs}
+    DEFINES "LLUI_TEST_APP_DIR=\"${INDRA_SOURCE_DIR}/newview\""
+  )
+
+  # Script Studio's themes: their colours, the shipped ones legible, and
+  # every skin's script colours read against what they are drawn on.
+  al_add_test(
+    alscripttheme
+    UNIT
+    PROJECT ${test_project}
+    LIBRARIES newview_test_fakes llui ${test_libs}
+    DEFINES "LLUI_TEST_APP_DIR=\"${INDRA_SOURCE_DIR}/newview\""
+  )
+
+  # The Script Studio's commands by name, with nothing of the window.
+  al_add_test(alscriptstudiocommands UNIT PROJECT ${test_project} LIBRARIES ${test_libs})
+
+  # Script Studio's keys: the editors' keymap and the menus' keys, with a
+  # person's changes over them in a setting of the test's.
+  al_add_test(
+    alscriptkeymap
+    UNIT
+    PROJECT ${test_project}
+    SOURCES alscriptkeypresets.cpp
+    LIBRARIES newview_test_fakes newview_test_settings llui ${test_libs}
+    DEFINES "LLUI_TEST_APP_DIR=\"${INDRA_SOURCE_DIR}/newview\""
+  )
+
+  # Whole saves of a Script Studio tab through where they stand and where
+  # they go, with nothing of the viewer.
+  al_add_test(alscriptsaveflow UNIT PROJECT ${test_project} LIBRARIES llui alscript ${test_libs})
+
+  # Whole saves of Script Studio tabs done -- tidied, checked, preprocessed,
+  # sent, answered -- over the window's side faked.
+  al_add_test(
+    alscriptstudiosaving
+    UNIT
+    PROJECT ${test_project}
+    LIBRARIES al_studio_test_common newview_test_fakes llui alscript ${test_libs}
+    DEFINES "LLUI_TEST_APP_DIR=\"${INDRA_SOURCE_DIR}/newview\""
+  )
+
+  # Script Studio's files on disk, over the window's side faked: languages,
+  # the recent lists, writing, changes outside, loading, Save As.
+  al_add_test(
+    alscriptstudiofiles
+    UNIT
+    PROJECT ${test_project}
+    LIBRARIES al_studio_test_common newview_test_fakes llui alscript ${test_libs}
+    DEFINES "LLUI_TEST_APP_DIR=\"${INDRA_SOURCE_DIR}/newview\""
+  )
+
+  # A Script Studio window's side of scripts mastered by files on disk, over
+  # the window's side faked and the account's links held in memory: what may
+  # be linked, a tab linked and what was typed in it, and a tab giving way
+  # to its file.
+  al_add_test(
+    alscriptstudiomasters
+    UNIT
+    PROJECT ${test_project}
+    LIBRARIES al_studio_test_common newview_test_fakes llui alscript ${test_libs}
+    DEFINES "LLUI_TEST_APP_DIR=\"${INDRA_SOURCE_DIR}/newview\""
+  )
+
+  # What of Script Studio's state is an account's own, kept apart from the
+  # shared and put back over it.
+  al_add_test(alscriptstudioaccount UNIT PROJECT ${test_project} LIBRARIES ${test_libs})
+
+  # Script Studio's navigation: the history of places, back and forward,
+  # and previews opened as a list is walked.
+  al_add_test(
+    alscriptnavigation
+    UNIT
+    PROJECT ${test_project}
+    LIBRARIES al_studio_test_common newview_test_fakes llui alscript ${test_libs}
+    DEFINES "LLUI_TEST_APP_DIR=\"${INDRA_SOURCE_DIR}/newview\""
+  )
+
+  # Script Studio's lookups across scripts, the window's side and the
+  # preprocessor's names faked: the fan-out, answers dropped, renames.
+  al_add_test(
+    alscriptlookup
+    UNIT
+    PROJECT ${test_project}
+    LIBRARIES al_studio_test_common newview_test_fakes llui alscript ${test_libs}
+    DEFINES "LLUI_TEST_APP_DIR=\"${INDRA_SOURCE_DIR}/newview\""
+  )
+
+  # The Script Studio's References tab over the studio's own window, the
+  # window's side faked: listed, slid with edits, chosen, sorted.
+  al_add_test(
+    alscriptreferencespane
+    UNIT
+    PROJECT ${test_project}
+    LIBRARIES al_studio_test_common newview_test_fakes llui alscript ${test_libs}
+    DEFINES "LLUI_TEST_APP_DIR=\"${INDRA_SOURCE_DIR}/newview\""
+  )
+
+  # Script Studio's outline over the studio's own window, the window's
+  # side faked: the tree, folds, the filter, sorting, the caret followed.
+  al_add_test(
+    alscriptoutlinepane
+    UNIT
+    PROJECT ${test_project}
+    LIBRARIES al_studio_test_common newview_test_fakes llui alscript ${test_libs}
+    DEFINES "LLUI_TEST_APP_DIR=\"${INDRA_SOURCE_DIR}/newview\""
+  )
+
+  # Script Studio's bar under the editor over the studio's own window, the
+  # window's side faked: the path of symbols, the trailer's parts, a step.
+  al_add_test(
+    alscriptcrumbsbar
+    UNIT
+    PROJECT ${test_project}
+    LIBRARIES al_studio_test_common newview_test_fakes llui alscript ${test_libs}
+    DEFINES "LLUI_TEST_APP_DIR=\"${INDRA_SOURCE_DIR}/newview\""
+  )
+
+  # Script Studio's inspector over the studio's own window, the window's
+  # side faked: a name's declaration, words and page, and the problems.
+  al_add_test(
+    alscriptinspectorpane
+    UNIT
+    PROJECT ${test_project}
+    LIBRARIES al_studio_test_common newview_test_fakes llui alscript ${test_libs}
+    DEFINES "LLUI_TEST_APP_DIR=\"${INDRA_SOURCE_DIR}/newview\""
+  )
+
+  # Script Studio's name at the caret, the window's side faked: definitions
+  # gone to, references read back and asked for, the caret watched.
+  al_add_test(
+    alscriptstudiocaret
+    UNIT
+    PROJECT ${test_project}
+    LIBRARIES al_studio_test_common newview_test_fakes llui alscript ${test_libs}
+    DEFINES "LLUI_TEST_APP_DIR=\"${INDRA_SOURCE_DIR}/newview\""
+  )
+
+  # What waits for the script analysis thread: the latest of each kind
+  # about each script, by rank, a stale text passed over.
+  al_add_test(alscriptjobqueue PROJECT ${test_project} LIBRARIES llcommon)
+
+  # One engine's analysis thread, over analyzers made to wait: a long
+  # check on one lane holding nothing of the other's, and another tab's
+  # check giving way to a question of the tab in front.
+  al_add_test(
+    alscriptanalysislane
+    UNIT
+    PROJECT ${test_project}
+    LIBRARIES alscript llui ll::slua ${test_libs}
+  )
+
+  # Each language's analyzer, asked as the analysis thread asks it, over
+  # the grid's own definitions.
+  al_add_test(
+    alscriptanalyzers
+    UNIT
+    PROJECT ${test_project}
+    LIBRARIES newview_test_fakes alscript llui ${test_libs}
+    DEFINES "AL_LSL_DEFINITIONS_DIR=\"${LSL_DEFINITIONS_DIR}\""
+  )
+
+  # Script Studio's checking, the window's side and the viewer's sources
+  # faked: checks due and answered, expansions, imports, lints, fixes.
+  al_add_test(
+    alscriptstudiochecking
+    UNIT
+    PROJECT ${test_project}
+    LIBRARIES al_studio_test_common newview_test_fakes llui alscript ${test_libs}
+    DEFINES "LLUI_TEST_APP_DIR=\"${INDRA_SOURCE_DIR}/newview\""
+  )
+
+  # A check of every script of an object, the window and the world faked:
+  # the open ones left to their tabs, the rest read, expanded and asked.
+  al_add_test(
+    alscriptobjectcheck
+    UNIT
+    PROJECT ${test_project}
+    LIBRARIES al_studio_test_common newview_test_fakes llui alscript ${test_libs}
+    SOURCES alscriptstudiochecking.cpp
+    DEFINES "LLUI_TEST_APP_DIR=\"${INDRA_SOURCE_DIR}/newview\""
+  )
+
+  # A compile's result read back to the source it was of: under the
+  # envelope's lines, through the expansion's map.
+  al_add_test(alscripttypes UNIT PROJECT ${test_project} LIBRARIES alscript ${test_libs})
+
+  # A recompile from the Explorer, the window and the world faked: scripts
+  # and prims walked a few at a time, each said, a closed one's problems
+  # read back through its expansion.
+  al_add_test(
+    alscriptrecompile
+    UNIT
+    PROJECT ${test_project}
+    LIBRARIES al_studio_test_common newview_test_fakes llui alscript ${test_libs}
+    DEFINES "LLUI_TEST_APP_DIR=\"${INDRA_SOURCE_DIR}/newview\""
+  )
+
+  # Script Studio's orphans, the world's reach faked: what a tab has become,
+  # the check, reattaching, and the notice over the editor with its bar.
+  al_add_test(
+    alscriptstudioorphans
+    UNIT
+    PROJECT ${test_project}
+    LIBRARIES al_studio_test_common newview_test_fakes llui alscript ${test_libs}
+    DEFINES "LLUI_TEST_APP_DIR=\"${INDRA_SOURCE_DIR}/newview\""
+  )
+
+  # Script Studio's words: the vocabulary from definitions a test gives,
+  # editors taught it, hovers, completions, the Insert menu, the reference.
+  al_add_test(
+    alscriptstudiowords
+    UNIT
+    PROJECT ${test_project}
+    LIBRARIES al_studio_test_common newview_test_fakes llui alscript ${test_libs}
+    DEFINES "LLUI_TEST_APP_DIR=\"${INDRA_SOURCE_DIR}/newview\""
+  )
+
+  # Script Studio's weighing, over the window's side and the analyzers
+  # faked: targets, answers, what a save sends, notes and heat, fixes.
+  al_add_test(
+    alscriptstudioweighing
+    UNIT
+    PROJECT ${test_project}
+    LIBRARIES al_studio_test_common newview_test_fakes llui alscript ${test_libs}
+    DEFINES "LLUI_TEST_APP_DIR=\"${INDRA_SOURCE_DIR}/newview\""
+  )
+
+  # Script Studio's tabs held open in an editor outside, over the window's
+  # side faked: the copy, its saves taken or held, the log, letting go.
+  al_add_test(
+    alscriptexternaleditor
+    UNIT
+    PROJECT ${test_project}
+    LIBRARIES al_studio_test_common newview_test_fakes llui alscript ${test_libs}
+    DEFINES "LLUI_TEST_APP_DIR=\"${INDRA_SOURCE_DIR}/newview\""
+  )
+
+  # Script Studio's side of vim over the window's commands and its side
+  # faked: the : commands, :set, :history, q:, = and the banner.
+  al_add_test(
+    alscriptstudiovim
+    UNIT
+    PROJECT ${test_project}
+    LIBRARIES al_studio_test_common newview_test_fakes llui alscript ${test_libs}
+    SOURCES alscriptstudiocommands.cpp
+    DEFINES "LLUI_TEST_APP_DIR=\"${INDRA_SOURCE_DIR}/newview\""
+  )
+
+  # A Script Studio tab's own logic, and the fake of the window's services
+  # the units split out of the window are tested with.
+  al_add_test(
+    alscriptstudiodoc
+    UNIT
+    PROJECT ${test_project}
+    LIBRARIES al_studio_test_common newview_test_fakes llui alscript ${test_libs}
+    DEFINES "LLUI_TEST_APP_DIR=\"${INDRA_SOURCE_DIR}/newview\""
+  )
+
+  # The Script Studio's Weights tab over the studio's own window, from the
+  # source tree's skins and fonts as llui's widget tests have them.
+  al_add_test(
+    alscriptweightspane
+    UNIT
+    PROJECT ${test_project}
+    LIBRARIES al_studio_test_common newview_test_fakes llui alscript ${test_libs}
+    DEFINES "LLUI_TEST_APP_DIR=\"${INDRA_SOURCE_DIR}/newview\""
+  )
+
   al_add_test(cppfeatures PROJECT ${test_project} LIBRARIES ${test_libs})
   al_add_test(altexturetable PROJECT ${test_project} LIBRARIES ${test_libs})
   # The map layout and the neighbour walk are inline in the header; the GL
@@ -2417,13 +3088,8 @@ if(AL_BUILD_TESTS)
   al_add_test(
     llviewercontrollistener
     PROJECT ${test_project}
-    LIBRARIES ${test_libs}
-    SOURCES
-      llviewercontrollistener.cpp
-      ../llxml/llcontrol.cpp
-      ../llxml/llxmltree.cpp
-      ../llxml/alxmldocument.cpp
-      ../llcommon/commoncontrol.cpp
+    LIBRARIES llxml ${test_libs}
+    SOURCES llviewercontrollistener.cpp
   )
   al_add_test(
     llviewernetwork
@@ -2446,12 +3112,7 @@ if(AL_BUILD_TESTS)
   al_add_test(
     lltextureinfo
     PROJECT ${test_project}
-    LIBRARIES ${test_libs}
-    SOURCES
-      lltextureinfo.cpp
-      ../llxml/llcontrol.cpp
-      ../llxml/llxmltree.cpp
-      ../llxml/alxmldocument.cpp
-      ../llcommon/commoncontrol.cpp
+    LIBRARIES newview_test_settings llxml ${test_libs}
+    SOURCES lltextureinfo.cpp
   )
 endif()

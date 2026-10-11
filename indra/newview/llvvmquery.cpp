@@ -164,7 +164,7 @@ namespace
         LL_INFOS("Velopack") << "Querying GitHub Releases for Vayu update feed: " << api_url << LL_ENDL;
 
         LLCore::HttpRequest::policy_t httpPolicy(LLCore::HttpRequest::DEFAULT_POLICY_ID);
-        auto httpAdapter = std::make_shared<LLCoreHttpUtil::HttpCoroutineAdapter>("VayuUpdateCheck", httpPolicy);
+        auto httpAdapter = std::make_shared<LLCoreHttpUtil::HttpCoroutineAdapter>("VayuUpdateCheck", httpPolicy, LLCoreHttpUtil::HttpCoroutineAdapter::Destination::Outside);
         auto httpRequest = std::make_shared<LLCore::HttpRequest>();
         auto httpOpts = std::make_shared<LLCore::HttpOptions>();
         auto httpHeaders = std::make_shared<LLCore::HttpHeaders>();

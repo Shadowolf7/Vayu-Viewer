@@ -24,7 +24,7 @@
 
 #include "linden_common.h"
 
-#include "../aldockpanel.h"
+#include "aldockpanel.h"
 
 #include "../llbutton.h"
 #include "../lllayoutstack.h"
@@ -32,30 +32,66 @@
 #include "../lltabcontainer.h"
 #include "../lluictrlfactory.h"
 
+#include "llmortician.h"
+
 #include "alheadlessui_fixture.h"
+#include "aluistatescope.h"
 
 #include "../test/lltut.h"
 
-#include <string>
+#include <vector>
 
-// llui reaches the viewer for this one, and linking any of the library pulls
-// the object that calls it. Nothing under test goes near it.
-class LLAvatarName;
-const std::string gDockTestAnonName("Anon");
-const std::string& rlvGetAnonym(const LLAvatarName& av_name)
-{
-    return gDockTestAnonName;
-}
+#include <string>
 
 namespace tut
 {
     struct aldockpanel_data
     {
         ll_test::HeadlessUI& ui = ll_test::HeadlessUI::get();
+        // Focus and capture as the test found them, whatever it leaves
+        // them on.
+        ll_test::FocusScope  focus;
+
+        // A pane still out is put back, its window closed as test 4 shows
+        // that does, and each test's dead views reaped as it ends, as the
+        // next frame would: test 12 empties the graveyard itself, and then
+        // finds only its own views there.
+        ~aldockpanel_data()
+        {
+            std::vector<LLHandle<LLFloater>> out;
+            for (LLView* child : *gFloaterView->getChildList())
+            {
+                if (ALPanelFloater* window = child->as<ALPanelFloater>(); window && !window->isDead())
+                {
+                    out.push_back(window->getHandle());
+                }
+            }
+            for (const LLHandle<LLFloater>& handle : out)
+            {
+                if (LLFloater* window = handle.get())
+                {
+                    window->closeFloater();
+                }
+            }
+            LLMortician::updateClass();
+        }
 
         // A window with a stack of two panes across it, the way a tool is
         // laid out: a side pane of a fixed width and a middle that takes
         // whatever is left.
+        // A window that says which keys it was asked about, and takes only
+        // Control-F.
+        struct Home : public LLFloater
+        {
+            Home(const LLFloater::Params& p) : LLFloater(LLSD(), p) {}
+            bool handleKeyHere(KEY key, MASK mask) override
+            {
+                heard.push_back(key);
+                return key == 'F' && mask == MASK_CONTROL;
+            }
+            std::vector<KEY> heard;
+        };
+
         struct Window
         {
             LLFloater*      floater = nullptr;
@@ -73,7 +109,7 @@ namespace tut
             fp.rect = LLRect(0, height, width, 0);
             fp.save_rect = false;
             fp.save_visibility = false;
-            w.floater = new LLFloater(LLSD(), fp);
+            w.floater = new Home(fp);
 
             LLLayoutStack::Params sp(LLUICtrlFactory::getDefaultParams<LLLayoutStack>());
             sp.name = "stack";
@@ -230,6 +266,13 @@ namespace tut
         ensure("there is a window", window != nullptr);
         ensure_equals("and it knows where home is", window->home(), w.floater);
         ensure("it asks before the viewer's own menu does", window->hasAccelerators());
+        const std::vector<KEY>& heard = static_cast<Home*>(w.floater)->heard;
+        ensure("a key home takes is taken", window->handleKeyHere('F', MASK_CONTROL));
+        ensure("home heard it", heard == std::vector<KEY>{ 'F' });
+        ensure("a key home declines is declined", !window->handleKeyHere('Q', MASK_CONTROL));
+        ensure("having been asked", heard == std::vector<KEY>{ 'F', 'Q' });
+        ensure("a key the window takes itself is taken", window->handleKeyHere(KEY_ESCAPE, MASK_NONE));
+        ensure("and never reaches home", heard == std::vector<KEY>{ 'F', 'Q' });
         w.floater->die();
     }
 
@@ -371,5 +414,39 @@ namespace tut
                       floater->findChild<LLButton>("on_the_page", true), on_page);
         ensure("and its tab shows it", tabs->getCurrentPanel() == one);
         floater->die();
+    }
+
+    // The viewer quitting closes every window, the one a pane is borrowing
+    // among them, and a window asking about unsaved work may hold the quit
+    // up or call it off: the pane goes home all the same, and outlives the
+    // window it was in. It remembers it was out, for the next session, and
+    // forgets that as soon as it is moved for any other reason.
+    template<> template<>
+    void aldockpanel_object::test<12>()
+    {
+        Window w = build();
+        ALDockPanel* pane = ALDockPanel::wrap(w.side, "Side");
+        const LLHandle<LLView> held = pane->getHandle();
+        pane->popOut();
+
+        ALPanelFloater* window = pane->getParentByType<ALPanelFloater>();
+        ensure("there is a window", window != nullptr);
+        const LLHandle<LLFloater> window_held = window->getHandle();
+        window->closeFloater(true);
+        LLMortician::updateClass();
+
+        ensure("the window is gone", window_held.isDead());
+        ensure("the pane is not", !held.isDead());
+        ensure_equals("it is home", pane->getParent(), (LLView*)w.side);
+        ensure("no longer out", !pane->poppedOut());
+        ensure("but out when the viewer went", pane->outAtQuit());
+        ensure_equals("and the window still finds what is in it",
+                      w.floater->findChild<LLButton>("in_the_side", true), w.inside);
+
+        pane->popOut();
+        ensure("out again, it is simply out", pane->poppedOut() && !pane->outAtQuit());
+        pane->getParentByType<ALPanelFloater>()->closeFloater();
+        ensure("closed by hand, it is simply home", !pane->poppedOut() && !pane->outAtQuit());
+        w.floater->die();
     }
 }

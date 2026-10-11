@@ -211,7 +211,6 @@ ALFloaterLightBox::ALFloaterLightBox(const LLSD& key)
     // not wanted here. The buttons are greyed when there is nothing to do.
     mCommitCallbackRegistrar.add("LightBox.Undo", [this](LLUICtrl*, const LLSD&) { applyHistory(false); });
     mCommitCallbackRegistrar.add("LightBox.Redo", [this](LLUICtrl*, const LLSD&) { applyHistory(true); });
-    mCommitCallbackRegistrar.add("LightBox.CommitVec3", std::bind(&ALFloaterLightBox::onCommitVec3, this, std::placeholders::_1));
     mCommitCallbackRegistrar.add("LightBox.CommitToneCurve", std::bind(&ALFloaterLightBox::onCommitToneCurve, this));
     mCommitCallbackRegistrar.add("LightBox.RefreshToneCurve", std::bind(&ALFloaterLightBox::refreshToneCurve, this));
     mCommitCallbackRegistrar.add("LightBox.ResetToneCurveChannel", std::bind(&ALFloaterLightBox::onClickResetToneCurveChannel, this));
@@ -227,6 +226,7 @@ ALFloaterLightBox::ALFloaterLightBox(const LLSD& key)
     mCommitCallbackRegistrar.add("LightBox.LookDelete", std::bind(&ALFloaterLightBox::onClickLookDelete, this));
     mCommitCallbackRegistrar.add("LightBox.LookRevert", std::bind(&ALFloaterLightBox::onClickLookRevert, this));
     mCommitCallbackRegistrar.add("LightBox.Find", std::bind(&ALFloaterLightBox::openFind, this));
+    addCommand({ "find", 'F', MASK_CONTROL, false }, [this]() { openFind(); return true; });
     mCommitCallbackRegistrar.add("LightBox.History", std::bind(&ALFloaterLightBox::openHistory, this));
     mCommitCallbackRegistrar.add("LightBox.PopOut", std::bind(&ALFloaterLightBox::togglePane, this));
 }
@@ -234,12 +234,9 @@ ALFloaterLightBox::ALFloaterLightBox(const LLSD& key)
 ALFloaterLightBox::~ALFloaterLightBox()
 {
     // onClose has settled any popover already; this is for a floater that
-    // dies without closing. die() and not a close, so nothing it holds calls
+    // dies without closing. Dropped and not closed, so nothing it holds calls
     // back into a floater half torn down.
-    if (ALPopover* popover = mPopover.get())
-    {
-        popover->die();
-    }
+    mPopover.drop();
     // onClose has put every page back; this is for a floater that dies
     // without closing, which would otherwise leave a page in a window of its
     // own wired to callbacks on a floater that is gone.
@@ -389,35 +386,31 @@ bool ALFloaterLightBox::postBuild()
             });
         }
 
-        // A setting row's reset comes through here, the same as a reset
-        // button's: a named undo step of its own rather than a bare write
-        // that folds into a drag just before it.
-        if (ALSettingRow* row = ALViewType::as<ALSettingRow>(setting.mCtrl))
-        {
-            row->setResetHandler([self, key](ALSettingRow*)
-            {
-                if (ALFloaterLightBox* floater = self.get())
-                {
-                    floater->onClickResetControlDefault(LLSD(key));
-                }
-            });
-        }
     }
 
-    ALLightboxDirectory::collectVec3Controls(this, mVec3Rows);
-    for (const auto& row : mVec3Rows)
+    // A setting row's reset comes through here, the same as a reset
+    // button's: a named undo step of its own rather than a bare write that
+    // folds into a drag just before it. Every row, found by walking rather
+    // than from the directory, which keeps one row per setting: a vector's
+    // parts can be rows of their own.
+    std::function<void(LLView*)> name_resets = [&](LLView* view)
     {
-        const std::string& setting = row.first;
-        LLControlVariable* controlp = gSavedSettings.getControl(setting);
-        if (!controlp)
+        for (LLView* child : *view->getChildList())
         {
-            LL_WARNS() << "Vec3 row bound to unknown setting: " << setting << LL_ENDL;
-            continue;
+            if (ALSettingRow* row = ALViewType::as<ALSettingRow>(child))
+            {
+                row->setResetHandler([self](ALSettingRow* from)
+                {
+                    if (ALFloaterLightBox* floater = self.get())
+                    {
+                        floater->resetRow(from);
+                    }
+                });
+            }
+            name_resets(child);
         }
-        mVec3Connections.emplace_back(controlp->getSignal()->connect(
-            [this, setting](LLControlVariable*, const LLSD&, const LLSD&) { refreshVec3Row(setting); }));
-        refreshVec3Row(setting);
-    }
+    };
+    name_resets(this);
 
     setupToneCurve();
     setupSplitToneGraph();
@@ -471,6 +464,15 @@ bool ALFloaterLightBox::postBuild()
     loadState();
 
     return ALStudioFloater::postBuild();
+}
+
+void ALFloaterLightBox::onOpen(const LLSD& key)
+{
+    if (ALSettingRow* row = findChild<ALSettingRow>("perf_farclip"))
+    {
+        cap_draw_distance_control(row->getSlider(), row);
+    }
+    ALStudioFloater::onOpen(key);
 }
 
 // Shared by the colour LUT and lens dirt pickers. Both enumerate a bundled
@@ -615,6 +617,24 @@ void ALFloaterLightBox::onClickResetControlDefault(const LLSD& userdata)
         ScopedHistoryGroup group(mHistory, getString("history_reset_setting", args));
         controlp->resetToDefault(true);
     }
+}
+
+void ALFloaterLightBox::resetRow(ALSettingRow* row)
+{
+    LLControlVariable* controlp = row->getControlVariable();
+    if (!controlp)
+    {
+        return;
+    }
+    // Named as a reset button's is, for the setting; a row the directory
+    // does not name the setting by -- a vector's second part -- by its own
+    // label. The row resets what it shows: the whole setting, or its part.
+    const std::string                   key     = controlp->getName();
+    const ALLightboxDirectory::Setting* setting = mDirectory.setting(key);
+    LLStringUtil::format_map_t          args;
+    args["[SETTING]"] = (setting && setting->mCtrl == row) || row->getLabel().empty() ? mDirectory.captionFor(key) : row->getLabel();
+    ScopedHistoryGroup group(mHistory, getString("history_reset_setting", args));
+    row->resetToDefault();
 }
 
 void ALFloaterLightBox::onClickResetSection(const LLSD& userdata)
@@ -882,19 +902,11 @@ void ALFloaterLightBox::adoptPopover(PopoverKind kind, ALPopover* popover, LLVie
 {
     closePopover(true);
 
-    mPopover = popover->getDerivedHandle<ALPopover>();
+    // The popover is a top-level window and can outlive this floater by a
+    // frame, and this floater can be closed under it: the slot lets go of
+    // the one as the other goes.
+    mPopover.hold(popover, [this](bool escaped) { onPopoverClosed(escaped); });
     mPopoverKind = kind;
-    // Handles both ways: the popover is a top-level window and can outlive
-    // this floater by a frame, and this floater can be closed under it.
-    LLHandle<ALFloaterLightBox> self = getDerivedHandle<ALFloaterLightBox>();
-    LLHandle<ALPopover> which = mPopover;
-    popover->onClosed([self, which](bool escaped)
-    {
-        if (ALFloaterLightBox* floater = self.get())
-        {
-            floater->onPopoverClosed(which.get(), escaped);
-        }
-    });
 
     if (anchor)
     {
@@ -904,29 +916,12 @@ void ALFloaterLightBox::adoptPopover(PopoverKind kind, ALPopover* popover, LLVie
 
 void ALFloaterLightBox::closePopover(bool escape)
 {
-    if (ALPopover* popover = mPopover.get())
-    {
-        if (escape)
-        {
-            popover->escape();
-        }
-        else
-        {
-            popover->settle();
-        }
-    }
+    mPopover.close(escape);
 }
 
-void ALFloaterLightBox::onPopoverClosed(const LLView* which, bool escaped)
+void ALFloaterLightBox::onPopoverClosed(bool escaped)
 {
-    // One that was replaced before it finished closing has nothing to say
-    // about the one up now.
-    if (!which || which != mPopover.get())
-    {
-        return;
-    }
     const PopoverKind kind = mPopoverKind;
-    mPopover.markDead();
     mPopoverKind = PopoverKind::None;
     mHistoryList.markDead();
 
@@ -1031,7 +1026,7 @@ void ALFloaterLightBox::endColorSession(bool escaped)
     if (mRecordedKeys.count(key) && !llsd_equals(picked, mColorOriginal))
     {
         ScopedHistoryGroup group(mHistory);
-        mHistory.record(key, mColorOriginal, picked, (F32)LLTimer::getElapsedSeconds().value());
+        mHistory.record(key, mColorOriginal, picked, LLTimer::getUptimeSeconds().value());
     }
 }
 
@@ -1148,6 +1143,9 @@ void ALFloaterLightBox::openHistory()
     hp.rect = LLRect(0, HEIGHT, WIDTH, 0);
     hp.empty_headline = getString("history_empty_headline");
     hp.empty_sentence = getString("history_empty_sentence");
+    // The row under every step: undoing everything is the one trip back a
+    // person is most likely to want, and no step's row can ask for it.
+    hp.start_label    = getString("history_start");
     ALHistoryList* list = LLUICtrlFactory::create<ALHistoryList>(hp);
 
     // The floater's own keys work while the list is up -- Ctrl+Z steps it
@@ -1165,12 +1163,10 @@ void ALFloaterLightBox::openHistory()
     mHistoryList = list->getHandle();
     list->onGoTo([self](size_t in_force)
     {
-        // The list counts its first row, which is the start of the history
-        // rather than a step, so the cursor is one less than it asks for.
-        ALFloaterLightBox* floater = self.get();
-        if (floater && in_force > 0)
+        // How many steps in force is where the cursor goes.
+        if (ALFloaterLightBox* floater = self.get())
         {
-            floater->goToHistory(in_force - 1);
+            floater->goToHistory(in_force);
         }
     });
     fillHistoryList();
@@ -1185,18 +1181,8 @@ void ALFloaterLightBox::fillHistoryList()
     }
     mHistoryListRevision = mHistory.revision();
 
-    // Nothing done yet: an empty list, which is what makes it say so.
+    // Nothing done yet is an empty list, which is what makes it say so.
     std::vector<ALHistoryList::Step> steps;
-    if (mHistory.depth() == 0)
-    {
-        showHistory(list, std::move(steps), 0);
-        return;
-    }
-
-    // A first row that is no step at all: where the history starts. Without
-    // it no row could ask for nothing to be in force, and undoing everything
-    // is the one trip back a person is most likely to want.
-    steps.push_back({ getString("history_start"), std::string() });
     for (size_t index = 0; index < mHistory.depth(); ++index)
     {
         const ALGradeHistory::Transaction& changes = mHistory.at(index);
@@ -1237,29 +1223,16 @@ void ALFloaterLightBox::fillHistoryList()
         }
         steps.push_back(std::move(step));
     }
-    showHistory(list, std::move(steps), mHistory.cursor() + 1);
+    showHistory(list, std::move(steps), mHistory.cursor());
 }
 
 void ALFloaterLightBox::goToHistory(size_t cursor)
 {
     // A step at a time through applyHistory, so every step is written back
-    // exactly the way Ctrl+Z and Ctrl+Y write it. The guard is for a stack
-    // that stops moving, which applyHistory reports rather than loops on.
-    size_t guard = mHistory.depth() + 1;
-    while (mHistory.cursor() > cursor && guard-- > 0)
-    {
-        if (!applyHistory(false))
-        {
-            break;
-        }
-    }
-    while (mHistory.cursor() < cursor && guard-- > 0)
-    {
-        if (!applyHistory(true))
-        {
-            break;
-        }
-    }
+    // exactly the way Ctrl+Z and Ctrl+Y write it; bounded by the stack, for
+    // one that stops moving, which applyHistory reports rather than loops on.
+    goToStep(cursor, [this]() { return mHistory.cursor(); }, [this]() { return applyHistory(false); },
+             [this]() { return applyHistory(true); }, mHistory.depth() + 1);
 }
 
 std::string ALFloaterLightBox::pageLabel(size_t page) const
@@ -1729,7 +1702,7 @@ void ALFloaterLightBox::onGradeSettingChanged(const std::string& name, const LLS
     // A monotonic clock is all the history wants: it compares two of these to
     // decide whether one drag is still in progress, and never reads the value
     // on its own.
-    mHistory.record(name, before, after, (F32)LLTimer::getElapsedSeconds().value());
+    mHistory.record(name, before, after, LLTimer::getUptimeSeconds().value());
 }
 
 bool ALFloaterLightBox::applyHistory(bool redo_direction)
@@ -1769,51 +1742,6 @@ bool ALFloaterLightBox::applyHistory(bool redo_direction)
     return true;
 }
 
-bool ALFloaterLightBox::handleKeyHere(KEY key, MASK mask)
-{
-    if (key == 'F' && mask == MASK_CONTROL)
-    {
-        openFind();
-        return true;
-    }
-    if (handleUndoKeys(key, mask))
-    {
-        return true;
-    }
-    return ALStudioFloater::handleKeyHere(key, mask);
-}
-
-void ALFloaterLightBox::onCommitVec3(LLUICtrl* ctrl)
-{
-    if (mVec3Updating || !ctrl)
-    {
-        return;
-    }
-
-    std::string setting;
-    S32 component = 0;
-    if (!ALLightboxDirectory::parseVec3Name(ctrl->getName(), setting, component))
-    {
-        return;
-    }
-
-    LLControlVariable* controlp = gSavedSettings.getControl(setting);
-    if (!controlp)
-    {
-        return;
-    }
-
-    // Rebuild the full component array so a single spinner commit writes back
-    // one component without disturbing the others; works for VEC3 and COL3.
-    const LLSD current = controlp->getValue();
-    LLSD updated = LLSD::emptyArray();
-    for (S32 i = 0; i < 3; ++i)
-    {
-        updated.append(LLSD::Real(current[i].asReal()));
-    }
-    updated[component] = LLSD::Real(ctrl->getValue().asReal());
-    controlp->set(updated);
-}
 
 namespace
 {
@@ -2448,24 +2376,29 @@ void ALFloaterLightBox::refreshBloomSections()
     // glow runs whenever it does not. Keep the two in step. The cross filter
     // is on the HDR side with the bloom it is seeded from: it streaks what
     // the bloom pyramid's top holds, and without the pyramid it draws nothing.
+    // So is the auto exposure, which renderFinalize meters only under HDR.
+    // The cross filter also needs a texture barrier (generateBloomHDR), which a
+    // driver with neither GL 4.5 nor a texture barrier extension does not have.
     const bool hdr = gGLManager.mGLVersion > 4.05f && gSavedSettings.getBOOL("RenderHDREnabled");
-    static const std::pair<const char*, bool> bloom_sections[] = {
-        { "sec_bloom", true },
-        { "sec_bloom_adv", true },
-        { "sec_crossfilter", true },
-        { "sec_crossfilter_adv", true },
-        { "sec_glow", false },
-        { "sec_glow_adv", false },
+    const bool cross_filter = hdr && glTextureBarrier;
+    const std::pair<const char*, bool> bloom_sections[] = {
+        { "sec_autoexp", hdr },
+        { "sec_autoexp_adv", hdr },
+        { "sec_bloom", hdr },
+        { "sec_bloom_adv", hdr },
+        { "sec_crossfilter", cross_filter },
+        { "sec_crossfilter_adv", cross_filter },
+        { "sec_glow", !hdr },
+        { "sec_glow_adv", !hdr },
     };
     std::set<LLAccordionCtrl*> changed;
-    for (const auto& [name, for_hdr] : bloom_sections)
+    for (const auto& [name, shown] : bloom_sections)
     {
         const ALLightboxDirectory::Section* section = mDirectory.section(name);
         if (!section || !section->mTab)
         {
             continue;
         }
-        const bool shown = (for_hdr == hdr);
         if (section->mTab->getVisible() == shown)
         {
             continue;
@@ -2489,22 +2422,3 @@ void ALFloaterLightBox::refreshBloomSections()
     }
 }
 
-void ALFloaterLightBox::refreshVec3Row(const std::string& setting_name)
-{
-    auto row = mVec3Rows.find(setting_name);
-    LLControlVariable* controlp = gSavedSettings.getControl(setting_name);
-    if (row == mVec3Rows.end() || !controlp)
-    {
-        return;
-    }
-
-    const LLSD value = controlp->getValue();
-    ScopedTrue updating(mVec3Updating);
-    for (S32 i = 0; i < 3; ++i)
-    {
-        if (LLUICtrl* ctrlp = row->second[i])
-        {
-            ctrlp->setValue(value[i].asReal());
-        }
-    }
-}

@@ -224,7 +224,7 @@ public:
     static U32 sMinLargeImageSize ;
     static U32 sMaxSmallImageSize ;
     static bool sFreezeImageUpdates;
-    static F32  sCurrentTime ;
+    static F64  sCurrentTime ;
 
     // estimated free memory for textures, by bias calculation
     static F32 sFreeVRAMMegabytes;
@@ -477,7 +477,7 @@ protected:
     S8              mLoadedCallbackDesiredDiscardLevel;
     bool            mPauseLoadedCallBacks;
     callback_list_t mLoadedCallbackList;
-    F32             mLastCallBackActiveTime;
+    F64             mLastCallBackActiveTime;
 
     LLPointer<LLImageRaw> mRawImage;
     S32 mRawDiscardLevel = -1;
@@ -493,7 +493,7 @@ protected:
     LLPointer<LLImageRaw> mSavedRawImage;
     S32 mSavedRawDiscardLevel;
     S32 mDesiredSavedRawDiscardLevel;
-    F32 mLastReferencedSavedRawImageTime ;
+    F64 mLastReferencedSavedRawImageTime ;
     F32 mKeptSavedRawImageTime ;
 
     LLHost mTargetHost; // if invalid, just request from agent's simulator

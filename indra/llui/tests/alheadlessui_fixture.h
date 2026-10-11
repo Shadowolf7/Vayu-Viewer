@@ -27,9 +27,12 @@
 
 #include "linden_common.h"
 
+#include "altextdocument.h"
 #include "../llaccordionctrl.h"
 #include "../lllayoutstack.h"
 #include "../llui.h"
+
+#include "albigscript.h"
 
 #include "llcontrol.h"
 #include "lldir.h"
@@ -68,7 +71,8 @@ namespace ll_test
     // What a widget above LLView needs before it can be constructed: settings
     // groups, where a key nobody declared warns and reads as its default; a
     // 2D renderer with no image provider, so every image is null; and the
-    // font registry over the source tree's fonts, with no GL textures.
+    // font registry over the source tree's fonts, with no GL textures unless
+    // a caller that draws asks for them.
     //
     // One per process. LLFontGL's per-face getters cache their answer in a
     // static, and the LLUI singleton owns spell-check and 2D state that is
@@ -76,9 +80,21 @@ namespace ll_test
     class HeadlessUI
     {
     public:
-        static HeadlessUI& get()
+        // With `gl_textures`, the fonts put their glyphs in GL textures, for
+        // a caller that has a context up and draws; the first call decides.
+        // A later call that asks for the other is an error rather than
+        // handed what it did not ask for: fonts without GL textures draw
+        // nothing, and fonts with them need the context to stay current,
+        // so tests of the two kinds cannot share a process.
+        static HeadlessUI& get(bool gl_textures = false)
         {
-            static HeadlessUI ui;
+            static HeadlessUI ui(gl_textures);
+            if (gl_textures != ui.mGLTextures)
+            {
+                LL_ERRS("HeadlessUI") << "HeadlessUI::get(gl_textures=" << gl_textures
+                                      << ") after the process's UI was made with gl_textures="
+                                      << ui.mGLTextures << LL_ENDL;
+            }
             return ui;
         }
 
@@ -90,12 +106,13 @@ namespace ll_test
         HeadlessUI& operator=(const HeadlessUI&) = delete;
 
     private:
-        HeadlessUI()
+        explicit HeadlessUI(bool gl_textures)
         :   mDir(LLUI_TEST_APP_DIR),
-            mConfig("config")
+            mConfig("config"),
+            mGLTextures(gl_textures)
         {
             const std::string fonts_xml = mDir.add(std::string(LLUI_TEST_APP_DIR), "skins/default/xui/en/fonts.xml");
-            if (std::string(LLUI_TEST_APP_DIR).empty() || !fileExists(fonts_xml))
+            if (std::string(LLUI_TEST_APP_DIR).empty() || !LLFile::isfile(fonts_xml))
             {
                 return;
             }
@@ -114,7 +131,7 @@ namespace ll_test
 
             LLFontManager::initClass();
             LLFontGL::initClass(96.f, 1.f, 1.f, LLUI_TEST_APP_DIR, fonts_xml, LLSD(),
-                                /*create_gl_textures=*/false);
+                                gl_textures);
 
             // A floater reaches for the floater view while it is being built
             // -- to fit itself on a screen this has none of -- and reads its
@@ -127,22 +144,49 @@ namespace ll_test
             fvp.follows.flags = FOLLOWS_ALL;
             gFloaterView = LLUICtrlFactory::create<LLFloaterView>(fvp);
 
-            mOk = true;
-        }
+            // A root for the views drawn here, and the whole of it to be
+            // drawn, as the window has them: a view draws its children by
+            // where they are on the root and whether that is being drawn,
+            // so without them a view with a child in sight -- a text's
+            // ruler -- could not be drawn at all. The rect stays whole:
+            // marked dirty, it only grows.
+            LLView::Params rvp;
+            rvp.name = "test_root_view";
+            rvp.rect = fvp.rect;
+            rvp.mouse_opaque = false;
+            rvp.follows.flags = FOLLOWS_ALL;
+            LLUI::getInstance()->setRootView(LLUICtrlFactory::create<LLView>(rvp));
+            LLView::sDirtyRect = rvp.rect;
+            LLView::sIsRectDirty = true;
 
-        static bool fileExists(const std::string& path)
-        {
-            if (FILE* f = std::fopen(path.c_str(), "rb"))
-            {
-                std::fclose(f);
-                return true;
-            }
-            return false;
+            mOk = true;
         }
 
         UIDir mDir;
         LLControlGroup mConfig;
+        const bool mGLTextures;
         bool mOk { false };
+    };
+
+    // How many times a document says it changed, from when this is made:
+    // what a test holds an operation to -- one notification for a
+    // change made in one go, not one for each line it touched. With the
+    // big scripts (albigscript.h), what keeps a whole-document operation
+    // from costing a pass over every listener per line.
+    class EditCount
+    {
+    public:
+        explicit EditCount(ALTextDocument& doc)
+        :   mConnection(doc.onChanged([this](const ALTextDocument::Edit&) { ++mCount; }))
+        {
+        }
+
+        S32  count() const { return mCount; }
+        void reset() { mCount = 0; }
+
+    private:
+        S32                                mCount = 0;
+        boost::signals2::scoped_connection mConnection;
     };
 
     // What a frame does to a layout, run until it stops changing.

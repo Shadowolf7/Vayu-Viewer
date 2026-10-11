@@ -39,6 +39,8 @@
 
 namespace tut
 {
+namespace
+{
     struct llrendermatrix_data
     {
         // Every case starts from identity stacks and the forward depth
@@ -115,6 +117,7 @@ namespace tut
                              -0.8f, 0.6f, 0.f, 0.f,
                              0.f, 0.f, 1.f, 0.f,
                              5.f, -7.f, 9.f, 1.f };
+}
 
     // The stack ops apply the new transform ahead of what the stack held,
     // which on the scalar matrix is the product written the other way
@@ -209,42 +212,6 @@ namespace tut
             inverse.setMul(mv, expected_persp);
             inverse.invert();
             ensure_vector_close("al_unproject through the inverse" + when, al_unproject(win, inverse, viewport), back, 1e-6f);
-        }
-    }
-
-    // The far-clip squash replaces the depth column with the w column
-    // scaled, then restores the projection.
-    template<> template<>
-    void llrendermatrix_object::test<3>()
-    {
-        const LLMatrix4a persp = LLMatrix4a::perspective(1.1f, 1.777f, 0.25f, 1024.f);
-        for (bool reverse : { false, true })
-        {
-            LLRender::sReverseZ = reverse;
-            const std::string when = reverse ? " under reverse-Z" : " forward";
-            for (U32 layer : { 0u, 1u, 3u })
-            {
-                gGL.matrixMode(LLRender::MM_PROJECTION);
-                gGL.loadMatrix(persp);
-                gGL.matrixMode(LLRender::MM_MODELVIEW);
-                {
-                    LLGLSquashToFarClip squash(persp, layer);
-                    const F32 depth = reverse ? (0.000005f + 0.00005f * layer) : (0.99999f - 0.0001f * layer);
-                    LLMatrix4a expected = persp;
-                    for (S32 row = 0; row < 4; ++row)
-                    {
-                        expected.mMatrix[row].getF32ptr()[2] = persp.mMatrix[row][3] * depth;
-                    }
-                    ensure("squashed projection" + when, same_bytes(gGL.getProjectionMatrix(), expected));
-                    ensure("the mode is left where it was", gGL.getMatrixMode() == LLRender::MM_MODELVIEW);
-
-                    // every point lands at that depth
-                    LLVector4a clip;
-                    gGL.getProjectionMatrix().transform4(LLVector4a(0.3f, -0.2f, -50.f, 1.f), clip);
-                    ensure_approximately_equals_range(("squashed depth" + when).c_str(), clip[2] / clip[3], depth, 1e-6f);
-                }
-                ensure("projection restored" + when, same_bytes(gGL.getProjectionMatrix(), persp));
-            }
         }
     }
 

@@ -24,28 +24,31 @@
 
 #include "linden_common.h"
 
-#include "../alquickopen.h"
+#include "alquickopen.h"
+
+#include "alchoicelist.h"
+#include "llfontgl.h"
+#include "alpopover.h"
 
 #include "../llfloater.h"
 #include "../llfocusmgr.h"
 #include "../lllineeditor.h"
+#include "../llscrolllistctrl.h"
 #include "../lluictrlfactory.h"
 
 #include "alheadlessui_fixture.h"
+#include "aluistatescope.h"
 
 #include "../test/lltut.h"
-
-class LLAvatarName;
-const std::string gQuickTestAnonName("Anon");
-const std::string& rlvGetAnonym(const LLAvatarName& av_name)
-{
-    return gQuickTestAnonName;
-}
 
 namespace tut
 {
     struct alquickopen_data
     {
+        // Focus and capture as the test found them, whatever it leaves them
+        // on.
+        ll_test::FocusScope focus;
+
         static std::vector<ALQuickOpen::Candidate> files()
         {
             std::vector<ALQuickOpen::Candidate> made;
@@ -243,5 +246,210 @@ namespace tut
         ensure_equals("both answer", order.size(), size_t(2));
         ensure_equals("the words' whole word before the label's scattered letters",
                       shapes[order.front()].label, std::string("PushButton_Off"));
+    }
+
+    template<> template<>
+    void alquickopen_object::test<8>()
+    {
+        set_test_name("freeform, the one row says what return does, and return sends what was typed");
+        if (!ll_test::HeadlessUI::get().ok())
+        {
+            skip("no UI: LLUI_TEST_APP_DIR does not point at the source tree");
+        }
+        ALQuickOpen::Params p(LLUICtrlFactory::getDefaultParams<ALQuickOpen>());
+        p.name = "quick";
+        p.rect = LLRect(0, 60, 300, 0);
+        ALQuickOpen* quick = LLUICtrlFactory::create<ALQuickOpen>(p);
+        std::vector<std::string> typed, chosen;
+        quick->onQueryChanged([&](const std::string& q) { typed.push_back(q); });
+        quick->onChose([&](const std::string& v) { chosen.push_back(v); });
+        quick->setCandidates(files());
+        quick->setHint("Type a line number.");
+        const ALChoiceList* list = quick->findChild<ALChoiceList>("matches");
+        ensure("freeform", quick->freeform());
+        ensure("one row, the hint", list && list->count() == 1 && list->choices()[0].text == "Type a line number.");
+        // Not chosen: return takes what was typed whatever the row says.
+        ensure("and not chosen", quick->chosenRow() == -1);
+        quick->setQuery("12");
+        ensure("the query is told", typed.size() == 1 && typed[0] == "12");
+        ensure("the candidates stay aside", list->count() == 1);
+        quick->setHint("Go to line 12.");
+        ensure_equals("the row says what return does now", list->choices()[0].text, std::string("Go to line 12."));
+        quick->findChild<LLLineEditor>("query")->onCommit();
+        ensure("return sends what was typed", chosen.size() == 1 && chosen[0] == "12");
+        quick->die();
+    }
+
+    template<> template<>
+    void alquickopen_object::test<9>()
+    {
+        set_test_name("with nothing typed, the first few to browse; typed, the best few; none, said so");
+        if (!ll_test::HeadlessUI::get().ok())
+        {
+            skip("no UI: LLUI_TEST_APP_DIR does not point at the source tree");
+        }
+        ALQuickOpen::Params p(LLUICtrlFactory::getDefaultParams<ALQuickOpen>());
+        p.name = "quick";
+        p.rect = LLRect(0, 200, 300, 0);
+        p.rows = 3;
+        ALQuickOpen* quick = LLUICtrlFactory::create<ALQuickOpen>(p);
+        std::vector<ALQuickOpen::Candidate> many;
+        for (S32 i = 0; i < 20; ++i)
+        {
+            ALQuickOpen::Candidate one;
+            one.label = llformat("llFunction%02d", i);
+            one.value = one.label;
+            many.push_back(one);
+        }
+        quick->setCandidates(many);
+        const ALChoiceList* list = quick->findChild<ALChoiceList>("matches");
+        ensure_equals("nothing typed: the first as many as were asked for", list->count(), 3);
+        ensure("in the order given", quick->listed().front() == "llFunction00");
+        quick->setQuery("func");
+        ensure_equals("typed: as many as were asked for", list->count(), 3);
+        ensure("the best chosen", quick->chosenRow() == 0 && quick->listed().size() == 3);
+        ensure("and nothing to say about it", quick->findChild<ALChoiceList>("matches")->placeholder().empty());
+        quick->setQuery("zzz");
+        ensure_equals("nothing answers", list->count(), 0);
+        ensure("and the list says so", !list->placeholder().empty());
+        ensure("nothing chosen", quick->chosenRow() == -1);
+        quick->setQuery(std::string());
+        ensure("the saying goes with a list to show", list->placeholder().empty());
+        quick->die();
+    }
+    template<> template<>
+    void alquickopen_object::test<10>()
+    {
+        set_test_name("a long label is still an answer, and each degree of meaning it stays in its own tier however far in");
+        const std::string scattered = std::string(300, 'x') + "a_b_c";
+        ensure("letters scattered far into a long line still match", ALQuickOpen::score(scattered, "abc") > 0);
+        const std::string run = std::string(1200, 'y') + "abc";
+        ensure("a run far into a longer one still matches", ALQuickOpen::score(run, "abc") > 0);
+        ensure("and still outranks the best scattered letters",
+               ALQuickOpen::score(run, "abc") > ALQuickOpen::score("aXbXc", "abc"));
+        ensure("which outrank the worst", ALQuickOpen::score("aXbXc", "abc") >= ALQuickOpen::score(scattered, "abc"));
+        ensure("a word start outranks the best run", ALQuickOpen::score("x_abc", "abc") > ALQuickOpen::score("xabc", "abc"));
+
+        std::vector<ALQuickOpen::Candidate> history;
+        for (const std::string& line : { scattered, run })
+        {
+            ALQuickOpen::Candidate one;
+            one.label = line;
+            one.value = line;
+            history.push_back(one);
+        }
+        const std::vector<size_t> order = ALQuickOpen::rank(history, "abc");
+        ensure_equals("both are offered", order.size(), size_t(2));
+        ensure_equals("the run first", order.front(), size_t(1));
+    }
+
+    // A prefix says which list is asked of and is not matched: `>sav`
+    // finds what `sav` would, `>` alone lists everything, and a query
+    // without it is matched whole.
+    template<> template<>
+    void alquickopen_object::test<11>()
+    {
+        ll_test::HeadlessUI& ui = ll_test::HeadlessUI::get();
+        if (!ui.ok())
+        {
+            skip("no UI: LLUI_TEST_APP_DIR does not point at the source tree");
+        }
+        ALQuickOpen::Params p(LLUICtrlFactory::getDefaultParams<ALQuickOpen>());
+        p.name = "quick";
+        p.rect = LLRect(100, 400, 400, 200);
+        ALQuickOpen* quick = LLUICtrlFactory::create<ALQuickOpen>(p);
+        gFloaterView->addChild(quick);
+        quick->setCandidates(files());
+        quick->setPrefix(">");
+        ensure("the list", quick->findChild<ALChoiceList>("matches") != nullptr);
+        const auto first = [quick]() { return quick->listed().empty() ? std::string() : quick->listed().front(); };
+        quick->setQuery(">people");
+        ensure_equals("matched without it", first(), std::string("panel_people.xml"));
+        quick->setQuery("> people");
+        ensure_equals("nor the blanks after it", first(), std::string("panel_people.xml"));
+        quick->setQuery(">");
+        ensure_equals("alone, everything to browse", quick->listed().size(), files().size());
+        quick->setQuery("people");
+        ensure_equals("without it, the query whole", first(), std::string("panel_people.xml"));
+        quick->setQuery(">>people");
+        ensure("with it twice, the second is matched", quick->listed().empty() || first() != "panel_people.xml");
+        quick->die();
+    }
+
+    template<> template<>
+    void alquickopen_object::test<12>()
+    {
+        set_test_name("escape in the field is the popover's: said as escaped, not as looked away, and the keyboard back where it was");
+        if (!ll_test::HeadlessUI::get().ok())
+        {
+            skip("no UI: LLUI_TEST_APP_DIR does not point at the source tree");
+        }
+        LLFloater::Params fp(LLFloater::getDefaultParams());
+        fp.name            = "home";
+        fp.rect            = LLRect(100, 500, 500, 100);
+        fp.save_rect       = false;
+        fp.save_visibility = false;
+        LLFloater* window  = new LLFloater(LLSD(), fp);
+        window->openFloater();
+        LLLineEditor::Params lp(LLUICtrlFactory::getDefaultParams<LLLineEditor>());
+        lp.name             = "typed";
+        lp.rect             = LLRect(10, 220, 130, 200);
+        LLLineEditor* typed = LLUICtrlFactory::create<LLLineEditor>(lp);
+        window->addChild(typed);
+        typed->setFocus(true);
+
+        ALQuickOpen::Params p(LLUICtrlFactory::getDefaultParams<ALQuickOpen>());
+        p.name             = "quick_open";
+        p.rect             = LLRect(0, 60, 300, 0);
+        ALQuickOpen* quick = LLUICtrlFactory::create<ALQuickOpen>(p);
+        ALPopover*   popover = ALPopover::showOver(window, quick, "Go to line");
+        ensure("shown", popover != nullptr);
+        std::vector<bool> said;
+        popover->onClosed([&said](bool escaped) { said.push_back(escaped); });
+        quick->takeFocus();
+        LLLineEditor* field = quick->findChild<LLLineEditor>("query");
+        ensure("the field has the keyboard", gFocusMgr.getKeyboardFocus() == field);
+        field->handleKey(KEY_ESCAPE, MASK_NONE, false);
+        ensure("closed", popover->isDead() || !popover->getVisible());
+        ensure_equals("once", said.size(), 1u);
+        ensure("as escaped", said.front());
+        ensure("the keyboard back where it was", gFocusMgr.getKeyboardFocus() == typed);
+        gFocusMgr.setKeyboardFocus(nullptr);
+        window->closeFloater();
+    }
+
+    template<> template<>
+    void alquickopen_object::test<13>()
+    {
+        set_test_name("the arrows move the choice and return takes it, a double-click picks the row under it; tall enough for so many rows");
+        if (!ll_test::HeadlessUI::get().ok())
+        {
+            skip("no UI: LLUI_TEST_APP_DIR does not point at the source tree");
+        }
+        ALQuickOpen::Params p(LLUICtrlFactory::getDefaultParams<ALQuickOpen>());
+        p.name = "quick";
+        p.rect = LLRect(0, 200, 300, 0);
+        ALQuickOpen* quick = LLUICtrlFactory::create<ALQuickOpen>(p);
+        std::vector<std::string> chosen;
+        quick->onChose([&chosen](const std::string& v) { chosen.push_back(v); });
+        quick->setCandidates(files());
+        quick->setQuery("floater");
+        ensure("rows to move along", quick->listed().size() >= 3 && quick->chosenRow() == 0);
+        ensure("down", quick->handleKeyHere(KEY_DOWN, MASK_NONE) && quick->chosenRow() == 1);
+        ensure("down again", quick->handleKeyHere(KEY_DOWN, MASK_NONE) && quick->chosenRow() == 2);
+        ensure("up", quick->handleKeyHere(KEY_UP, MASK_NONE) && quick->chosenRow() == 1);
+        quick->findChild<LLLineEditor>("query")->onCommit();
+        ensure("return takes the one chosen", chosen.size() == 1 && chosen[0] == quick->listed()[1]);
+
+        ALChoiceList* list = quick->findChild<ALChoiceList>("matches");
+        const LLRect  text = list->textRect();
+        const S32     y    = text.mTop - list->layout().lineTop(2) - list->layout().rowHeightOf(2, 0) / 2 + list->scrollY();
+        ensure("a double-click is taken", list->handleDoubleClick(text.mLeft + 4, y, MASK_NONE));
+        ensure("the row under it picked", chosen.size() == 2 && chosen[1] == quick->listed()[2]);
+        quick->die();
+
+        ensure("taller for more rows", ALQuickOpen::heightForRows(3) > ALQuickOpen::heightForRows(1));
+        const S32 line = LLFontGL::getFontSansSerifSmall()->getLineHeight();
+        ensure("by the rows", ALQuickOpen::heightForRows(3) - ALQuickOpen::heightForRows(1) >= 2 * line);
     }
 }

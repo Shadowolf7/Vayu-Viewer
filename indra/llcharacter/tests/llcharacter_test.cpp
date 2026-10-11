@@ -107,6 +107,8 @@ namespace
 
 namespace tut
 {
+namespace
+{
     struct llcharacter_data
     {
         ALTestCharacter mCharacter;
@@ -162,6 +164,7 @@ namespace tut
     typedef test_group<llcharacter_data> llcharacter_test;
     typedef llcharacter_test::object llcharacter_object;
     tut::llcharacter_test llcharacter_testcase("LLCharacter");
+}
 
     template<> template<>
     void llcharacter_object::test<1>()
@@ -376,10 +379,10 @@ namespace tut
         mCharacter.getMotionController().setTimeStep(0.25f);
         ensure("the running motion is still running", !running->isStopped());
         ensure_equals("its stop time was never set", running->mStopTimeCalls, 0);
-        ensure_equals("and it still reads as never stopped", running->getStopTime(), 0.f);
+        ensure_equals("and it still reads as never stopped", running->getStopTime(), 0.0);
         ensure("a motion that never ends keeps its open send-stop time", running->sendStopTimestamp() == F32_MAX);
         ensure("the stopped motion is still stopped", stopped->isStopped());
-        ensure_equals("its stop time sits on the quantum", fmodf(stopped->getStopTime(), 0.25f), 0.f);
+        ensure_equals("its stop time sits on the quantum", fmod(stopped->getStopTime(), 0.25), 0.0);
     }
 
     template<> template<>

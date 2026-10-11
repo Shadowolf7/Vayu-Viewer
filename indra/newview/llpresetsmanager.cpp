@@ -539,7 +539,7 @@ void LLPresetsManager::getGraphicsControlNames(std::vector<std::string>& names)
         "RenderVolumeLODFactor",
         "RenderScreenSpaceReflections",
         "RenderReflectionProbeDetail",
-        "RenderReflectionProbeLevel"
+        "RenderReflectionProbeLevel",
         "RenderCASSharpness",
     };
     names = camera_controls;
@@ -586,10 +586,15 @@ void LLPresetsManager::getLooksControlNames(std::vector<std::string>& names)
         "RenderTonemapAgxContrast",
         "RenderTonemapAgxWhite",
         "RenderDynamicExposureEnabled",
-        "RenderDynamicExposureCoefficient",
-        "RenderDynamicExposureSpeedError",
-        "RenderDynamicExposureSpeedTarget",
-        "RenderUseExposureSkySettings",
+        "AlchemyExposureCompensation",
+        "AlchemyExposureMinEV",
+        "AlchemyExposureMaxEV",
+        "AlchemyExposureLowPercent",
+        "AlchemyExposureHighPercent",
+        "AlchemyExposureSpeedUp",
+        "AlchemyExposureSpeedDown",
+        "AlchemyExposureMeteringMode",
+        "AlchemyExposureSkyWeight",
         // Color LUT
         "RenderColorGrade",
         "RenderColorGradeLUT",
