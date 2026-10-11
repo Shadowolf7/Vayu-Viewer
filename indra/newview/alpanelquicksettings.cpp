@@ -171,6 +171,11 @@ void ALPanelQuickSettings::onVisibilityChange(bool new_visibility)
         // works because it's typically first built well after inventory
         // is ready).
         loadEnvironmentPresets();
+
+        LLSlider* slider = getChild<LLSlider>("draw_dist_slider_bar");
+        cap_draw_distance_control(slider, slider);
+        LLSpinCtrl* spinner = getChild<LLSpinCtrl>("draw_dist_spinner");
+        cap_draw_distance_control(spinner, spinner);
     }
 }
 
@@ -178,19 +183,6 @@ void ALPanelQuickSettings::onVisibilityChange(bool new_visibility)
 void ALPanelQuickSettings::refresh()
 {
     LLPanel::refresh();
-}
-
-// virtual
-void ALPanelQuickSettings::onVisibilityChange(bool new_visibility)
-{
-    if (new_visibility)
-    {
-        LLSlider* slider = getChild<LLSlider>("draw_dist_slider_bar");
-        cap_draw_distance_control(slider, slider);
-        LLSpinCtrl* spinner = getChild<LLSpinCtrl>("draw_dist_spinner");
-        cap_draw_distance_control(spinner, spinner);
-    }
-    LLPanel::onVisibilityChange(new_visibility);
 }
 
 void ALPanelQuickSettings::syncFromPreferenceSetting()
