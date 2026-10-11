@@ -17,7 +17,7 @@ Alchemy represents a major modernization of the viewer codebase. Vayu inherits A
 - **Mouselook & Controls** — Friend/foe identification overlays in mouselook, customizable zoom timing, realistic mouselook inertia, and dedicated toggles for click-to-sit and mouse-steering.
 - **Faster Text & Interface Responsiveness (Optimization Project 1)** — Modernized text engine and font layout caching that eliminate micro-stutters when rendering chat, nametags, or complex international text, coupled with streamlined UI layouts so floaters and panels open faster and use less memory.
 - **Smooth In-World Video & Web Screens (Dullahan)** — Hardware-accelerated media-on-a-prim rendering directly on the GPU, eliminating the CPU hitches that used to drop your framerate around active video screens, with background media clamped to 30 FPS so in-world TVs can't starve your gameplay performance.
-- **Interface Conveniences & Responsive Menus** — Auto-hiding toolbars, custom font overrides, comprehensive remembered UI layout states, and responsive checkmark state tracking across menus (`Build > Options`). ([6c31ac8c7c](https://github.com/Shadowolf7/Vayu-Viewer/commit/6c31ac8c7c))
+- **Interface Conveniences** — Auto-hiding toolbars, custom font overrides, and comprehensive remembered UI layout states.
 
 ---
 
