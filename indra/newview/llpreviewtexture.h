@@ -69,6 +69,7 @@ public:
     void                saveMultipleToFile(const std::string& file_name = "");
 
     static void         onSaveAsBtn(void* data);
+    static void         onButtonClickUUID(void* data);
 
     void                hideCtrlButtons();
 

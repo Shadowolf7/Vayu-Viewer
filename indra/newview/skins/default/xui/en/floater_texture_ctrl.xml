@@ -202,17 +202,28 @@ PICK: TEXTURE
      max_length_chars="36"
      top_pad="5"
      height="20"
-     width="296"
+     width="216"
      left="5" />
+    <button
+     follows="bottom|right"
+     layout="topleft"
+     name="copy_uuid_btn"
+     label="Copy UUID"
+     tool_tip="Copy current texture UUID to clipboard"
+     left_pad="5"
+     top_delta="0"
+     height="20"
+     width="85" />
     <button
      follows="bottom|right"
      layout="topleft"
      name="apply_uuid_btn"
      label="Apply Key"
+     tool_tip="Apply entered UUID"
      left_pad="5"
      top_delta="0"
      height="20"
-     width="100" />
+     width="85" />
 
 <!--  middle: local mode -->
     <button

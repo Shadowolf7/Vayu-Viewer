@@ -32,6 +32,7 @@
 
 #include "llagent.h"
 #include "llbutton.h"
+#include "llclipboard.h"
 #include "llcombobox.h"
 #include "llfilepicker.h"
 #include "llfloaterreg.h"
@@ -160,6 +161,10 @@ bool LLPreviewTexture::postBuild()
     getChildView("save_tex_btn")->setVisible( true);
     getChildView("save_tex_btn")->setEnabled(canSaveAs());
 
+    childSetAction("copyuuid", LLPreviewTexture::onButtonClickUUID, this);
+    getChildView("copyuuid")->setVisible(true);
+    getChildView("copyuuid")->setEnabled(mImageID.notNull() && mIsFullPerm);
+
     const LLInventoryItem* item = getItem();
     if (item)
     {
@@ -192,6 +197,17 @@ void LLPreviewTexture::onSaveAsBtn(void* data)
 {
     LLPreviewTexture* self = (LLPreviewTexture*)data;
     self->saveAs();
+}
+
+// static
+void LLPreviewTexture::onButtonClickUUID(void* data)
+{
+    LLPreviewTexture* self = (LLPreviewTexture*)data;
+    if (self && self->mImageID.notNull())
+    {
+        const std::string uuid_str = self->mImageID.asString();
+        LLClipboard::instance().copyToClipboard(uuid_str, 0, S32(uuid_str.size()));
+    }
 }
 
 void LLPreviewTexture::draw()
@@ -672,6 +688,7 @@ void LLPreviewTexture::loadAsset()
     mUpdateDimensions = true;
     updateDimensions();
     getChildView("save_tex_btn")->setEnabled(canSaveAs());
+    getChildView("copyuuid")->setEnabled(mImageID.notNull() && mIsFullPerm);
     if (mObjectUUID.notNull())
     {
         // check that we can copy inworld items into inventory

@@ -34,6 +34,7 @@
 #include "llviewertexturelist.h"
 #include "llselectmgr.h"
 #include "llcheckboxctrl.h"
+#include "llclipboard.h"
 #include "llcombobox.h"
 #include "llbutton.h"
 #include "lldraghandle.h"
@@ -210,6 +211,11 @@ void LLFloaterTexturePicker::setImageID(const LLUUID& image_id, bool set_selecti
         mNoCopyTextureSelected = false;
         viewModel()->setDirty(); // *TODO: shouldn't we be using setValue() here?
         mImageAssetID = image_id;
+
+        if (LLLineEditor* uuid_editor = findChild<LLLineEditor>("uuid_editor"))
+        {
+            uuid_editor->setText(image_id.isNull() ? std::string() : image_id.asString());
+        }
 
         if (LLAvatarAppearanceDefines::LLAvatarAppearanceDictionary::isBakedImageId(mImageAssetID))
         {
@@ -669,7 +675,13 @@ bool LLFloaterTexturePicker::postBuild()
     mLocalMaterialsChangedConn = LLLocalGLTFMaterialMgr::getInstance()->setUnitsChangedCallback(
         [this]() { onLocalAssetsChanged(); });
 
-    getChild<LLLineEditor>("uuid_editor")->setCommitCallback(boost::bind(&onApplyUUID, this));
+    LLLineEditor* uuid_editor = getChild<LLLineEditor>("uuid_editor");
+    uuid_editor->setCommitCallback(boost::bind(&onApplyUUID, this));
+    if (mImageAssetID.notNull())
+    {
+        uuid_editor->setText(mImageAssetID.asString());
+    }
+    getChild<LLButton>("copy_uuid_btn")->setClickedCallback(boost::bind(&onBtnCopyUUID, this));
     getChild<LLButton>("apply_uuid_btn")->setClickedCallback(boost::bind(&onApplyUUID, this));
 
     mNoCopyTextureSelected = false;
@@ -1122,6 +1134,9 @@ void LLFloaterTexturePicker::onBtnPipette()
 void LLFloaterTexturePicker::onApplyUUID(void* userdata)
 {
     LLFloaterTexturePicker* self = (LLFloaterTexturePicker*) userdata;
+    if (!self)
+        return;
+
     LLUUID                  id(self->getChild<LLLineEditor>("uuid_editor")->getText());
     if (id.notNull())
     {
@@ -1129,6 +1144,24 @@ void LLFloaterTexturePicker::onApplyUUID(void* userdata)
         self->setImageID(id);
         self->setTentative(false);
         self->commitIfImmediateSet();
+    }
+}
+
+// static
+void LLFloaterTexturePicker::onBtnCopyUUID(void* userdata)
+{
+    LLFloaterTexturePicker* self = (LLFloaterTexturePicker*)userdata;
+    if (!self)
+        return;
+
+    std::string uuid_str = self->getChild<LLLineEditor>("uuid_editor")->getText();
+    if (uuid_str.empty() && self->getAssetID().notNull())
+    {
+        uuid_str = self->getAssetID().asString();
+    }
+    if (!uuid_str.empty())
+    {
+        LLClipboard::instance().copyToClipboard(uuid_str, 0, S32(uuid_str.size()));
     }
 }
 
