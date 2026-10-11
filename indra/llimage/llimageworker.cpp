@@ -36,14 +36,14 @@
 class ImageRequest
 {
 public:
-    ImageRequest(const LLPointer<LLImageFormatted>& image,
-                 S32 discard,
-                 bool needs_aux,
-                 bool allow_compression,
+    ImageRequest(const LLPointer<LLImageFormatted>&               image,
+                 S32                                              discard,
+                 bool                                             needs_aux,
+                 bool                                             allow_compression,
                  const LLPointer<LLImageDecodeThread::Responder>& responder,
-                 U32 request_id,
-                 const LLUUID& id,
-                 EVayuTextureJob job = EVayuTextureJob::Unknown);
+                 U32                                              request_id,
+                 const LLUUID&                                    id,
+                 EVayuTextureJob                                  job);
     virtual ~ImageRequest();
 
     /*virtual*/ bool processRequest();
@@ -206,10 +206,10 @@ bool ImageRequest::processRequest()
         }
 
         const S32 discard = (mDiscardLevel >= 0) ? mDiscardLevel : (S32)mFormattedImage->getDiscardLevel();
-        // Unknown (unclaimed) textures never read the BC cache either: a stale
-        // colour/normal entry must not be resurrected for an uncompressed raw bind.
-        const bool cacheable = !mNeedsAux && mID.notNull() && discard >= 0 && mAllowCompression
-            && mTextureJob != EVayuTextureJob::Unknown;
+        // mAllowCompression is only ever set for a resolved role (see the decision point in
+        // LLViewerFetchedTexture), so there is no unclaimed state to exclude here: a stale
+        // colour/normal entry can never be resurrected for an uncompressed raw bind.
+        const bool cacheable = !mNeedsAux && mID.notNull() && discard >= 0 && mAllowCompression;
         bool cache_hit = false;
 
         // Check VayuBCTextureCache *before* running expensive CPU OpenJPEG decode.
@@ -320,13 +320,11 @@ bool ImageRequest::processRequest()
 
     if (done && mDecodedRaw && mDecodedImageRaw.notNull() && !mDecodedImageRaw->getBlockCompressionResult())
     {
-        // Never block-compress an unclaimed texture: only roles explicitly
-        // assigned by a material slot (or derived from the encoded kind) reach
-        // the BC layer. Unknown (J2C-native, placeholders, skipped categories)
-        // stays raw. Gating here keeps Unknown out of BOTH the GL result and
-        // the on-disk BC cache.
+        // mAllowCompression is the whole gate. It is decided once per request, in
+        // LLViewerFetchedTexture, and already folds in the category exclusions and the
+        // requirement that a role exists -- so an unclaimed texture, a placeholder or an
+        // excluded category all arrive here with it false and stay raw.
         if (mAllowCompression &&
-            mTextureJob != EVayuTextureJob::Unknown &&
             VayuImageBlockCompressor::isEligible(mDecodedImageRaw->getWidth(),
                                                mDecodedImageRaw->getHeight(),
                                                mDecodedImageRaw->getComponents()))

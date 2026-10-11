@@ -297,16 +297,14 @@ void LLFace::setTexture(U32 ch, LLViewerTexture* tex)
     }
 
     mTexture[ch] = tex ;
-
-    // Role claim: a texture bound to a color slot is a generic RGBA color map
-    // (legacy diffuse, alt-diffuse, particles). PBR base colors get the Albedo
-    // job at their own assignment sites. Placeholders that fall back through
-    // this path are never compressed because they remain Unknown at the worker gate.
-    if( tex && (ch == LLRender::DIFFUSE_MAP || ch == LLRender::ALTERNATE_DIFFUSE_MAP) )
-    {
-        tex->setTextureJob(EVayuTextureJob::RGBA);
-    }
 }
+
+// Role claims live in the semantic entry points below, never in the slot dispatcher
+// above. setTexture(U32 ch, ...) cannot tell slot 0 from slot 1 because
+// ALTERNATE_DIFFUSE_MAP aliases NORMAL_MAP (both are 1 in llrender.h), so a
+// slot-indexed claim silently rewrote every legacy normal map to RGBA -- which
+// resolves to BC1 + sRGB with sRGB-weighted mips instead of linear BC7 with normal
+// downsampling. Do not move a role claim back into the dispatcher.
 
 void LLFace::setTexture(LLViewerTexture* tex)
 {
@@ -315,11 +313,19 @@ void LLFace::setTexture(LLViewerTexture* tex)
 
 void LLFace::setDiffuseMap(LLViewerTexture* tex)
 {
+    if (tex)
+    {
+        tex->setTextureJob(EVayuTextureJob::RGBA);
+    }
     setTexture(LLRender::DIFFUSE_MAP, tex);
 }
 
 void LLFace::setAlternateDiffuseMap(LLViewerTexture* tex)
 {
+    if (tex)
+    {
+        tex->setTextureJob(EVayuTextureJob::RGBA);
+    }
     setTexture(LLRender::ALTERNATE_DIFFUSE_MAP, tex);
 }
 
@@ -385,6 +391,7 @@ void LLFace::switchTexture(U32 ch, LLViewerTexture* new_texture)
 
     if (ch == LLRender::DIFFUSE_MAP)
     {
+        new_texture->setTextureJob(EVayuTextureJob::RGBA);
         getViewerObject()->changeTEImage(mTEOffset, new_texture) ;
     }
 
@@ -2534,7 +2541,7 @@ void LLFace::setDefaultTexture(U32 nChannel, bool fShowDefault) const
                 if (LL_PCODE_VOLUME == mVObjp->getPCode())
                     const_cast<LLFace*>(this)->switchTexture(nChannel, LLViewerFetchedTexture::sDefaultDiffuseImagep);
                 else
-                    const_cast<LLFace*>(this)->setTexture(nChannel, LLViewerFetchedTexture::sDefaultDiffuseImagep);
+                    const_cast<LLFace*>(this)->setDiffuseMap(LLViewerFetchedTexture::sDefaultDiffuseImagep);
             }
             mShowDiffTexture = false; fUpdated = true;
         }
@@ -2544,7 +2551,7 @@ void LLFace::setDefaultTexture(U32 nChannel, bool fShowDefault) const
             if (LL_PCODE_VOLUME == mVObjp->getPCode())
                 const_cast<LLFace*>(this)->switchTexture(nChannel, mOrigDiffTexture);
             else
-                const_cast<LLFace*>(this)->setTexture(nChannel, mOrigDiffTexture);
+                const_cast<LLFace*>(this)->setDiffuseMap(mOrigDiffTexture);
             mOrigDiffTexture = nullptr; fUpdated = true;
         }
 

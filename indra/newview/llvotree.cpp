@@ -477,7 +477,7 @@ LLDrawable* LLVOTree::createDrawable(LLPipeline *pipeline)
     // Just a placeholder for an actual object...
     LLFace *facep = mDrawable->addFace(poolp, mTreeImagep);
     facep->setSize(1, 3);
-    facep->setTexture(LLRender::DIFFUSE_MAP, mTreeImagep);
+    facep->setDiffuseMap(mTreeImagep);
     updateRadius();
 
     return mDrawable;

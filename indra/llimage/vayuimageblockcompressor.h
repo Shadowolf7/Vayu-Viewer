@@ -25,8 +25,11 @@ enum class EVayuTextureJob : U8
 {
     Albedo = 0,             // glTF PBR base color (sRGB: BC1 if opaque, BC7 if alpha)
     RGBA,                   // Generic color map: legacy diffuse/alt-diffuse, terrain, water color (sRGB: BC1 if opaque, BC7 if alpha)
-    LegacyMaterialNormal,   // Second Life Blinn-Phong material normal map (linear: BC7, RGBA with gloss in alpha)
-    LegacySpecular,         // Second Life Blinn-Phong specular map (linear: BC7, RGB tint + gloss in alpha)
+    LegacyMaterialNormal,   // Second Life Blinn-Phong normal map. Tangent-space RGB vector data, so always linear.
+                            // Alpha is NOT gloss: glossiness comes from LLMaterial::getSpecularLightExponent()
+                            // via mSpecColor.w -> mat_specular_color.a (llvovolume.cpp, materialIndexedF.glsl).
+    LegacySpecular,         // Second Life Blinn-Phong specular map. RGB is an sRGB tint. Alpha only
+                            // scales env intensity (spec.a in materialIndexedF.glsl), never gloss.
     PBRNormal,              // glTF PBR tangent-space normal map (linear: BC5, RG unit vector)
     MetallicRoughness,      // glTF PBR packed ORM: R=occlusion, G=roughness, B=metal (linear: BC7)
     Emissive,               // Emissive color map (sRGB: BC1 if opaque, BC7 if alpha)
@@ -88,16 +91,16 @@ public:
     static bool analyzeAlphaMask(const U8* data_in, U32 w, U32 h, S8 alpha_offset, S8 alpha_stride);
 
     // Compress raw pixel buffer into a mipped block-compressed payload
-    static bool encode(const U8* src_data, U32 width, U32 height, S32 components,
-                       VayuBlockCompressionResult& result,
-                       EVayuBlockCompressionFormat format = EVayuBlockCompressionFormat::Auto,
-                       EVayuTextureJob job = EVayuTextureJob::Albedo);
+    static bool encode(const U8* src_data, U32 width, U32 height, S32 components, VayuBlockCompressionResult& result,
+                       EVayuBlockCompressionFormat format, EVayuTextureJob job);
 
     // Convenience overload to encode from an LLImageRaw.
-    // Default job is Unknown: falls back to the raw image's own job, and refuses
-    // to encode if that is also Unknown (unclaimed textures never compress).
-    static bool encode(const LLImageRaw* raw_image,
+    // job is required: passing Unknown falls back to the raw image's own job and refuses to
+    // encode if that is also Unknown, but making every caller state its role outright is what
+    // keeps an unresolved role from reaching the BC layer by accident. The previous default of
+    // Albedo was worse than none -- it silently classified an unclaimed texture as colour.
+    static bool encode(const LLImageRaw*           raw_image,
                        VayuBlockCompressionResult& result,
-                       EVayuBlockCompressionFormat format = EVayuBlockCompressionFormat::Auto,
-                       EVayuTextureJob job = EVayuTextureJob::Unknown);
+                       EVayuBlockCompressionFormat format,
+                       EVayuTextureJob             job);
 };

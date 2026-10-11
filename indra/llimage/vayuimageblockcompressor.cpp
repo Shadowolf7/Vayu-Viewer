@@ -715,6 +715,16 @@ bool VayuImageBlockCompressor::encode(const U8* src_data, U32 width, U32 height,
     // 1. Resolve format and color space
     EVayuBlockCompressionFormat resolved = format;
     bool is_mask = true;
+
+    // is_srgb picks the sRGB *variant* of the GL internal format and which software mip
+    // filter runs. It is NOT what tells the shader to decode. That is ALSampler::SRGBDecode
+    // on the bind (alsamplerstate.cpp: GL_TEXTURE_SRGB_DECODE_EXT), and a bound sampler
+    // object overrides the texture's own state -- see skipSRGBDecode() in llimagegl.cpp.
+    // So a GL_COMPRESSED_RGBA_BPTC_UNORM texture bound with AnisoWrapSRGB still decodes,
+    // and the stored bytes are the authored sRGB bytes either way; only mip filtering and
+    // the BC7E perceptual weighting below differ. Do not read this as "the shader's colour
+    // space": getting that backwards is what made LegacySpecular look like a double-gamma
+    // bug when it never was one.
     bool is_srgb = true;
 
 #if LL_DARWIN
@@ -745,16 +755,29 @@ bool VayuImageBlockCompressor::encode(const U8* src_data, U32 width, U32 height,
             break;
 
         case EVayuTextureJob::LegacyMaterialNormal:
-        case EVayuTextureJob::LegacySpecular:
-            // Second Life Blinn-Phong material map: RGB data + Alpha glossiness
-            // (normal map or specular tint). Preserves all 4 channels with BC7
-            // (or BC3 on macOS). Never BC5, never sRGB.
+            // Second Life Blinn-Phong normal map: tangent-space RGB vector data. Bound with
+            // ALSamplers::AnisoWrap (no SRGBDecode), so it stays linear -- never sRGB. BC7
+            // (or BC3 on macOS) keeps all channels; never BC5, which would drop Z.
 #if LL_DARWIN
             resolved = EVayuBlockCompressionFormat::BC3;
 #else
             resolved = EVayuBlockCompressionFormat::BC7;
 #endif
             is_srgb = false;
+            is_mask = false;
+            break;
+
+        case EVayuTextureJob::LegacySpecular:
+            // Second Life Blinn-Phong specular map: RGB is an sRGB tint. 8bpp to keep the
+            // tint's precision -- BC7 (BC3 on macOS). Alpha only scales env intensity, never
+            // gloss. Stored sRGB so the software mip filter averages in linear; note this is
+            // NOT what makes the shader decode, see the is_srgb note in encode().
+#if LL_DARWIN
+            resolved = EVayuBlockCompressionFormat::BC3;
+#else
+            resolved = EVayuBlockCompressionFormat::BC7;
+#endif
+            is_srgb = true;
             is_mask = false;
             break;
 
@@ -826,7 +849,8 @@ bool VayuImageBlockCompressor::encode(const U8* src_data, U32 width, U32 height,
         {
             is_srgb = false;
         }
-        else if (job == EVayuTextureJob::MetallicRoughness || job == EVayuTextureJob::LegacyMaterialNormal || job == EVayuTextureJob::LegacySpecular || job == EVayuTextureJob::PBRNormal)
+        else if (job == EVayuTextureJob::MetallicRoughness || job == EVayuTextureJob::LegacyMaterialNormal ||
+                 job == EVayuTextureJob::PBRNormal)
         {
             is_srgb = false;
         }

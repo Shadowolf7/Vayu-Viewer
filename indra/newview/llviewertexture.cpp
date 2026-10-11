@@ -2214,9 +2214,24 @@ bool LLViewerFetchedTexture::updateFetch()
         // bypass texturefetch directly by pulling from LLTextureCache
         S32 fetch_request_response = -1;
         S32 worker_discard = -1;
-        const bool allow_compression = LLImageGL::sCompressTextures
-            && mGLTexturep->getAllowCompression()
-            && LLImageGL::categoryAllowsCompression(getCategory());
+        // The one place the BC decision is made, so the rest of the pipeline reads
+        // mTextureJob and never re-asks whether the role is resolved.
+        //
+        // The mTextureJob term is currently dead and is kept only to document the invariant:
+        // a request is issued only when mMaxVirtualSize > 0, and every path that raises it
+        // has already claimed the role, in the same statement sequence or earlier -- water
+        // (lldrawpoolwater.cpp:72-75/84-85/93-98), tree (lldrawpooltree.cpp:85 via
+        // llvotree.cpp:476-480), glTF (llfetchedgltfmaterial.cpp:187 then :201), and grass and
+        // clouds, whose textures are claimed in the constructor by setTEImage
+        // (llvograss.cpp:102, llvoclouds.cpp:64 -> llviewerobject.cpp:5612) long before
+        // updateTextures raises priority (llvograss.cpp:334, llvoclouds.cpp:129).
+        //
+        // Contrast llimagegl.cpp:1888, where the equivalent test is live: images with no
+        // material role at all (UI, local files, preview) have LLImageRaw::mTextureJob and
+        // LLImageGL::mTextureJob still at Unknown and must take the raw bind. That is the only
+        // place the unresolved state is genuinely observable today.
+        const bool allow_compression = LLImageGL::sCompressTextures && mGLTexturep->getAllowCompression() &&
+                                       LLImageGL::categoryAllowsCompression(getCategory()) && mTextureJob != EVayuTextureJob::Unknown;
         LLTextureFetch::FetchStatus status;
         fetch_request_response = LLAppViewer::getTextureFetch()->createRequest(mFTType, mUrl, getID(), getTargetHost(), decode_priority,
             w, h, c, desired_discard, needsAux(), mCanUseHTTP, allow_compression, status, mTextureJob);
@@ -3691,10 +3706,10 @@ void LLViewerMediaTexture::switchTexture(U32 ch, LLFace* facep)
             const LLTextureEntry* te = facep->getTextureEntry();
             if(te)
             {
-                LLViewerTexture* tex = te->getID().notNull() ? gTextureList.findImage(te->getID(), TEX_LIST_STANDARD) : NULL;
+                LLViewerTexture* tex = te->getID().notNull() ? LLViewerTextureManager::getFetchedTexture(te->getID()) : NULL;
                 if(!tex && te->getID() != mID)//try parcel media.
                 {
-                    tex = gTextureList.findImage(mID, TEX_LIST_STANDARD);
+                    tex = LLViewerTextureManager::getFetchedTexture(mID);
                 }
                 if(!tex)
                 {

@@ -1197,9 +1197,10 @@ bool LLTextureFetchWorker::doWork(S32 param)
 
         // Early check: if the texture is already compressed in VayuBCTextureCache,
         // we can fulfill the request directly without network fetching or decode thread queuing.
-        // An Unknown job never probes: unclaimed textures have no compressible
-        // representation, and a stale colour/normal entry must not be resurrected.
-        if (!mNeedsAux && mAllowCompression && mTextureJob != EVayuTextureJob::Unknown && mID.notNull() && mDesiredDiscard >= 0)
+        // mAllowCompression is only ever set for a resolved role, so there is no unclaimed case
+        // to guard here and no stale colour/normal entry can be resurrected: the branch below
+        // picks the cache name from mTextureJob, which is always a real role by this point.
+        if (!mNeedsAux && mAllowCompression && mID.notNull() && mDesiredDiscard >= 0)
         {
             VayuBCCacheEntryHeader cache_header;
             std::vector<U8> cache_buffer;
@@ -2079,6 +2080,18 @@ bool LLTextureFetchWorker::doWork(S32 param)
             }
             else
             {
+                // mFileSize is NOT a byte count from here on: it is `bytes + 1`, and that +1 is a
+                // deliberate "not fully loaded" flag. The same inflation happens in CACHE_POST above.
+                // It travels into LLTextureCache as mImageSize, which makes these three traps:
+                //   - "did we get everything?" must be written `!= datasize`, never `== datasize`.
+                //     Using `==` here rejects every discard-reduced texture -- silently, since the
+                //     texture is already decoded and displayable, so it just stops being cached.
+                //   - the inverse trap: LLTextureCache's size test is deliberately ONE-DIRECTIONAL
+                //     (mImageSize < mDataSize) precisely because this field can be inflated.
+                //     Tightening it to `!=` is not a fix; it breaks two thirds of all cache writes.
+                //   - on disk this shows up as roughly two thirds of texturecache entries reading
+                //     mImageSize == stored_bytes + 1. That is this flag. It is not corruption and
+                //     not a truncated download; don't go looking for a bug there.
                 mFileSize = datasize + 1 ; //flag not fully loaded.
             }
         }
@@ -2478,6 +2491,10 @@ void LLTextureFetchWorker::callbackCacheRead(bool success, LLImageFormatted* ima
         mImageCodec = image->getCodec();
         mInLocalCache = islocal;
         mCacheReadTime = mCacheReadTimer.getElapsedTimeF32();
+        // The >= is load-bearing, not sloppiness: mFileSize arrives from the writer already
+        // inflated by 1 when the payload is partial (the "flag not fully loaded" sites). Equal
+        // here would never be true for a partial texture. See the writeToCache call site for the
+        // full explanation of the sentinel.
         if (mFileSize != 0 && mFormattedImage->getDataSize() >= mFileSize)
         {
             mHaveAllData = true;

@@ -1878,7 +1878,14 @@ bool LLImageGL::createGLTexture(S32 discard_level, const LLImageRaw* imageraw, S
     setCategory(category);
     const U8* rawdata = imageraw->getData();
 
-    const bool compress = sCompressTextures && mAllowCompression && categoryAllowsCompression(category) && !had_explicit_format && mUseMipMaps && !defer_copy && VayuImageBlockCompressor::isEligible(raw_w, raw_h, imageraw->getComponents());
+    // The raw image's own job wins: it is the role the fetch encoded under, so it matches the
+    // cache entry. LLImageGL::mTextureJob is the fallback for images built outside the fetch
+    // pipeline. Resolving it here, next to every other "should we do BC work" term, is what
+    // lets the encode below call through without re-checking for an unresolved role.
+    const EVayuTextureJob job      = (imageraw->getTextureJob() != EVayuTextureJob::Unknown) ? imageraw->getTextureJob() : mTextureJob;
+    const bool            compress = sCompressTextures && mAllowCompression && categoryAllowsCompression(category) &&
+                                     job != EVayuTextureJob::Unknown && !had_explicit_format && mUseMipMaps && !defer_copy &&
+                                     VayuImageBlockCompressor::isEligible(raw_w, raw_h, imageraw->getComponents());
     if (compress)
     {
         // 1. Fast path: check if the texture was already compressed on a background thread pool worker
@@ -1898,11 +1905,8 @@ bool LLImageGL::createGLTexture(S32 discard_level, const LLImageRaw* imageraw, S
         }
 
         // 2. Fallback path: encode synchronously if not pre-compressed in background.
-        //    An Unknown job (raw never claimed, raw's own job also unclaimed) must
-        //    NOT encode — raw bind instead. encode() refuses Unknown as defense in depth.
         VayuBlockCompressionResult comp_res;
-        const EVayuTextureJob job = (imageraw->getTextureJob() != EVayuTextureJob::Unknown) ? imageraw->getTextureJob() : mTextureJob;
-        if (job != EVayuTextureJob::Unknown && VayuImageBlockCompressor::encode(imageraw, comp_res, EVayuBlockCompressionFormat::Auto, job))
+        if (VayuImageBlockCompressor::encode(imageraw, comp_res, EVayuBlockCompressionFormat::Auto, job))
         {
             mIsMask = comp_res.mIsMask;
             mFormatInternal = comp_res.mGLInternalFormat;
