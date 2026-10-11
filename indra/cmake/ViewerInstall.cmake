@@ -638,6 +638,30 @@ set(AL_SIGN_HELPER_ENTITLEMENTS \"${INDRA_SOURCE_DIR}/dullahan/src/dullahan.enti
   endif()
 endif()
 
+# Each channel has an application ID and package name of its own:
+# org.vayuviewer.viewer and vayu-viewer, another channel's
+# org.vayuviewer.viewer.<words> and vayu-<words>, its variant's words.
+string(TOLOWER "${al_package_suffix}" al_linux_words)
+string(REGEX REPLACE "[^a-z0-9]+" "_" al_linux_words "${al_linux_words}")
+string(REGEX REPLACE "^_+|_+$" "" al_linux_words "${al_linux_words}")
+set(AL_APP_ID "org.vayuviewer.viewer")
+set(AL_APP_NAME "Vayu")
+if(AL_CHANNEL_TYPE STREQUAL "release")
+  set(AL_LINUX_PACKAGE "vayu-viewer")
+else()
+  set(AL_LINUX_PACKAGE "vayu")
+endif()
+if(al_linux_words)
+  # An element of the ID must not begin with a digit.
+  if(al_linux_words MATCHES "^[0-9]")
+    string(APPEND AL_APP_ID "._${al_linux_words}")
+  else()
+    string(APPEND AL_APP_ID ".${al_linux_words}")
+  endif()
+  string(REPLACE "_" "-" al_linux_words "${al_linux_words}")
+  string(APPEND AL_LINUX_PACKAGE "-${al_linux_words}")
+endif()
+
 if(LINUX)
   install(
     PROGRAMS "${al_newview_dir}/linux_tools/wrapper.sh"
@@ -651,21 +675,69 @@ if(LINUX)
     DESTINATION .
     COMPONENT viewer
   )
-  install(PROGRAMS "${al_newview_dir}/linux_tools/install.sh" DESTINATION . COMPONENT viewer)
+  set(al_linux_dir "${CMAKE_CURRENT_BINARY_DIR}/linux")
+  configure_file(
+    "${al_newview_dir}/linux_tools/install.sh.in"
+    "${al_linux_dir}/install.sh"
+    @ONLY
+    FILE_PERMISSIONS
+      OWNER_READ
+      OWNER_WRITE
+      OWNER_EXECUTE
+      GROUP_READ
+      GROUP_EXECUTE
+      WORLD_READ
+      WORLD_EXECUTE
+  )
+  install(PROGRAMS "${al_linux_dir}/install.sh" DESTINATION . COMPONENT viewer)
   install(
     PROGRAMS
-      "${al_newview_dir}/linux_tools/handle_secondlifeprotocol.sh"
-      "${al_newview_dir}/linux_tools/register_secondlifeprotocol.sh"
-      "${al_newview_dir}/linux_tools/refresh_desktop_app_entry.sh"
+      "${al_newview_dir}/linux_tools/desktop_integration.sh"
       "${al_newview_dir}/linux_tools/chrome_sandboxing_permissions_setup.sh"
     DESTINATION etc
     COMPONENT viewer
   )
   install(DIRECTORY "${al_newview_dir}/res-sdl" DESTINATION . COMPONENT viewer)
+
+  # The desktop entry, its AppStream data and its icons, laid out under share/
+  string(TIMESTAMP al_release_date "%Y-%m-%d" UTC)
+  configure_file(
+    "${al_newview_dir}/linux_tools/viewer.desktop.in"
+    "${al_linux_dir}/${AL_APP_ID}.desktop"
+    @ONLY
+  )
+  configure_file(
+    "${al_newview_dir}/linux_tools/viewer.metainfo.xml.in"
+    "${al_linux_dir}/${AL_APP_ID}.metainfo.xml"
+    @ONLY
+  )
+  install(
+    FILES "${al_linux_dir}/${AL_APP_ID}.desktop"
+    DESTINATION share/applications
+    COMPONENT viewer
+  )
+  install(
+    FILES "${al_linux_dir}/${AL_APP_ID}.metainfo.xml"
+    DESTINATION share/metainfo
+    COMPONENT viewer
+  )
+  install(
+    FILES "${BRANDING_SOURCE_DIR}/viewer/icons/${ICON_PATH}/vayu_256.png"
+    RENAME "${AL_APP_ID}.png"
+    DESTINATION "share/icons/hicolor/256x256/apps"
+    COMPONENT viewer
+  )
   install(
     FILES "${BRANDING_SOURCE_DIR}/viewer/icons/${ICON_PATH}/vayu_256.png"
     RENAME vayu_icon.png
     DESTINATION .
     COMPONENT viewer
+  )
+
+  # The window takes the application ID, so the shell finds its entry.
+  set_property(
+    SOURCE "${al_newview_dir}/llappviewersdl.cpp"
+    APPEND
+    PROPERTY COMPILE_DEFINITIONS "AL_VIEWER_APP_ID=\"${AL_APP_ID}\""
   )
 endif()
