@@ -151,9 +151,6 @@ public:
     // cache_dir / hex_subdir / <id><ext>
     std::string getFilePath(const LLUUID& id, const std::string& ext = ".bc") const;
 
-    // Backward-compatible overload for legacy <id>_<discard><ext> paths
-    std::string getFilePath(const LLUUID& id, S32 discard_level, const std::string& ext = ".bc") const;
-
     // Slices sub-buffer byte count for coarser discard levels
     static size_t calcSubBufferBytes(U8 format, U32 width, U32 height, S32 num_mips, S32 diff);
 

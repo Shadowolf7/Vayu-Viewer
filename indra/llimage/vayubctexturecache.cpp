@@ -55,12 +55,6 @@ std::string VayuBCTextureCache::getFilePath(const LLUUID& id, const std::string&
     return ((mCacheDir + filename[0]) + LL_DIR_DELIM_STR) + filename;
 }
 
-std::string VayuBCTextureCache::getFilePath(const LLUUID& id, S32 discard_level, const std::string& ext) const
-{
-    std::string filename = id.asString() + "_" + std::to_string(discard_level) + ext;
-    return ((mCacheDir + filename[0]) + LL_DIR_DELIM_STR) + filename;
-}
-
 size_t VayuBCTextureCache::calcSubBufferBytes(U8 format, U32 width, U32 height, S32 num_mips, S32 diff)
 {
     if (diff <= 0)
@@ -661,22 +655,7 @@ bool VayuBCTextureCache::readEntryExt(const LLUUID& id, S32 discard_level,
     std::string file_path = getFilePath(id, ext);
     if (!LLFile::isfile(file_path))
     {
-        file_path = getFilePath(id, 0, ext);
-        if (!LLFile::isfile(file_path))
-        {
-            if (discard_level > 0)
-            {
-                file_path = getFilePath(id, discard_level, ext);
-                if (!LLFile::isfile(file_path))
-                {
-                    return false;
-                }
-            }
-            else
-            {
-                return false;
-            }
-        }
+        return false;
     }
 
     std::ifstream in(file_path, std::ios::binary);
@@ -843,26 +822,6 @@ void VayuBCTextureCache::writeEntrySync(const LLUUID& id, S32 discard_level,
                 if (existing_fh.mMeta.mDiscardLevel <= local_header.mDiscardLevel)
                 {
                     return;
-                }
-            }
-        }
-    }
-    else if (discard_level > 0)
-    {
-        std::string legacy_path = getFilePath(id, 0, ext);
-        if (LLFile::stat(legacy_path, &st) == 0)
-        {
-            std::ifstream in(legacy_path, std::ios::binary);
-            if (in.good())
-            {
-                FileHeader existing_fh;
-                in.read(reinterpret_cast<char*>(&existing_fh), sizeof(existing_fh));
-                if (in.good() && existing_fh.mMagic == kMagic && existing_fh.mVersion == kFormatVersion)
-                {
-                    if (existing_fh.mMeta.mDiscardLevel <= local_header.mDiscardLevel)
-                    {
-                        return;
-                    }
                 }
             }
         }
