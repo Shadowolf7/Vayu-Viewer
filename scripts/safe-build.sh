@@ -43,4 +43,19 @@ total_bytes=$((total_kb * 1024))
 limit_bytes=$((total_bytes * 70 / 100))
 
 echo "safe-build: capping this build's cgroup to MemoryHigh=${limit_bytes} bytes (~70% of total RAM)" >&2
-exec systemd-run --user --scope -p "MemoryHigh=${limit_bytes}" -- "$@"
+
+scope_unit="vayu-build-$$"
+
+cleanup() {
+    local rc=$?
+    trap - EXIT INT TERM HUP
+    # Send SIGTERM then SIGKILL to all processes in the scope
+    systemctl --user kill --kill-who=all --signal=SIGTERM "${scope_unit}.scope" 2>/dev/null || true
+    sleep 0.2
+    systemctl --user kill --kill-who=all --signal=SIGKILL "${scope_unit}.scope" 2>/dev/null || true
+    exit "$rc"
+}
+trap cleanup EXIT INT TERM HUP
+
+systemd-run --user --scope --unit="${scope_unit}" -p "MemoryHigh=${limit_bytes}" -- "$@" &
+wait "$!"
