@@ -74,7 +74,7 @@ if(NOT MSVC)
   set_source_files_properties(
     bc7e/bc7enc.cpp
     PROPERTIES
-    COMPILE_FLAGS "-Wno-unused-function -Wno-unused-variable -fno-strict-aliasing"
+    COMPILE_FLAGS "-Wno-unused-function -Wno-unused-variable"
   )
 else()
   set_source_files_properties(

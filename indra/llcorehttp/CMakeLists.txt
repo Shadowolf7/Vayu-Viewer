@@ -2,8 +2,6 @@
 
 add_library(llcorehttp STATIC)
 
-add_definitions(-DSIMDJSON_DISABLE_DEPRECATED_API=1)
-
 target_sources(
   llcorehttp
   PRIVATE
