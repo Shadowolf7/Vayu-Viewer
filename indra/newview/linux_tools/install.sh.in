@@ -41,7 +41,7 @@ usage()
 # installed viewer.
 is_installation()
 {
-    [[ -x $1/bin/alchemy-bin && -x $1/etc/desktop_integration.sh ]]
+    [[ ( -x $1/bin/@AL_VIEWER_BINARY_NAME@ || -x $1/bin/vayu-bin || -x $1/bin/alchemy-bin ) && -x $1/etc/desktop_integration.sh ]]
 }
 
 confirm()

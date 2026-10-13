@@ -25,7 +25,13 @@ set -euo pipefail
 
 script=$(readlink -f -- "${BASH_SOURCE[0]}")
 prefix=$(dirname -- "$(dirname -- "$script")")
-launcher="$prefix/alchemy"
+if [[ -x "$prefix/vayu" ]]; then
+    launcher="$prefix/vayu"
+elif [[ -x "$prefix/alchemy" ]]; then
+    launcher="$prefix/alchemy"
+else
+    launcher="$prefix/vayu"
+fi
 # What the entry runs and is recorded as pointing at.
 origin="$prefix"
 if [[ -n ${APPIMAGE:-} && -f $APPIMAGE && -n ${APPDIR:-} && $prefix == "$APPDIR"/* ]]; then
@@ -125,7 +131,7 @@ remove_legacy()
         local name tree
         name=$(sed -n 's/^Name=//p' "$handler" | head -n 1)
         tree=$(sed -n 's/^Path=//p' "$handler" | head -n 1)
-        if [[ $name == *Alchemy* || (-n $tree && -x $tree/bin/alchemy-bin) ]]; then
+        if [[ $name == *Alchemy* || $name == *Vayu* || (-n $tree && ( -x $tree/bin/vayu-bin || -x $tree/bin/alchemy-bin )) ]]; then
             rm -f -- "$handler"
         fi
     fi
