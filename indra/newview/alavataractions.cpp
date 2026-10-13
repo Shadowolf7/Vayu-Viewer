@@ -328,17 +328,31 @@ void ALAvatarActions::parcelFreezeMultiple(const uuid_vec_t& ids)
 
     LLSD payload;
     payload["avatar_ids"] = LLSD::emptyArray();
-    std::string avatars;
+
+    std::vector<std::string> slurls;
+    slurls.reserve(ids.size());
+    size_t slurls_len = 0;
+
     for (auto id : ids)
     {
         if (id.notNull())
         {
             payload["avatar_ids"].append(id);
+            std::string slurl = LLSLURL("agent", id, "about").getSLURLString();
+            slurls_len += slurl.length() + 1;
+            slurls.push_back(std::move(slurl));
+        }
+    }
 
-            if (!avatars.empty())
-                avatars += "\n";
-
-            avatars += LLSLURL("agent", id, "about").getSLURLString();
+    std::string avatars;
+    if (!slurls.empty())
+    {
+        avatars.reserve(slurls_len);
+        avatars += slurls[0];
+        for (size_t i = 1; i < slurls.size(); ++i)
+        {
+            avatars += '\n';
+            avatars += slurls[i];
         }
     }
 
@@ -369,7 +383,11 @@ void ALAvatarActions::parcelEjectMultiple(const uuid_vec_t& ids)
 
     LLSD payload;
     payload["avatar_ids"] = LLSD::emptyArray();
-    std::string avatars;
+
+    std::vector<std::string> slurls;
+    slurls.reserve(ids.size());
+    size_t slurls_len = 0;
+
     bool ban_enabled = false;
     bool ban_killed = false;
     for (auto id : ids)
@@ -396,10 +414,21 @@ void ALAvatarActions::parcelEjectMultiple(const uuid_vec_t& ids)
                 }
             }
 
-            if (!avatars.empty())
-                avatars += "\n";
+            std::string slurl = LLSLURL("agent", id, "about").getSLURLString();
+            slurls_len += slurl.length() + 1;
+            slurls.push_back(std::move(slurl));
+        }
+    }
 
-            avatars += LLSLURL("agent", id, "about").getSLURLString();
+    std::string avatars;
+    if (!slurls.empty())
+    {
+        avatars.reserve(slurls_len);
+        avatars += slurls[0];
+        for (size_t i = 1; i < slurls.size(); ++i)
+        {
+            avatars += '\n';
+            avatars += slurls[i];
         }
     }
     payload["ban_enabled"] = ban_enabled;
@@ -492,17 +521,31 @@ void ALAvatarActions::estateTeleportHomeMultiple(const uuid_vec_t& ids)
 
     LLSD payload;
     payload["avatar_ids"] = LLSD::emptyArray();
-    std::string avatars;
+
+    std::vector<std::string> slurls;
+    slurls.reserve(ids.size());
+    size_t slurls_len = 0;
+
     for (auto id : ids)
     {
         if (id.notNull())
         {
             payload["avatar_ids"].append(id);
+            std::string slurl = LLSLURL("agent", id, "about").getSLURLString();
+            slurls_len += slurl.length() + 1;
+            slurls.push_back(std::move(slurl));
+        }
+    }
 
-            if (!avatars.empty())
-                avatars += "\n";
-
-            avatars += LLSLURL("agent", id, "about").getSLURLString();
+    std::string avatars;
+    if (!slurls.empty())
+    {
+        avatars.reserve(slurls_len);
+        avatars += slurls[0];
+        for (size_t i = 1; i < slurls.size(); ++i)
+        {
+            avatars += '\n';
+            avatars += slurls[i];
         }
     }
 
@@ -530,17 +573,31 @@ void ALAvatarActions::estateKickMultiple(const uuid_vec_t& ids)
 
     LLSD payload;
     payload["avatar_ids"] = LLSD::emptyArray();
-    std::string avatars;
+
+    std::vector<std::string> slurls;
+    slurls.reserve(ids.size());
+    size_t slurls_len = 0;
+
     for (auto id : ids)
     {
         if (id.notNull())
         {
             payload["avatar_ids"].append(id);
+            std::string slurl = LLSLURL("agent", id, "about").getSLURLString();
+            slurls_len += slurl.length() + 1;
+            slurls.push_back(std::move(slurl));
+        }
+    }
 
-            if (!avatars.empty())
-                avatars += "\n";
-
-            avatars += LLSLURL("agent", id, "about").getSLURLString();
+    std::string avatars;
+    if (!slurls.empty())
+    {
+        avatars.reserve(slurls_len);
+        avatars += slurls[0];
+        for (size_t i = 1; i < slurls.size(); ++i)
+        {
+            avatars += '\n';
+            avatars += slurls[i];
         }
     }
 
@@ -572,17 +629,31 @@ void ALAvatarActions::estateBanMultiple(const uuid_vec_t& ids)
 
     LLSD payload;
     payload["avatar_ids"] = LLSD::emptyArray();
-    std::string avatars;
+
+    std::vector<std::string> slurls;
+    slurls.reserve(ids.size());
+    size_t slurls_len = 0;
+
     for (auto id : ids)
     {
         if (id.notNull())
         {
             payload["avatar_ids"].append(id);
+            std::string slurl = LLSLURL("agent", id, "about").getSLURLString();
+            slurls_len += slurl.length() + 1;
+            slurls.push_back(std::move(slurl));
+        }
+    }
 
-            if (!avatars.empty())
-                avatars += "\n";
-
-            avatars += LLSLURL("agent", id, "about").getSLURLString();
+    std::string avatars;
+    if (!slurls.empty())
+    {
+        avatars.reserve(slurls_len);
+        avatars += slurls[0];
+        for (size_t i = 1; i < slurls.size(); ++i)
+        {
+            avatars += '\n';
+            avatars += slurls[i];
         }
     }
 
