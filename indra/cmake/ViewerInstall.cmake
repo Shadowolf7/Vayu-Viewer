@@ -20,7 +20,7 @@ include_guard()
 # ---------------------------------------------------------------------------
 # Names. The channel decides the application name and the package name.
 
-string(REGEX REPLACE "^Alchemy[ ]*" "" al_channel_variant "${AL_CHANNEL}")
+string(REGEX REPLACE "^(Alchemy|Vayu)[ ]*" "" al_channel_variant "${AL_CHANNEL}")
 string(TOLOWER "${al_channel_variant}" al_channel_variant_lower)
 if(al_channel_variant_lower MATCHES "^release")
   set(AL_CHANNEL_TYPE release)
@@ -32,23 +32,23 @@ else()
   set(AL_CHANNEL_TYPE test)
 endif()
 
-# "Alchemy Viewer" for the release channel, the channel name otherwise.
+# "Vayu Viewer" for the release channel, the channel name otherwise.
 if(AL_CHANNEL_TYPE STREQUAL "release")
-  set(AL_APP_NAME "Alchemy Viewer")
+  set(AL_APP_NAME "Vayu Viewer")
   string(REGEX REPLACE "^[Rr]elease[ ]*" "" al_package_suffix "${al_channel_variant}")
 else()
-  set(AL_APP_NAME "Alchemy ${al_channel_variant}")
+  set(AL_APP_NAME "Vayu ${al_channel_variant}")
   set(al_package_suffix "${al_channel_variant}")
 endif()
 string(REPLACE " " "" AL_APP_NAME_ONEWORD "${AL_APP_NAME}")
 
-# Alchemy[_<variant words>]_<major>_<minor>_<patch>_<revision>_<arch>
+# Vayu[_<variant words>]_<major>_<minor>_<patch>_<revision>_<arch>
 string(REPLACE " " "_" al_package_suffix "${al_package_suffix}")
 if(al_package_suffix)
   string(PREPEND al_package_suffix "_")
 endif()
 string(REPLACE "." "_" al_package_version "${VIEWER_SHORT_VERSION}.${VIEWER_VERSION_REVISION}")
-set(AL_PACKAGE_NAME "Alchemy${al_package_suffix}_${al_package_version}_${ARCH}")
+set(AL_PACKAGE_NAME "Vayu${al_package_suffix}_${al_package_version}_${ARCH}")
 
 # ---------------------------------------------------------------------------
 # Layout, relative to the prefix.
