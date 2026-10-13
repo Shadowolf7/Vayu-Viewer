@@ -31,3 +31,9 @@ repos:
         entry: git-clang-format --diff --staged --extensions cpp,c,h,hpp,inl
         language: system
         pass_filenames: false
+      - id: verify-claims
+        name: Verify documented claims still match the tree
+        entry: python3 scripts/verify_claims.py --skip-vault
+        language: system
+        pass_filenames: false
+        always_run: true
