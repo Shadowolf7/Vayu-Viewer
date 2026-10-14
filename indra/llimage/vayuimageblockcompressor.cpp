@@ -523,6 +523,17 @@ size_t VayuBlockCompressionResult::getLargestMipOffset() const
     return (mBuffer.size() >= level0_bytes) ? (mBuffer.size() - level0_bytes) : 0;
 }
 
+void VayuBlockCompressionResult::prependSmallerMips(const std::vector<U8>& smaller_first_mips, S32 num_mips)
+{
+    if (smaller_first_mips.empty() || num_mips <= 0)
+        return;
+
+    // Front insertion is the whole point -- see the header note. Do not "optimise" this to
+    // insert(end(), ...); that inverts the pyramid and corrupts every refined texture.
+    mBuffer.insert(mBuffer.begin(), smaller_first_mips.begin(), smaller_first_mips.end());
+    mMipLevels += num_mips;
+}
+
 void VayuImageBlockCompressor::init()
 {
     init_compression_tables();

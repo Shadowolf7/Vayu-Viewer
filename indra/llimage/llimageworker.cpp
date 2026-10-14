@@ -390,9 +390,12 @@ bool ImageRequest::processRequest()
                     if (VayuBCTextureCache::instance().readEntryRaw(mID, cache_format, cache_role, merged_header, cached_buffer))
                     {
                         comp_res = std::make_shared<VayuBlockCompressionResult>(*gap_res);
-                        comp_res->mBuffer.insert(comp_res->mBuffer.end(), cached_buffer.begin(), cached_buffer.end());
-                        comp_res->mMipLevels = merged_header.mMipLevels + gap_res->mMipLevels;
-                        merged_ok            = true;
+                        // Splice the cached coarser mips onto the FRONT. mBuffer is smallest-
+                        // mip-first; gap_res holds the new FINEST mips, so they stay at the
+                        // back and the cached tail goes in front. Shared helper so the unit
+                        // test exercises the same ordering the viewer depends on.
+                        comp_res->prependSmallerMips(cached_buffer, merged_header.mMipLevels);
+                        merged_ok = true;
                     }
                 }
 

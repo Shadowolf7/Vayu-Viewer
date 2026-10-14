@@ -1054,7 +1054,98 @@ namespace tut
             }
         }
     }
-}
 
+    // Test 27: Merging a refinement gap onto a cached coarser tail must PRESERVE the
+    // mBuffer layout: smallest mip at offset 0, largest at the end.
+    //
+    // Regression guard for a shipped corruption bug. ImageRequest::processRequest() rebuilds
+    // the GL upload payload on refinement by combining the newly encoded finest mips (the
+    // "gap") with the coarser mips read back from the BC cache. The gap holds the LARGEST
+    // mips and the cached buffer holds the SMALLEST-first tail, so the cached bytes must be
+    // PREPENDED. Appending them after the gap inverts the pyramid; getLargestMipOffset() then
+    // points into the wrong level and GL uploads garbage for every mip -- which rendered as
+    // horizontal banding across every texture refined after first sight.
+    //
+    // The cache-side merge (VayuBCTextureCache::appendEntry) splices in the other direction
+    // and was already correct and covered; only this in-memory GL merge was wrong, and it had
+    // no coverage at all.
+    template<>
+    template<>
+    void block_compressor_object::test<27>()
+    {
+        auto fill_rgba = [](U32 W, U32 H)
+        {
+            std::vector<U8> v((size_t)W * H * 4);
+            for (size_t i = 0; i < (size_t)W * H; ++i)
+            {
+                v[i * 4 + 0] = (U8)(i * 13 + W);
+                v[i * 4 + 1] = (U8)(i * 7 + H);
+                v[i * 4 + 2] = (U8)(i * 29);
+                v[i * 4 + 3] = 255;
+            }
+            return v;
+        };
 
+        // The texture's first sight at discard 3 -> an 8x8 image and a 4-level chain.
+        const std::vector<U8>      src8 = fill_rgba(8, 8);
+        VayuBlockCompressionResult coarse;
+        ensure("8x8 coarse chain encodes",
+               VayuImageBlockCompressor::encode(src8.data(), 8, 8, 4, coarse, EVayuBlockCompressionFormat::Auto, EVayuTextureJob::Albedo));
+        ensure_equals("8x8 chain is 4 levels", coarse.mMipLevels, 4);
 
+        // The refinement at discard 2 -> a 16x16 image; max_mips = 3 - 2 = 1, so only its
+        // finest mip is encoded. That single mip is the largest in the merged pyramid.
+        const std::vector<U8>      src16 = fill_rgba(16, 16);
+        VayuBlockCompressionResult gap;
+        ensure(
+            "16x16 gap encodes",
+            VayuImageBlockCompressor::encode(src16.data(), 16, 16, 4, gap, EVayuBlockCompressionFormat::Auto, EVayuTextureJob::Albedo, 1));
+        ensure_equals("gap is exactly one mip", gap.mMipLevels, 1);
+
+        // Rebuild the GL payload through the SAME helper ImageRequest::processRequest()
+        // uses, so this test actually guards the production call site. An earlier version
+        // of this test spliced the buffers itself and therefore passed even with the
+        // production line reverted to the inverted order.
+        VayuBlockCompressionResult merged = gap;
+        merged.prependSmallerMips(coarse.mBuffer, coarse.mMipLevels);
+
+        ensure_equals("merged level count", merged.mMipLevels, 5);
+        ensure_equals("merged buffer is exactly coarse + gap",
+                      (int)merged.mBuffer.size(),
+                      (int)(coarse.mBuffer.size() + gap.mBuffer.size()));
+
+        // The layout contract getLargestMipOffset()/getMipBytes() rely on.
+        const size_t largest = merged.getLargestMipOffset();
+        ensure("largest mip offset lands at the end of the buffer", largest + merged.getMipBytes(0) == merged.mBuffer.size());
+
+        // Decisive check: the bytes at the tail must be the refinement's finest mip (16x16).
+        // Under the inverted merge the tail would hold the coarse chain's last mip (1x1),
+        // which is what produced the banding.
+        const size_t gap_largest = gap.getLargestMipOffset();
+        const size_t gap_bytes   = gap.getMipBytes(0);
+        ensure("gap's own layout is consistent", gap_largest + gap_bytes == gap.mBuffer.size());
+        ensure("merged tail is the refinement's finest mip",
+               std::equal(merged.mBuffer.begin() + largest, merged.mBuffer.end(), gap.mBuffer.begin() + gap_largest));
+
+        // And the head must still be the coarse chain's smallest-first tail.
+        ensure("merged head is the cached coarser tail",
+               std::equal(merged.mBuffer.begin(), merged.mBuffer.begin() + coarse.mBuffer.size(), coarse.mBuffer.begin()));
+
+        // Pin that the helper prepends. If it is ever "simplified" to append, this fails.
+        ensure("the inverted order is demonstrably WRONG (regression is caught)",
+               [&]
+               {
+                   VayuBlockCompressionResult inverted = gap;
+                   inverted.mBuffer.insert(inverted.mBuffer.end(), coarse.mBuffer.begin(), coarse.mBuffer.end());
+                   inverted.mMipLevels = coarse.mMipLevels + gap.mMipLevels;
+                   return !std::equal(inverted.mBuffer.begin() + inverted.getLargestMipOffset(),
+                                      inverted.mBuffer.end(),
+                                      gap.mBuffer.begin() + gap_largest);
+               }());
+
+        // And that the helper is a no-op rather than corrupting on empty/zero input.
+        VayuBlockCompressionResult noop = gap;
+        noop.prependSmallerMips({}, 0);
+        ensure("empty prepend is a no-op", noop.mBuffer == gap.mBuffer && noop.mMipLevels == gap.mMipLevels);
+    }
+    } // namespace tut

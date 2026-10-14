@@ -64,6 +64,19 @@ struct VayuBlockCompressionResult
 
     // Size in bytes of a specific discard level (0 = largest mip)
     size_t getMipBytes(S32 discard_level) const;
+
+    // Splice an already-encoded coarser mip chain onto the front of this result.
+    //
+    // Used when a texture refinement encodes only the finer "gap" mips and the coarser
+    // tail is served from the BC cache. mBuffer is SMALLEST mip at offset 0, LARGEST at
+    // the end, so the incoming tail -- which holds the smaller mips -- must be placed at
+    // the FRONT. Appending it after the gap inverts the entire pyramid, which makes
+    // getLargestMipOffset() resolve to the wrong level and causes GL to upload garbage
+    // for every mip (horizontal banding on every refined texture).
+    //
+    // Lives here rather than inline in the caller so the ordering rule has exactly one
+    // implementation that both the worker and its unit test exercise.
+    void prependSmallerMips(const std::vector<U8>& smaller_first_mips, S32 num_mips);
 };
 
 class VayuImageBlockCompressor
