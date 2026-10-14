@@ -548,16 +548,14 @@ bool VayuImageBlockCompressor::isEligible(U32 width, U32 height, S32 components)
     return true;
 }
 
-bool VayuImageBlockCompressor::encode(const LLImageRaw* raw_image,
-                                    VayuBlockCompressionResult& result,
-                                    EVayuBlockCompressionFormat format,
-                                    EVayuTextureJob job)
+bool VayuImageBlockCompressor::encode(const LLImageRaw* raw_image, VayuBlockCompressionResult& result, EVayuBlockCompressionFormat format,
+                                      EVayuTextureJob job, S32 max_mips)
 {
     if (!raw_image || raw_image->isBufferInvalid())
         return false;
     const EVayuTextureJob resolved_job = (job != EVayuTextureJob::Unknown) ? job : raw_image->getTextureJob();
-    return encode(raw_image->getData(), raw_image->getWidth(), raw_image->getHeight(),
-                  raw_image->getComponents(), result, format, resolved_job);
+    return encode(raw_image->getData(), raw_image->getWidth(), raw_image->getHeight(), raw_image->getComponents(), result, format,
+                  resolved_job, max_mips);
 }
 
 bool VayuImageBlockCompressor::analyzeAlphaMask(
@@ -696,23 +694,27 @@ static uint8_t scan_min_alpha_4ch(const uint8_t* src_data, size_t total_px)
     return 255;
 }
 
-bool VayuImageBlockCompressor::encode(const U8* src_data, U32 width, U32 height, S32 components,
-                                    VayuBlockCompressionResult& result,
-                                    EVayuBlockCompressionFormat format,
-                                    EVayuTextureJob job)
+namespace
 {
-    if (!src_data || !isEligible(width, height, components))
-        return false;
+// Single source of truth for "which BC format, colour space and mask policy does this
+// texture encode to". encode() and the public resolveFormat() both go through here, so the
+// cache-key probe the worker performs before encoding can never drift from what encode()
+// actually picks. An earlier version of resolveFormat() duplicated this decision and
+// guessed BC7 for every 4-channel image while encode() scans alpha and picks BC1 when the
+// image is opaque -- which made the cache probe miss and silently disabled the whole
+// incremental append path for the most common texture class.
+struct VayuEncodeTargets
+{
+    EVayuBlockCompressionFormat mFormat = EVayuBlockCompressionFormat::Auto;
+    bool                        mIsSrgb = true;
+    bool                        mIsMask = true;
+};
 
-    // Defense in depth: an unclaimed texture must never be block-compressed.
-    // The worker gate and fetch-side read gate prevent Unknown from reaching here,
-    // but refuse outright rather than silently misclassifying it as color.
-    if (job == EVayuTextureJob::Unknown)
-        return false;
-
-    init();
-
-    // 1. Resolve format and color space
+// Returns false for inputs that must not be block-compressed at all (unresolved role,
+// sub-3-channel colour), matching encode()'s refusal semantics exactly.
+bool resolve_encode_targets(const U8* src_data, U32 width, U32 height, S32 components, EVayuBlockCompressionFormat format,
+                            EVayuTextureJob job, VayuEncodeTargets& out)
+{
     EVayuBlockCompressionFormat resolved = format;
     bool is_mask = true;
 
@@ -743,7 +745,7 @@ bool VayuImageBlockCompressor::encode(const U8* src_data, U32 width, U32 height,
         case EVayuTextureJob::MetallicRoughness:
             // glTF PBR packed ORM: R = occlusion, G = roughness, B = metal. All
             // three channels are live and demand precision, so always full-quality
-            // BC7 (BC3 on macOS). Never BC1, BC5, or BC4 — all would drop or
+            // BC7 (BC3 on macOS). Never BC1, BC5, or BC4 -- all would drop or
             // degrade a live channel.
 #if LL_DARWIN
             resolved = EVayuBlockCompressionFormat::BC3;
@@ -771,7 +773,7 @@ bool VayuImageBlockCompressor::encode(const U8* src_data, U32 width, U32 height,
             // Second Life Blinn-Phong specular map: RGB is an sRGB tint. 8bpp to keep the
             // tint's precision -- BC7 (BC3 on macOS). Alpha only scales env intensity, never
             // gloss. Stored sRGB so the software mip filter averages in linear; note this is
-            // NOT what makes the shader decode, see the is_srgb note in encode().
+            // NOT what makes the shader decode, see the is_srgb note above.
 #if LL_DARWIN
             resolved = EVayuBlockCompressionFormat::BC3;
 #else
@@ -828,13 +830,13 @@ bool VayuImageBlockCompressor::encode(const U8* src_data, U32 width, U32 height,
                     resolved = EVayuBlockCompressionFormat::BC7;
 #endif
                     is_srgb = true;
-                    is_mask = analyzeAlphaMask(src_data, width, height, 3, 4);
+                    is_mask = VayuImageBlockCompressor::analyzeAlphaMask(src_data, width, height, 3, 4);
                 }
             }
             else
             {
                 // <3 channels cannot arrive via the decode pipeline (J2C decodes
-                // ≥3 channels; SL has no mono content). Unclaimed low-level raw
+                // >=3 channels; SL has no mono content). Unclaimed low-level raw
                 // with 1-2 channels is refused rather than silently mis-encoded
                 // as a color format. Single-channel work must request BC4/BC5
                 // explicitly.
@@ -861,17 +863,64 @@ bool VayuImageBlockCompressor::encode(const U8* src_data, U32 width, U32 height,
 
         if (components == 4)
         {
-            is_mask = analyzeAlphaMask(src_data, width, height, 3, 4);
+            is_mask = VayuImageBlockCompressor::analyzeAlphaMask(src_data, width, height, 3, 4);
         }
         else if (components == 2)
         {
-            is_mask = analyzeAlphaMask(src_data, width, height, 1, 2);
+            is_mask = VayuImageBlockCompressor::analyzeAlphaMask(src_data, width, height, 1, 2);
         }
     }
 
+    out.mFormat = resolved;
+    out.mIsSrgb = is_srgb;
+    out.mIsMask = is_mask;
+    return true;
+}
+} // namespace
+
+EVayuBlockCompressionFormat VayuImageBlockCompressor::resolveFormat(const U8* src_data, U32 width, U32 height, S32 components,
+                                                                    EVayuTextureJob job, EVayuBlockCompressionFormat format)
+{
+    VayuEncodeTargets targets;
+    if (!resolve_encode_targets(src_data, width, height, components, format, job, targets))
+    {
+        // Refused input: report Auto so the caller falls back to the legacy candidate
+        // probe rather than committing to a format the encoder will not use.
+        return EVayuBlockCompressionFormat::Auto;
+    }
+    return targets.mFormat;
+}
+
+bool VayuImageBlockCompressor::encode(const U8* src_data, U32 width, U32 height, S32 components, VayuBlockCompressionResult& result,
+                                      EVayuBlockCompressionFormat format, EVayuTextureJob job, S32 max_mips)
+{
+    if (!src_data || !isEligible(width, height, components))
+        return false;
+
+    // Defense in depth: an unclaimed texture must never be block-compressed.
+    // The worker gate and fetch-side read gate prevent Unknown from reaching here,
+    // but refuse outright rather than silently misclassifying it as color.
+    if (job == EVayuTextureJob::Unknown)
+        return false;
+
+    init();
+
+    // 1. Resolve format and color space
+    VayuEncodeTargets targets;
+    if (!resolve_encode_targets(src_data, width, height, components, format, job, targets))
+        return false;
+
+    const EVayuBlockCompressionFormat resolved = targets.mFormat;
+    const bool                        is_mask  = targets.mIsMask;
+    const bool                        is_srgb  = targets.mIsSrgb;
+
+    // max_mips limits the pyramid to the finest N mips. When appending to an existing
+    // cache entry, the coarser remainder is already on disk; encoding it again is waste.
+    S32 effective_max_mips = max_mips;
+
     const uint32_t block_bytes = (resolved == EVayuBlockCompressionFormat::BC1 || resolved == EVayuBlockCompressionFormat::BC4) ? 8 : 16;
 
-    // 2. Generate uncompressed mip pyramid
+    // 2. Generate uncompressed mip pyramid (limited to effective_max_mips when > 0)
     std::vector<std::vector<uint8_t>> uncompressed_mips;
     {
         // Level 0
@@ -881,7 +930,8 @@ bool VayuImageBlockCompressor::encode(const U8* src_data, U32 width, U32 height,
 
         uint32_t cur_w = width;
         uint32_t cur_h = height;
-        while (cur_w > 1 || cur_h > 1)
+        S32      mips_generated = 1;
+        while ((cur_w > 1 || cur_h > 1) && (effective_max_mips <= 0 || mips_generated < effective_max_mips))
         {
             uint32_t nw = llmax(1u, cur_w / 2);
             uint32_t nh = llmax(1u, cur_h / 2);
@@ -897,6 +947,7 @@ bool VayuImageBlockCompressor::encode(const U8* src_data, U32 width, U32 height,
             uncompressed_mips.push_back(std::move(next_mip));
             cur_w = nw;
             cur_h = nh;
+            ++mips_generated;
         }
     }
 

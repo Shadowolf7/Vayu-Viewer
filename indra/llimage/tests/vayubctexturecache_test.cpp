@@ -624,29 +624,20 @@ namespace tut
         VayuBCTextureCache::instance().clear();
     }
 
-    // Test 14: Legacy fallback: Reading <uuid> when <uuid>.bc1 does not exist
-    // falls back to legacy <uuid>_0.bc1 on disk and properly slices it.
+    // Test 14: A cache entry written by an older format version must be rejected and
+    // removed on read, so a layout change can never serve mis-parsed bytes.
+    //
+    // This used to share a test body with a "<uuid>_<discard>.bc1" legacy read fallback.
+    // That fallback never existed in the read path: commit 94c2eb0745 removed the
+    // per-discard filename form, the getFilePath overload and the three-name probe, and
+    // no file on disk uses the form. The test kept asserting it anyway, so it failed
+    // against the current code. Only the stale-version half was live.
     template<> template<>
     void bc_texture_cache_object::test<14>()
     {
-        auto dir = test_dir("legacy_fallback");
+        auto dir = test_dir("stale_version");
         std::filesystem::remove_all(dir);
         VayuBCTextureCache::instance().initCache(dir, 1024 * 1024);
-
-        LLUUID id;
-        id.generate();
-
-        // Write a legacy file <uuid>_0.bc1 directly to disk
-        std::string expected_subdir(1, id.asString()[0]);
-        std::string legacy_path = (dir / expected_subdir / (id.asString() + "_0.bc1")).string();
-
-        VayuBCCacheEntryHeader header = make_header(1 /* BC1 */, 2);
-        header.mWidth = 16;
-        header.mHeight = 16;
-        header.mMipLevels = 3;
-        header.mDiscardLevel = 0;
-
-        std::vector<U8> payload(168, 0x77);
 
         // Struct layout must match FileHeader in vayubctexturecache.cpp
         struct TestFileHeader
@@ -654,48 +645,75 @@ namespace tut
             U32 mMagic = VayuBCTextureCache::kMagic;
             U32 mVersion = VayuBCTextureCache::kFormatVersion;
             VayuBCCacheEntryHeader mMeta;
-            U64 mBufferSize = 168;
-        } fh;
-        fh.mMeta = header;
+            U64                    mBufferSize = 0;
+        };
 
+        VayuBCCacheEntryHeader header = make_header(1 /* BC1 */, 2);
+        header.mWidth                 = 16;
+        header.mHeight                = 16;
+        header.mMipLevels             = 3;
+        header.mDiscardLevel          = 0;
+        const std::vector<U8> payload(168, 0x77);
+
+        const auto write_raw = [&](const LLUUID& id, U32 version, const std::vector<U8>& bytes)
         {
-            std::ofstream out(legacy_path, std::ios::binary);
+            const std::string           subdir(1, id.asString()[0]);
+            const std::filesystem::path p = dir / subdir / (id.asString() + ".bc1");
+            TestFileHeader              fh;
+            fh.mVersion    = version;
+            fh.mMeta       = header;
+            fh.mBufferSize = bytes.size();
+            std::ofstream out(p, std::ios::binary);
             out.write(reinterpret_cast<const char*>(&fh), sizeof(fh));
-            out.write(reinterpret_cast<const char*>(payload.data()), payload.size());
-        }
-        ensure("Legacy _0.bc1 file exists on disk", std::filesystem::exists(legacy_path));
+            out.write(reinterpret_cast<const char*>(bytes.data()), (std::streamsize)bytes.size());
+            return p;
+        };
 
-        // Read using standard readEntry(id, 0) - should hit legacy file
+        // A current-version entry written the same way must still be readable, so a
+        // failure below cannot be blamed on the raw-write harness itself.
+        LLUUID good;
+        good.generate();
+        const auto             good_path = write_raw(good, VayuBCTextureCache::kFormatVersion, payload);
         VayuBCCacheEntryHeader out_h;
         std::vector<U8> out_b;
-        bool ok = VayuBCTextureCache::instance().readEntry(id, 0, out_h, out_b);
-        ensure("Legacy fallback succeeds for discard 0", ok);
-        ensure("Buffer matches legacy payload", out_b == payload);
+        ensure("same-version raw entry is readable", VayuBCTextureCache::instance().readEntry(good, 0, out_h, out_b));
+        ensure("same-version payload round-trips", out_b == payload);
 
-        // Read using readEntry(id, 1) - should slice legacy file
-        out_b.clear();
-        ok = VayuBCTextureCache::instance().readEntry(id, 1, out_h, out_b);
-        ensure("Legacy fallback slices to discard 1", ok);
-        ensure_equals("Sliced width", out_h.mWidth, 8u);
-        ensure_equals("Sliced height", out_h.mHeight, 8u);
-        ensure_equals("Sliced buffer size", out_b.size(), 40u);
-
-        // Verify that an outdated format version file (version < kFormatVersion) is rejected and removed
-        LLUUID stale_id;
-        stale_id.generate();
-        std::string stale_subdir(1, stale_id.asString()[0]);
-        std::filesystem::path stale_path = dir / stale_subdir / (stale_id.asString() + ".bc1");
-        TestFileHeader stale_fh = fh;
-        stale_fh.mVersion = VayuBCTextureCache::kFormatVersion - 1;
-        {
-            std::ofstream out(stale_path, std::ios::binary);
-            out.write(reinterpret_cast<const char*>(&stale_fh), sizeof(stale_fh));
-            out.write(reinterpret_cast<const char*>(payload.data()), payload.size());
-        }
+        // An older version must be refused and the file reaped.
+        LLUUID stale;
+        stale.generate();
+        const auto stale_path = write_raw(stale, VayuBCTextureCache::kFormatVersion - 1, payload);
         ensure("Stale version file exists before read", std::filesystem::exists(stale_path));
-        bool stale_ok = VayuBCTextureCache::instance().readEntry(stale_id, 0, out_h, out_b);
-        ensure("Stale version file rejected", !stale_ok);
+
+        out_b.clear();
+        ensure("Stale version file rejected", !VayuBCTextureCache::instance().readEntry(stale, 0, out_h, out_b));
         ensure("Stale version file removed from disk", !std::filesystem::exists(stale_path));
+
+        // So must a file claiming our magic with a future version.
+        LLUUID future;
+        future.generate();
+        const auto future_path = write_raw(future, VayuBCTextureCache::kFormatVersion + 1, payload);
+        ensure("Future version file rejected", !VayuBCTextureCache::instance().readEntry(future, 0, out_h, out_b));
+        ensure("Future version file removed from disk", !std::filesystem::exists(future_path));
+
+        // And one whose magic is wrong, which must not be served or left behind either.
+        LLUUID bogus;
+        bogus.generate();
+        const std::string subdir(1, bogus.asString()[0]);
+        const auto        bogus_path = dir / subdir / (bogus.asString() + ".bc1");
+        {
+            TestFileHeader fh;
+            fh.mMagic      = 0xDEADBEEF;
+            fh.mMeta       = header;
+            fh.mBufferSize = payload.size();
+            std::ofstream out(bogus_path, std::ios::binary);
+            out.write(reinterpret_cast<const char*>(&fh), sizeof(fh));
+            out.write(reinterpret_cast<const char*>(payload.data()), (std::streamsize)payload.size());
+        }
+        ensure("Bad-magic file rejected", !VayuBCTextureCache::instance().readEntry(bogus, 0, out_h, out_b));
+        ensure("Bad-magic file removed from disk", !std::filesystem::exists(bogus_path));
+
+        ensure("Surviving good entry untouched", std::filesystem::exists(good_path));
 
         VayuBCTextureCache::instance().clear();
     }
@@ -860,5 +878,281 @@ namespace tut
         ensure("Normal BC7 reads back independently of color BC7", ok_legacy && read_legacy_b == payload_legacy);
 
         VayuBCTextureCache::instance().clear();
+    }
+
+    // Test 18: readEntryHeader / readEntryRaw must agree with readEntry about what exists.
+    // These back the incremental append path's cache probe: the worker stats a header to
+    // decide whether it needs to encode at all, then reads the raw entry to merge the
+    // coarser tail. If either disagreed with readEntry's own validation, the probe could
+    // report a hit for an entry the real reader refuses, or miss one it would serve.
+    template<>
+    template<>
+    void bc_texture_cache_object::test<18>()
+    {
+        auto dir = test_dir("header_raw_probe");
+        std::filesystem::remove_all(dir);
+        VayuBCTextureCache::instance().initCache(dir, 1024 * 1024);
+
+        LLUUID id;
+        id.generate();
+
+        VayuBCCacheEntryHeader header = make_header(1, 2);
+        header.mDiscardLevel          = 2;
+        header.mMipLevels             = 5;
+        const std::vector<U8> payload = { 0xAA, 0xBB, 0xCC, 0xDD, 0xEE };
+        VayuBCTextureCache::instance().writeEntry(id, 2, header, make_buffer(payload));
+        VayuBCTextureCache::instance().waitForPendingWrites();
+
+        VayuBCCacheEntryHeader h_hdr;
+        const bool             ok_hdr =
+            VayuBCTextureCache::instance().readEntryHeader(id, VayuBCTextureCache::kFormatBC1, VayuBCTextureCache::kRoleColor, h_hdr);
+        ensure("Header probe finds a written entry", ok_hdr);
+        ensure_equals("Header probe reports the discard level", (int)h_hdr.mDiscardLevel, 2);
+        ensure_equals("Header probe reports the mip count", h_hdr.mMipLevels, 5);
+        ensure_equals("Header probe reports the format", (int)h_hdr.mFormat, (int)VayuBCTextureCache::kFormatBC1);
+
+        VayuBCCacheEntryHeader h_raw;
+        std::vector<U8>        b_raw;
+        const bool             ok_raw =
+            VayuBCTextureCache::instance().readEntryRaw(id, VayuBCTextureCache::kFormatBC1, VayuBCTextureCache::kRoleColor, h_raw, b_raw);
+        ensure("Raw probe finds the entry", ok_raw);
+        ensure("Raw probe returns the exact payload", b_raw == payload);
+        ensure_equals("Raw probe reports the discard level", (int)h_raw.mDiscardLevel, 2);
+
+        // A format the entry was NOT written under must miss on both probes. This is the
+        // shape of the bug that disabled the append path: probe .bc7 against a file really
+        // stored as .bc1, miss, and re-encode the whole pyramid on every refinement.
+        VayuBCCacheEntryHeader h_wrong;
+        ensure(
+            "Header probe misses on the wrong format",
+            !VayuBCTextureCache::instance().readEntryHeader(id, VayuBCTextureCache::kFormatBC7, VayuBCTextureCache::kRoleColor, h_wrong));
+
+        std::vector<U8> b_wrong;
+        ensure("Raw probe misses on the wrong format",
+               !VayuBCTextureCache::instance().readEntryRaw(id, VayuBCTextureCache::kFormatBC7, VayuBCTextureCache::kRoleColor, h_wrong,
+                                                            b_wrong));
+
+        // Colour and normal namespaces are separate files.
+        ensure(
+            "Header probe misses on the wrong role",
+            !VayuBCTextureCache::instance().readEntryHeader(id, VayuBCTextureCache::kFormatBC1, VayuBCTextureCache::kRoleNormal, h_wrong));
+
+        // An absent UUID must miss cleanly rather than yield a zeroed header.
+        LLUUID absent;
+        absent.generate();
+        ensure("Header probe misses on an absent entry",
+               !VayuBCTextureCache::instance().readEntryHeader(absent, VayuBCTextureCache::kFormatBC1, VayuBCTextureCache::kRoleColor,
+                                                               h_wrong));
+
+        VayuBCTextureCache::instance().clear();
+        // shutdown(), not just clear(): it closes and resets the write pool. Leaving a live
+        // pool on the singleton means static teardown runs ~ThreadPoolBase, whose close()
+        // throws boost::fibers::lock_error out of a noexcept destructor -> std::terminate.
+        // Tests 15/17 already do this; anything that calls initCache must too.
+        VayuBCTextureCache::instance().shutdown();
+    }
+
+    // Test 19: appendEntry grows one file into a full pyramid, mip-exactly, across a
+    // discard 3 -> 2 -> 1 -> 0 refinement stream. Each append adds exactly its gap to the
+    // END of the buffer (largest-mip-last layout) and leaves earlier bytes untouched.
+    //
+    // The payload uses REAL BC1 block geometry, not arbitrary bytes: readEntry's mip
+    // fallback recomputes per-level sizes with calcSubBufferBytes(), so a pyramid whose
+    // stored byte counts do not match the format is not readable at coarser levels and the
+    // test would be asserting the wrong thing.
+    // A 16x16 BC1 base is 4x4 blocks = 128 bytes; each halving is 4x fewer, floor 1 block:
+    //   mip 0 (16x16) 128 | mip 1 (8x8) 32 | mip 2 (4x4) 8 | mip 3 (2x2) 8 | mip 4 (1x1) 8
+    template<>
+    template<>
+    void bc_texture_cache_object::test<19>()
+    {
+        auto dir = test_dir("append_pyramid");
+        std::filesystem::remove_all(dir);
+        VayuBCTextureCache::instance().initCache(dir, 4 * 1024 * 1024);
+
+        LLUUID id;
+        id.generate();
+
+        const S32    base_discard = 3;
+        const U32    base         = 16;
+        const size_t bc1_block    = 8;
+
+        // Bytes for the mip at `level` of a 16x16 base, in BC1 block terms.
+        const auto level_bytes = [&](S32 level) -> size_t
+        {
+            const U32 w = llmax(1u, base >> level);
+            const U32 h = llmax(1u, base >> level);
+            return ((w + 3) / 4) * ((h + 3) / 4) * bc1_block;
+        };
+        // A distinctive fill so a prefix/suffix mix-up would be caught.
+        const auto fill = [](size_t n, U8 seed)
+        {
+            std::vector<U8> v(n);
+            for (size_t i = 0; i < n; ++i)
+                v[i] = (U8)(seed + (i * 7));
+            return v;
+        };
+
+        // First sight: the whole coarser chain at discard 3 (mips 3 and 4, smallest first).
+        std::vector<U8> expected = fill(level_bytes(4), 0x10);
+        {
+            const std::vector<U8> mip3 = fill(level_bytes(3), 0x40);
+            expected.insert(expected.end(), mip3.begin(), mip3.end());
+        }
+
+        VayuBCCacheEntryHeader h3 = make_header(1, 2);
+        h3.mDiscardLevel          = (U8)base_discard;
+        h3.mMipLevels             = 2; // levels 3 and 4
+        h3.mWidth                 = llmax(1u, base >> base_discard);
+        h3.mHeight                = h3.mWidth;
+        VayuBCTextureCache::instance().writeEntry(id, base_discard, h3, make_buffer(expected));
+        VayuBCTextureCache::instance().waitForPendingWrites();
+
+        for (S32 step = base_discard - 1; step >= 0; --step)
+        {
+            const std::vector<U8> new_mip = fill(level_bytes(step), (U8)(0x70 + step * 8));
+            expected.insert(expected.end(), new_mip.begin(), new_mip.end());
+
+            // A refinement adds exactly the one finer mip; the header describes the new level 0.
+            VayuBCCacheEntryHeader hn = make_header(1, 2);
+            hn.mDiscardLevel          = (U8)step;
+            hn.mMipLevels             = 1;
+            hn.mWidth                 = llmax(1u, base >> step);
+            hn.mHeight                = hn.mWidth;
+
+            ensure("append succeeds at each refinement step",
+                   VayuBCTextureCache::instance().appendEntry(id, step, hn, make_buffer(new_mip), 1));
+            VayuBCTextureCache::instance().waitForPendingWrites();
+
+            VayuBCCacheEntryHeader got;
+            std::vector<U8>        buf;
+            ensure(
+                "entry readable after append",
+                VayuBCTextureCache::instance().readEntryRaw(id, VayuBCTextureCache::kFormatBC1, VayuBCTextureCache::kRoleColor, got, buf));
+
+            ensure("appended buffer matches the expected pyramid", buf == expected);
+            ensure_equals("header discard level tracks the finest mip", (int)got.mDiscardLevel, (int)step);
+            ensure_equals("header mip count tracks the pyramid height", got.mMipLevels, (base_discard + 2) - step);
+            ensure_equals("header width describes the new level 0", (int)got.mWidth, (int)(llmax(1u, base >> step)));
+        }
+
+        // The finished file must be a single entry holding the whole pyramid, and it must
+        // be readable at every level through the normal reader -- which is the property
+        // #97 depends on: coarse requests are served by slicing the finer file.
+        size_t want_total = 0;
+        for (S32 l = 0; l <= 4; ++l)
+            want_total += level_bytes(l);
+        ensure_equals("one file holds the entire pyramid", (int)expected.size(), (int)want_total);
+        for (S32 d = 0; d <= base_discard; ++d)
+        {
+            VayuBCCacheEntryHeader rh;
+            std::vector<U8>        rb;
+            ensure("finished pyramid serves every discard level", VayuBCTextureCache::instance().readEntry(id, d, rh, rb));
+            ensure_equals("served level reports its own discard level", (int)rh.mDiscardLevel, (int)d);
+            ensure("served level returns a non-empty slice", !rb.empty());
+        }
+
+        // And a coarse read must reproduce exactly the bytes that were appended for it,
+        // proving the merge spliced at the right offset rather than merely appending.
+        VayuBCCacheEntryHeader rh;
+        std::vector<U8>        rb;
+        ensure("coarse read of the first-sight level hits", VayuBCTextureCache::instance().readEntry(id, base_discard, rh, rb));
+        std::vector<U8> want_coarse(expected.begin(), expected.begin() + (int)(level_bytes(3) + level_bytes(4)));
+        ensure("coarse slice is byte-exact", rb == want_coarse);
+
+        VayuBCTextureCache::instance().clear();
+        // shutdown(), not just clear(): it closes and resets the write pool. Leaving a live
+        // pool on the singleton means static teardown runs ~ThreadPoolBase, whose close()
+        // throws boost::fibers::lock_error out of a noexcept destructor -> std::terminate.
+        // Tests 15/17 already do this; anything that calls initCache must too.
+        VayuBCTextureCache::instance().shutdown();
+    }
+
+    // Test 20: appendEntry must refuse anything that would corrupt the pyramid -- a
+    // non-contiguous gap, a finer-or-equal level, degenerate inputs, and a missing entry.
+    // Each refusal must leave the existing entry byte-identical so the caller's fallback
+    // full write is always safe.
+    template<>
+    template<>
+    void bc_texture_cache_object::test<20>()
+    {
+        auto dir = test_dir("append_guards");
+        std::filesystem::remove_all(dir);
+        VayuBCTextureCache::instance().initCache(dir, 4 * 1024 * 1024);
+
+        LLUUID id;
+        id.generate();
+        VayuBCCacheEntryHeader h3      = make_header(1, 2);
+        h3.mDiscardLevel               = 3;
+        h3.mMipLevels                  = 4;
+        h3.mWidth                      = 2;
+        h3.mHeight                     = 2;
+        const std::vector<U8> original = { 0x01, 0x02, 0x03, 0x04 };
+        VayuBCTextureCache::instance().writeEntry(id, 3, h3, make_buffer(original));
+        VayuBCTextureCache::instance().waitForPendingWrites();
+
+        const auto still_original = [&]()
+        {
+            VayuBCCacheEntryHeader h;
+            std::vector<U8>        b;
+            ensure("entry still readable",
+                   VayuBCTextureCache::instance().readEntryRaw(id, VayuBCTextureCache::kFormatBC1, VayuBCTextureCache::kRoleColor, h, b));
+            return b == original;
+        };
+
+        // Non-contiguous: existing starts at discard 3, but this claims to add one mip
+        // landing at discard 1, skipping discard 2 entirely.
+        VayuBCCacheEntryHeader gap = make_header(1, 2);
+        gap.mDiscardLevel          = 1;
+        gap.mMipLevels             = 1;
+        ensure("non-contiguous append is refused", !VayuBCTextureCache::instance().appendEntry(id, 1, gap, make_buffer({ 0xEE }), 1));
+        ensure("refusal left the entry untouched (non-contiguous)", still_original());
+
+        // Finer-or-equal: the existing entry already carries this level or finer.
+        VayuBCCacheEntryHeader same = make_header(1, 2);
+        same.mDiscardLevel          = 3;
+        same.mMipLevels             = 1;
+        ensure("equal-level append is refused", !VayuBCTextureCache::instance().appendEntry(id, 3, same, make_buffer({ 0xEE }), 1));
+        ensure("refusal left the entry untouched (equal level)", still_original());
+
+        VayuBCCacheEntryHeader coarser = make_header(1, 2);
+        coarser.mDiscardLevel          = 4;
+        coarser.mMipLevels             = 1;
+        ensure("coarser append is refused", !VayuBCTextureCache::instance().appendEntry(id, 4, coarser, make_buffer({ 0xEE }), 1));
+        ensure("refusal left the entry untouched (coarser)", still_original());
+
+        VayuBCCacheEntryHeader h2 = make_header(1, 2);
+        h2.mDiscardLevel          = 2;
+        h2.mMipLevels             = 1;
+        ensure("empty mip buffer is refused", !VayuBCTextureCache::instance().appendEntry(id, 2, h2, make_buffer({}), 1));
+        ensure("zero mip count is refused", !VayuBCTextureCache::instance().appendEntry(id, 2, h2, make_buffer({ 0xEE }), 0));
+        ensure("refusal left the entry untouched (degenerate)", still_original());
+
+        LLUUID absent;
+        absent.generate();
+        ensure("append to an absent entry is refused",
+               !VayuBCTextureCache::instance().appendEntry(absent, 2, h2, make_buffer({ 0xEE }), 1));
+
+        // A legitimate contiguous append must still work, proving the guards are not
+        // simply rejecting everything.
+        ensure("contiguous append still accepted afterwards",
+               VayuBCTextureCache::instance().appendEntry(id, 2, h2, make_buffer({ 0xEE }), 1));
+        VayuBCTextureCache::instance().waitForPendingWrites();
+
+        VayuBCCacheEntryHeader h;
+        std::vector<U8>        b;
+        ensure("entry readable after the good append",
+               VayuBCTextureCache::instance().readEntryRaw(id, VayuBCTextureCache::kFormatBC1, VayuBCTextureCache::kRoleColor, h, b));
+        ensure_equals("good append extended the buffer", (int)b.size(), (int)original.size() + 1);
+        ensure_equals("good append kept the original prefix", (int)b[0], (int)original[0]);
+        ensure_equals("good append appended at the tail", (int)b.back(), 0xEE);
+        ensure_equals("good append lowered the discard level", (int)h.mDiscardLevel, 2);
+
+        VayuBCTextureCache::instance().clear();
+        // shutdown(), not just clear(): it closes and resets the write pool. Leaving a live
+        // pool on the singleton means static teardown runs ~ThreadPoolBase, whose close()
+        // throws boost::fibers::lock_error out of a noexcept destructor -> std::terminate.
+        // Tests 15/17 already do this; anything that calls initCache must too.
+        VayuBCTextureCache::instance().shutdown();
     }
 }

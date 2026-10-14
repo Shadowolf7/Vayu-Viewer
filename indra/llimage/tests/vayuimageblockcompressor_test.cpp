@@ -827,6 +827,232 @@ namespace tut
                                                   EVayuBlockCompressionFormat::Auto,
                                                   EVayuTextureJob::Unknown));
         ensure("Unknown never resolves a format", r_unknown.mBuffer.empty());
+
+        ensure("Unknown resolves no cache key either",
+               VayuImageBlockCompressor::resolveFormat(rgba.data(), W, H, 4, EVayuTextureJob::Unknown, EVayuBlockCompressionFormat::Auto) ==
+                   EVayuBlockCompressionFormat::Auto);
+    }
+
+    // Test 24: resolveFormat() must AGREE with encode() for every input.
+    //
+    // The BC cache names its files by format (<uuid>.bc1, .bc7, ...), so the worker
+    // probes for an existing entry by predicting the format before encoding anything.
+    // When the prediction disagreed with encode(), the probe stat'd a filename that
+    // never existed, the cache looked permanently empty, and every refinement re-encoded
+    // the whole pyramid -- silently reinstating the exact behaviour the incremental
+    // append path exists to remove. The failing case was 4-channel opaque colour:
+    // encode() scans alpha and picks BC1, while the prediction hardcoded BC7.
+    //
+    // This is the regression guard for that: assert equality across every job role and
+    // component count, including the opaque/alpha split that actually broke.
+    template<>
+    template<>
+    void block_compressor_object::test<24>()
+    {
+        const U32    W = 64, H = 64;
+        const size_t px = (size_t)W * H;
+
+        std::vector<U8> rgba_opaque(px * 4);
+        std::vector<U8> rgba_cutout(px * 4);
+        std::vector<U8> rgb(px * 3);
+        std::vector<U8> rg(px * 2);
+        for (size_t i = 0; i < px; ++i)
+        {
+            const U8 r = (U8)(i & 0xFF), g = (U8)((i * 3) & 0xFF), b = (U8)((i * 7) & 0xFF);
+            rgba_opaque[i * 4 + 0] = r;
+            rgba_opaque[i * 4 + 1] = g;
+            rgba_opaque[i * 4 + 2] = b;
+            rgba_opaque[i * 4 + 3] = 255; // opaque
+            rgba_cutout[i * 4 + 0] = r;
+            rgba_cutout[i * 4 + 1] = g;
+            rgba_cutout[i * 4 + 2] = b;
+            rgba_cutout[i * 4 + 3] = (i % 5 == 0) ? 128 : 255;
+            rgb[i * 3 + 0]         = r;
+            rgb[i * 3 + 1]         = g;
+            rgb[i * 3 + 2]         = b;
+            rg[i * 2 + 0]          = r;
+            rg[i * 2 + 1]          = g;
+        }
+
+        struct Case
+        {
+            const char*     mName;
+            const U8*       mData;
+            S32             mComponents;
+            EVayuTextureJob mJob;
+        };
+        const Case cases[] = {
+            { "4ch opaque", rgba_opaque.data(), 4, EVayuTextureJob::Albedo },
+            { "4ch cutout", rgba_cutout.data(), 4, EVayuTextureJob::Albedo },
+            { "3ch colour", rgb.data(), 3, EVayuTextureJob::Albedo },
+            { "Emissive", rgba_opaque.data(), 4, EVayuTextureJob::Emissive },
+            { "PBRNormal", rg.data(), 2, EVayuTextureJob::PBRNormal },
+            { "MetalRough", rgba_opaque.data(), 4, EVayuTextureJob::MetallicRoughness },
+            { "LegacyNorm", rgba_opaque.data(), 4, EVayuTextureJob::LegacyMaterialNormal },
+            { "LegacySpec", rgba_opaque.data(), 4, EVayuTextureJob::LegacySpecular },
+        };
+
+        for (const Case& c : cases)
+        {
+            VayuBlockCompressionResult encoded;
+            const bool                 ok =
+                VayuImageBlockCompressor::encode(c.mData, W, H, c.mComponents, encoded, EVayuBlockCompressionFormat::Auto, c.mJob);
+            ensure(c.mName, ok);
+            if (!ok)
+                continue;
+
+            const EVayuBlockCompressionFormat predicted =
+                VayuImageBlockCompressor::resolveFormat(c.mData, W, H, c.mComponents, c.mJob, EVayuBlockCompressionFormat::Auto);
+            // The cache-key prediction must match the format the bytes were actually
+            // written in, or the worker probes a filename that does not exist.
+            ensure_equals((std::string(c.mName) + ": resolveFormat matches encode()").c_str(), (int)predicted, (int)encoded.mFormat);
+        }
+
+        // Pin the specific regression: opaque 4-channel is BC1, NOT BC7. If the alpha
+        // scan ever stops influencing the choice, this catches it directly rather than
+        // only as a side effect of the loop above.
+        ensure("opaque 4ch resolves to BC1",
+               VayuImageBlockCompressor::resolveFormat(rgba_opaque.data(), W, H, 4, EVayuTextureJob::Albedo,
+                                                       EVayuBlockCompressionFormat::Auto) == EVayuBlockCompressionFormat::BC1);
+        ensure("cutout 4ch does not resolve to BC1",
+               VayuImageBlockCompressor::resolveFormat(rgba_cutout.data(), W, H, 4, EVayuTextureJob::Albedo,
+                                                       EVayuBlockCompressionFormat::Auto) != EVayuBlockCompressionFormat::BC1);
+
+        // An explicit format request must pass through untouched (subject to encode()'s
+        // own platform demotion, which this comparison inherits by construction).
+        VayuBlockCompressionResult explicit_bc7;
+        ensure("explicit BC7 encodes",
+               VayuImageBlockCompressor::encode(rgba_cutout.data(), W, H, 4, explicit_bc7, EVayuBlockCompressionFormat::BC7,
+                                                EVayuTextureJob::Albedo));
+        ensure("explicit BC7 resolves to what encode() produced",
+               VayuImageBlockCompressor::resolveFormat(rgba_cutout.data(), W, H, 4, EVayuTextureJob::Albedo,
+                                                       EVayuBlockCompressionFormat::BC7) == explicit_bc7.mFormat);
+    }
+
+    // Test 25: max_mips must truncate the pyramid to exactly the finest N levels.
+    // This is what lets a refinement encode only its gap instead of a whole chain.
+    template<>
+    template<>
+    void block_compressor_object::test<25>()
+    {
+        const U32       W = 64, H = 64; // full chain is 7 levels: 64,32,16,8,4,2,1
+        std::vector<U8> rgba((size_t)W * H * 4);
+        for (size_t i = 0; i < (size_t)W * H; ++i)
+        {
+            rgba[i * 4 + 0] = (U8)(i & 0xFF);
+            rgba[i * 4 + 1] = (U8)((i * 3) & 0xFF);
+            rgba[i * 4 + 2] = (U8)((i * 7) & 0xFF);
+            rgba[i * 4 + 3] = 255;
+        }
+
+        VayuBlockCompressionResult full;
+        ensure("full chain encodes",
+               VayuImageBlockCompressor::encode(rgba.data(), W, H, 4, full, EVayuBlockCompressionFormat::Auto, EVayuTextureJob::Albedo));
+        ensure_equals("64x64 full chain is 7 levels", full.mMipLevels, 7);
+
+        // Truncation must be exact and self-consistent: the buffer holds only the finest
+        // N mips, and getLargestMipOffset()/getMipBytes() still resolve within it --
+        // the GL upload walks the buffer by these.
+        for (S32 n = 1; n <= full.mMipLevels; ++n)
+        {
+            VayuBlockCompressionResult part;
+            const bool                 ok =
+                VayuImageBlockCompressor::encode(rgba.data(), W, H, 4, part, EVayuBlockCompressionFormat::Auto, EVayuTextureJob::Albedo, n);
+            ensure_equals("truncated encode succeeds", ok, true);
+            ensure_equals("truncated mip count", part.mMipLevels, n);
+
+            size_t expect_bytes = 0;
+            for (S32 i = 0; i < n; ++i)
+                expect_bytes += part.getMipBytes(i);
+            ensure_equals("truncated buffer is exactly the finest N mips", part.mBuffer.size(), expect_bytes);
+
+            const size_t largest = part.getLargestMipOffset();
+            ensure("largest mip offset is in range", largest + part.getMipBytes(0) == part.mBuffer.size());
+
+            // The retained finest mip must be byte-identical to the full chain's, since
+            // it is the same level 0 encoded the same way -- that is what makes the
+            // append a true "encode the gap only" operation.
+            ensure("truncated finest mip matches the full chain",
+                   std::equal(part.mBuffer.begin() + largest, part.mBuffer.end(), full.mBuffer.begin() + full.getLargestMipOffset()));
+        }
+
+        // max_mips beyond the chain length must not over-report levels.
+        VayuBlockCompressionResult over;
+        ensure(
+            "over-large max_mips encodes",
+            VayuImageBlockCompressor::encode(rgba.data(), W, H, 4, over, EVayuBlockCompressionFormat::Auto, EVayuTextureJob::Albedo, 99));
+        ensure_equals("over-large max_mips clamps to the real chain", over.mMipLevels, 7);
+
+        // 0 means "no limit" and must be identical to the default.
+        VayuBlockCompressionResult zero;
+        ensure("max_mips=0 encodes",
+               VayuImageBlockCompressor::encode(rgba.data(), W, H, 4, zero, EVayuBlockCompressionFormat::Auto, EVayuTextureJob::Albedo, 0));
+        ensure("max_mips=0 equals the default full chain", zero.mBuffer == full.mBuffer);
+    }
+
+    // Test 26: A full-chain result must always carry one mip per level down to 1x1.
+    //
+    // This is the contract LLImageGL relies on. createGLTexture() passes
+    // mBuffer.data() + getLargestMipOffset() with data_hasmips=true, and setImage()
+    // computes its level count from the DIMENSIONS (calcMipLevelCount, always down to 1x1)
+    // then walks the buffer BACKWARD by that many levels. It never reads mMipLevels. So a
+    // result whose mMipLevels is short of the dimension-derived count makes GL read past the
+    // front of the allocation.
+    //
+    // Handing GL a truncated result is therefore an out-of-bounds read, which is why the
+    // worker's incremental path re-merges the cached tail before uploading. The truncated
+    // case is asserted below as deliberately failing this invariant, so the hazard stays
+    // visible: anything that builds a partial pyramid for upload is a bug.
+    template<>
+    template<>
+    void block_compressor_object::test<26>()
+    {
+        const auto levels_to_1x1 = [](U32 w, U32 h)
+        {
+            S32 n = 1;
+            while (w > 1 || h > 1)
+            {
+                w = llmax(1u, w >> 1);
+                h = llmax(1u, h >> 1);
+                ++n;
+            }
+            return n;
+        };
+
+        // Non-square, non-power-of-two-ish sizes, including sizes that clamp at 1.
+        const U32 dims[][2] = { { 16, 16 }, { 64, 64 }, { 128, 32 }, { 8, 4 }, { 2, 2 }, { 1, 1 } };
+
+        for (const auto& d : dims)
+        {
+            const U32       W = d[0], H = d[1];
+            const bool      eligible = W >= VayuImageBlockCompressor::kMinEncodeDim && H >= VayuImageBlockCompressor::kMinEncodeDim;
+            std::vector<U8> rgba((size_t)W * H * 4, 200);
+            for (size_t i = 0; i < (size_t)W * H; ++i)
+                rgba[i * 4 + 3] = 255;
+
+            VayuBlockCompressionResult r;
+            const bool                 ok =
+                VayuImageBlockCompressor::encode(rgba.data(), W, H, 4, r, EVayuBlockCompressionFormat::Auto, EVayuTextureJob::Albedo);
+            ensure_equals((std::string("encode ok for ") + std::to_string(W) + "x" + std::to_string(H)).c_str(), ok, eligible);
+            if (!ok)
+                continue;
+
+            ensure_equals("full chain reaches 1x1 and matches GL's level count", r.mMipLevels, levels_to_1x1(W, H));
+
+            // The walk GL performs must stay inside the buffer: it starts at the largest mip
+            // and steps back once per level.
+            ensure("largest mip offset is the start of level 0", r.getLargestMipOffset() + r.getMipBytes(0) == r.mBuffer.size());
+
+            // A truncated result must NOT satisfy the invariant -- that is the point.
+            if (r.mMipLevels > 1)
+            {
+                VayuBlockCompressionResult part;
+                ensure("truncated encode ok",
+                       VayuImageBlockCompressor::encode(rgba.data(), W, H, 4, part, EVayuBlockCompressionFormat::Auto,
+                                                        EVayuTextureJob::Albedo, 1));
+                ensure("truncated result is short of GL's level count", part.mMipLevels < levels_to_1x1(W, H));
+            }
+        }
     }
 }
 

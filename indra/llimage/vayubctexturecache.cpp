@@ -534,7 +534,7 @@ void VayuBCTextureCache::shutdown()
     }
 }
 
-void VayuBCTextureCache::updateFileAccessTime(const std::string& filename)
+void VayuBCTextureCache::updateFileAccessTime(const std::string& filename) const
 {
     const time_t cur_time = time(NULL);
     llstat st;
@@ -785,6 +785,127 @@ void VayuBCTextureCache::writeEntry(const LLUUID& id, S32 discard_level,
         --mPendingWrites;
         writeEntrySync(id, discard_level, header, buffer);
     }
+}
+
+bool VayuBCTextureCache::readEntryHeader(const LLUUID& id, U8 format, U8 role, VayuBCCacheEntryHeader& header) const
+{
+    const std::string ext       = formatExtension(format, role);
+    const std::string file_path = getFilePath(id, ext);
+
+    llstat st;
+    if (LLFile::stat(file_path, &st) != 0)
+        return false;
+
+    std::ifstream in(file_path, std::ios::binary);
+    if (!in.good())
+        return false;
+
+    FileHeader file_header;
+    in.read(reinterpret_cast<char*>(&file_header), sizeof(file_header));
+    if (!in.good() || file_header.mMagic != kMagic || file_header.mVersion != kFormatVersion)
+        return false;
+
+    // Verify format/role match the probe
+    if (file_header.mMeta.mFormat != format)
+        return false;
+    const bool suffixed = !ext.empty() && ext.back() == 'n';
+    if (suffixed != (file_header.mMeta.mRole == kRoleNormal))
+        return false;
+
+    header = file_header.mMeta;
+    // This entry is about to be considered for an append, so it is being used: refresh the
+    // LRU stamp the same way readEntryExt does, or append-touched entries age out early.
+    updateFileAccessTime(file_path);
+    return true;
+}
+
+bool VayuBCTextureCache::readEntryRaw(const LLUUID& id, U8 format, U8 role, VayuBCCacheEntryHeader& header, std::vector<U8>& buffer) const
+{
+    const std::string ext       = formatExtension(format, role);
+    const std::string file_path = getFilePath(id, ext);
+
+    std::ifstream in(file_path, std::ios::binary);
+    if (!in.good())
+        return false;
+
+    FileHeader file_header;
+    in.read(reinterpret_cast<char*>(&file_header), sizeof(file_header));
+    if (!in.good() || file_header.mMagic != kMagic || file_header.mVersion != kFormatVersion)
+        return false;
+
+    if (file_header.mMeta.mFormat != format)
+        return false;
+
+    buffer.resize((size_t)file_header.mBufferSize);
+    in.read(reinterpret_cast<char*>(buffer.data()), (std::streamsize)file_header.mBufferSize);
+    if (static_cast<size_t>(in.gcount()) != file_header.mBufferSize)
+    {
+        buffer.clear();
+        return false;
+    }
+
+    header = file_header.mMeta;
+    updateFileAccessTime(file_path);
+    return true;
+}
+
+bool VayuBCTextureCache::appendEntry(const LLUUID& id, S32 discard_level, const VayuBCCacheEntryHeader& new_header,
+                                     const std::shared_ptr<const std::vector<U8>>& new_mips, S32 num_new_mips)
+{
+    if (!new_mips || new_mips->empty() || num_new_mips <= 0)
+        return false;
+
+    // The read-modify-write below has to be atomic against other appenders for this
+    // cache, so the read and the merge happen under mMutex. The write itself must NOT:
+    // writeEntry() falls back to calling writeEntrySync() inline when no write pool
+    // exists, and holding mMutex across that would pin the lock for the whole I/O --
+    // and deadlocks the moment writeEntrySync ever grows its own mMutex section.
+    // Releasing before the post means a racing append can interleave, but the
+    // single-writer pool is FIFO and writeEntrySync's finer-wins guard keeps the last
+    // post authoritative, so the worst case is a redundant write, never a torn entry.
+    std::shared_ptr<const std::vector<U8>> merged_buffer;
+    VayuBCCacheEntryHeader                 merged_header;
+    {
+        std::lock_guard<std::mutex> lock(mMutex);
+
+        VayuBCCacheEntryHeader existing_header;
+        std::vector<U8>        existing_buffer;
+        if (!readEntryRaw(id, new_header.mFormat, new_header.mRole, existing_header, existing_buffer))
+            return false;
+
+        // Existing entry must be coarser (larger discard level) than the new mips.
+        if (existing_header.mDiscardLevel <= discard_level)
+            return false;
+
+        // Contiguity: the new mips must butt directly against the existing top of the
+        // pyramid. In the normal stream max_mips is exactly (existing - discard) and the
+        // decode always has that many levels available (both pyramids run down to 1x1),
+        // so this holds. It fails only for an entry whose mMipLevels disagrees with its
+        // discard level -- a stale or damaged file. Refusing leaves it untouched rather
+        // than splicing a pyramid with a gap in it; the caller falls back to a full write.
+        if (existing_header.mDiscardLevel - num_new_mips != discard_level)
+            return false;
+
+        // Merge: existing coarser mips + new finer mips (largest-last layout)
+        std::vector<U8> merged;
+        merged.reserve(existing_buffer.size() + new_mips->size());
+        merged.insert(merged.end(), existing_buffer.begin(), existing_buffer.end());
+        merged.insert(merged.end(), new_mips->begin(), new_mips->end());
+
+        // Keep the existing entry's identity fields (format/role/preset/components/GL
+        // formats) -- only the pyramid geometry changes, and width/height describe the
+        // new largest mip.
+        merged_header               = existing_header;
+        merged_header.mDiscardLevel = static_cast<U8>(discard_level);
+        merged_header.mMipLevels    = existing_header.mMipLevels + num_new_mips;
+        merged_header.mWidth        = new_header.mWidth;
+        merged_header.mHeight       = new_header.mHeight;
+
+        merged_buffer = std::make_shared<const std::vector<U8>>(std::move(merged));
+    }
+
+    writeEntry(id, discard_level, merged_header, merged_buffer);
+    return true;
 }
 
 void VayuBCTextureCache::waitForPendingWrites()
