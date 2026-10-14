@@ -157,7 +157,6 @@ public:
     const LLVector3& getCameraUpVector() const { return mCameraUpVector; }
 private:
     LLVector3       getAvatarRootPosition();
-    void            setCameraSmoothingLastPositionGlobal(const LLVector3d& camera_position_global);
 
     F32             mCurrentCameraDistance;         // Current camera offset from avatar
     F32             mTargetCameraDistance;          // Target camera offset from avatar
@@ -168,8 +167,6 @@ private:
     LLVector3       mCameraVirtualPositionAgent;    // Camera virtual position (target) before performing FOV zoom
     LLVector3d      mCameraSmoothingLastPositionGlobal;
     LLVector3d      mCameraSmoothingLastPositionAgent;
-    LLVector3d      mCameraSmoothingLastFocusGlobal;
-    bool            mCameraSmoothingLastFocusValid;
     bool            mCameraSmoothingStop;
     LLVector3       mCameraLag;                     // Third person camera lag
     LLVector3       mCameraUpVector;                // Camera's up direction in world coordinates (determines the 'roll' of the view)
