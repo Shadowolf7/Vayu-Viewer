@@ -3611,6 +3611,11 @@ LLImageGLThread::LLImageGLThread(LLWindow* window)
     LL::ThreadPool::start();
 }
 
+LLImageGLThread::~LLImageGLThread()
+{
+    close();
+}
+
 void LLImageGLThread::run()
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;

@@ -46,6 +46,7 @@
 #include "hbfastmap.h"
 #include "algpubuffer.h"     // AL_NUM_STORAGE_BINDINGS -- the storage binding points this context keeps
 #include "alimageslot.h"
+#include "alquerypool.h"
 #include "altextureslot.h"
 #include "aluniformbuffer.h"
 
@@ -458,6 +459,16 @@ public:
     // The buffer at `binding`, 0 for none or for a point past AL_NUM_STORAGE_BINDINGS.
     U32 getStorageBuffer(U32 binding) const;
 
+    // ---- Frames ----------------------------------------------------------------------------------------------------
+
+    // This context's queries: the viewer's display() retires them before its first cull reads them. Released with the
+    // context in shutdown().
+    ALQueryPool& queries() { return mQueries; }
+
+    // Ends the frame for what is kept a frame at a time: the query pool's batch is fenced, and the uniform buffer rings
+    // close their counters and resize. Once a frame, past the swap; the main context's only.
+    void endFrame();
+
     // The scissor box, in pixels of the bound framebuffer, that GL_SCISSOR_TEST (an
     // LLGLState) cuts to. Every writer goes through here; a change flushes what is batched
     // under the old box, and redundant sets are dropped without one. See LLGLSScissor.
@@ -606,6 +617,8 @@ private:
     ALUniformBuffer mMatricesUBO;
     U32             mMatricesUBOHash[NUM_MATRIX_MODES] = { 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu };
     bool            mMatricesUBOBound = false;
+
+    ALQueryPool mQueries;
 
     // Derived matrices, cached across epochs so a stack that did not move is not re-derived.
     // Members rather than function statics: they belong to this context, and shutdown() has to

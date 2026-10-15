@@ -66,7 +66,7 @@ const HttpService::OptionDescriptor HttpService::sOptionDesc[] =
     {   true,       true,       false,      true,       false   }       // PO_CONTENT_DECODING
 };
 HttpService * HttpService::sInstance(NULL);
-volatile HttpService::EState HttpService::sState(NOT_INITIALIZED);
+std::atomic<HttpService::EState> HttpService::sState(NOT_INITIALIZED);
 
 HttpService::HttpService()
     : mRequestQueue(NULL),
@@ -109,7 +109,7 @@ HttpService::~HttpService()
         if (mThread && RUNNING == sState)
         {
             // Failed to shutdown, expect problems ahead so do a hard termination.
-            LL_WARNS(LOG_CORE) << "Destroying HttpService with running thread.  Expect problems." << LL_NEWLINE << "State: " << S32(sState)
+            LL_WARNS(LOG_CORE) << "Destroying HttpService with running thread.  Expect problems." << LL_NEWLINE << "State: " << S32(sState.load())
                                << " Last policy: " << U32(mLastPolicy) << LL_ENDL;
 
             mThread->cancel();

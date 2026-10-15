@@ -160,4 +160,7 @@ if(AL_BUILD_TESTS)
     vayubctexturecache UNIT PROJECT llimage
     LIBRARIES llfilesystem
   )
+
+  # The locks images are read and written under, over the library itself.
+  al_add_test_binary(llimage_tests PROJECT llimage SOURCES tests/llimage_test.cpp LIBRARIES llimage)
 endif()
