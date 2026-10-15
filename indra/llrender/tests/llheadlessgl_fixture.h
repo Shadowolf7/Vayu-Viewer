@@ -7,8 +7,8 @@
  * shown, with the same GL the viewer runs on -- WGL on Windows, EGL on
  * Linux -- and where Linux has no display, SDL's offscreen driver.
  *
- * Standing the context up is the expensive part — TUT spins a fresh
- * fixture per test method, so a test that can share one takes the
+ * Standing the context up is the expensive part — Catch2 makes a fresh
+ * fixture per test case, so a test that can share one takes the
  * static-local instance behind sharedHeadlessGL() and keeps its own
  * state (font registry, atlas pages) in the fixture. A test that
  * needs a context of its own makes a HeadlessGL per test instead.
@@ -56,6 +56,9 @@
 #include "llfile.h"
 #include "lluuid.h"
 
+#include "alteststateguard.h"
+#include "altestteardown.h"
+
 #include <algorithm>
 #include <cstring>
 #include <filesystem>
@@ -100,7 +103,7 @@ namespace ll_test
         ALFontShaping::clearCache();
     }
 
-    // RAII scope — calls resetFontState() in dtor. Embed in a TUT fixture
+    // RAII scope — calls resetFontState() in dtor. Embed in a fixture
     // struct to guarantee the shape cache is empty after every test,
     // regardless of how the test exited.
     struct FontStateScope
@@ -320,7 +323,8 @@ namespace ll_test
     // A white texel where the viewer puts its white image, which an unbound
     // texture slot samples: what is drawn with no texture then comes out in
     // its own colour, as it does in the viewer, rather than black. Made once,
-    // on the first call; the context must be up.
+    // on the first call; the context must be up. A Catch2 binary releases it
+    // after the last case, before the shared context it was made in ends.
     inline void installWhiteTexture()
     {
         static LLPointer<LLImageGL> white;
@@ -329,6 +333,7 @@ namespace ll_test
             LLPointer<LLImageRaw> raw = new LLImageRaw(1, 1, 4);
             std::memset(raw->getData(), 0xFF, 4);
             white = new LLImageGL(raw, false);
+            ll_test::Teardown::add([] { white = nullptr; });
         }
         ALTextureSlot::sWhiteTexture = white->getTexName();
         // Bound once, so that the slot holds a texture: an unbind puts the
@@ -541,13 +546,25 @@ namespace ll_test
     // tests need, so each must leave the image, render and shader state as
     // it found it. Tests that make a HeadlessGL of their own per test end
     // the GL classes under it, and are never linked beside a caller of this.
+    //
+    // A Catch2 binary ends it after the last case, while APR and LLError are
+    // still up, rather than at static destruction. What making it changes --
+    // the context, the bound program, the matrices pushed, and whatever the
+    // driver chooses for the process -- is the state the guard compares with
+    // from then on, so the case that first asked is not blamed for it.
     inline HeadlessGL& sharedHeadlessGL()
     {
-        static HeadlessGL gl(/*needs_vbos=*/true,
-                             /*needs_imagegl=*/true,
-                             /*needs_llrender=*/true,
-                             /*needs_render=*/true);
-        return gl;
+        static HeadlessGL* gl = []
+        {
+            HeadlessGL* made = new HeadlessGL(/*needs_vbos=*/true,
+                                              /*needs_imagegl=*/true,
+                                              /*needs_llrender=*/true,
+                                              /*needs_render=*/true);
+            ll_test::Teardown::add([made] { delete made; });
+            ll_test::StateGuard::accept();
+            return made;
+        }();
+        return *gl;
     }
 
     // A test's hold on the shared context. It takes sharedHeadlessGL() as it

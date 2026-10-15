@@ -63,6 +63,8 @@ class LLRenderTarget;
 class LLTexture;
 class LLVertexBufferData;
 
+namespace ll_test { struct RenderProbe; }
+
 #define LL_MATRIX_STACK_DEPTH 32
 
 // AL_NUM_TEXTURE_SLOTS lives in altextureslot.h alongside the units it sizes.
@@ -538,6 +540,10 @@ public:
 public:
     static U32 sUICalls;
     static U32 sUIVerts;
+    // The draws issued, through LLVertexBuffer and LLRender's own, and the vertices or indices they took, since the
+    // frame's statistics were last reset (LLPipeline::resetFrameStats).
+    static U32 sDrawCalls;
+    static U64 sDrawElements;
     static F32 sAnisotropicFilteringLevel;
     static bool sGLCoreProfile;
     static bool sNsightDebugSupport;
@@ -566,6 +572,8 @@ public:
 
 private:
     friend class LLLightState;
+    // The tests' state guard reads how deep each matrix stack is.
+    friend struct ll_test::RenderProbe;
 
     LLVertexBuffer* bufferfromCache(U32 attribute_mask, U32 count);
     LLVertexBuffer* genBuffer(U32 attribute_mask, S32 count);

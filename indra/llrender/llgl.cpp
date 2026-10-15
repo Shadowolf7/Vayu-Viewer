@@ -1683,6 +1683,9 @@ PFNGLIMPORTMEMORYWIN32HANDLEEXTPROC    glImportMemoryWin32HandleEXT    = nullptr
 // GL_EXT_semaphore_win32
 PFNGLIMPORTSEMAPHOREWIN32HANDLEEXTPROC glImportSemaphoreWin32HandleEXT = nullptr;
 
+// GL_EXT_depth_bounds_test
+PFNGLDEPTHBOUNDSEXTPROC                glDepthBoundsEXT                = nullptr;
+
 #endif
 
 LLGLManager gGLManager;
@@ -2621,6 +2624,9 @@ void LLGLManager::initExtensions()
     // does not resolve. macOS GL 4.1 lacks it entirely and stays forward-Z.
     mHasClipControl = mGLVersion >= 4.49f || mGLExtensions.contains("GL_ARB_clip_control");
 
+    // Downgraded below if glDepthBoundsEXT does not resolve.
+    mHasDepthBoundsTest = mGLExtensions.contains("GL_EXT_depth_bounds_test");
+
     mHasNVXGpuMemoryInfo = mGLExtensions.contains("GL_NVX_gpu_memory_info");
     mHasATIMemInfo = mGLExtensions.contains("GL_ATI_meminfo"); //Basic AMD method, also see mHasAMDAssociations
     mHasEXTMemoryObject  = mGLExtensions.contains("GL_EXT_memory_object");
@@ -2855,6 +2861,18 @@ void LLGLManager::initExtensions()
         glImportSemaphoreWin32HandleEXT = (PFNGLIMPORTSEMAPHOREWIN32HANDLEEXTPROC)LL_GET_PROC_ADDRESS("glImportSemaphoreWin32HandleEXT");
         LL_INFOS("RenderInit") << "GL_EXT_semaphore_win32 symbols loaded" << LL_ENDL;
     }
+
+    // GL_EXT_depth_bounds_test. Never core; a context has it or it does not.
+    if (mHasDepthBoundsTest)
+    {
+        glDepthBoundsEXT = (PFNGLDEPTHBOUNDSEXTPROC)LL_GET_PROC_ADDRESS("glDepthBoundsEXT");
+        if (!glDepthBoundsEXT)
+        {
+            mHasDepthBoundsTest = false;
+            LL_WARNS("RenderInit") << "GL_EXT_depth_bounds_test advertised but glDepthBoundsEXT did not resolve" << LL_ENDL;
+        }
+    }
+    LL_INFOS("RenderInit") << "Depth bounds test " << (mHasDepthBoundsTest ? "available" : "unavailable") << LL_ENDL;
 
     // GL_VERSION_1_2
     if (mGLVersion < 1.19f)

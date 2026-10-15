@@ -43,10 +43,8 @@
 #include "lldir.h"
 #include "lldrawpoolalpha.h"
 #include "lldrawpoolbump.h"
-#include "lldrawpoolwater.h"
 #include "lldynamictexture.h"
 #include "llenvironment.h"
-#include "llfasttimer.h"
 #include "llfeaturemanager.h"
 #include "llfloaterreg.h"
 #include "llfloatertools.h"
@@ -246,12 +244,6 @@ void display_update_camera()
     static LLCachedControl<S32> force_projection(gSavedSettings, "AlchemyRenderFarPlaneForce", ALFarPlane::FORCE_AUTOMATIC);
     LLViewerCamera* camera = LLViewerCamera::getInstance();
     camera->setProjectionFar(ALFarPlane::projectionFar(reverse_z, gCubeSnapshot, force_projection(), gAgentCamera.mDrawDistance));
-    // Edge water stretches with the main view's projection, which reverse-Z or the debug force can switch at runtime.
-    if (!gCubeSnapshot && ALFarPlane::isInfinite(camera->getProjectionFar()) != camera->isMainViewInfinite())
-    {
-        camera->setMainViewInfinite(!camera->isMainViewInfinite());
-        LLWorld::getInstance()->updateWaterObjects();
-    }
     LLVOAvatar::sRenderDistance = llclamp(final_far, 16.f, 256.f);
     gViewerWindow->setup3DRender();
 
@@ -737,6 +729,9 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
 
     if (!gDisconnected && !LLApp::isExiting())
     {
+        // The water's field around the main camera, before the mirrors, the shadow fit and the probes read it.
+        gPipeline.mWaterSurface.update();
+
         // Render mirrors and associated hero probes before we render the rest of the scene.
         // This ensures the scene state in the hero probes are exactly the same as the rest of the scene before we render it.
         if (gPipeline.RenderMirrors && !gSnapshot)
@@ -931,7 +926,7 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
 
         {
             LLAppViewer::instance()->pingMainloopTimeout("Display:Sky");
-            LL_PROFILE_ZONE_NAMED_CATEGORY_ENVIRONMENT("update sky"); //LL_RECORD_BLOCK_TIME(FTM_UPDATE_SKY);
+            LL_PROFILE_ZONE_NAMED_CATEGORY_ENVIRONMENT("update sky");
             gSky.updateSky();
         }
 
@@ -1027,7 +1022,7 @@ void display(bool rebuild, F32 zoom_factor, int subfield, bool for_snapshot)
                 gOcclusionProgram.bind();
                 for (U32 i = 0; i < num_types; i++)
                 {
-                    gPipeline.renderObjects(types[i], LLVertexBuffer::MAP_VERTEX, false);
+                    gPipeline.renderObjects(types[i], false, false);
                 }
 
                 gOcclusionProgram.unbind();
@@ -1555,7 +1550,7 @@ bool setup_hud_matrices(const LLRect& screen_region)
 void render_ui(F32 zoom_factor, int subfield)
 {
     LLPerfStats::RecordSceneTime T ( LLPerfStats::StatType_t::RENDER_UI ); // render time capture - Primary UI stat can have HUD time overlap (TODO)
-    LL_PROFILE_ZONE_SCOPED_CATEGORY_UI; //LL_RECORD_BLOCK_TIME(FTM_RENDER_UI);
+    LL_PROFILE_ZONE_SCOPED_CATEGORY_UI;
     LL_PROFILE_GPU_ZONE("ui");
     LLGLState::checkStates();
 
@@ -1609,7 +1604,7 @@ void render_ui(F32 zoom_factor, int subfield)
         {
             if (!gDisconnected)
             {
-                LL_PROFILE_ZONE_NAMED_CATEGORY_UI("UI 3D"); //LL_RECORD_BLOCK_TIME(FTM_RENDER_UI_3D);
+                LL_PROFILE_ZONE_NAMED_CATEGORY_UI("UI 3D");
                 LLGLState::checkStates();
                 render_ui_3d();
                 LLGLState::checkStates();
@@ -1627,7 +1622,7 @@ void render_ui(F32 zoom_factor, int subfield)
 
         if (render_ui)
         {
-            LL_PROFILE_ZONE_NAMED_CATEGORY_UI("UI 2D"); //LL_RECORD_BLOCK_TIME(FTM_RENDER_UI_2D);
+            LL_PROFILE_ZONE_NAMED_CATEGORY_UI("UI 2D");
             LLHUDObject::renderAll();
             render_ui_2d();
         }
