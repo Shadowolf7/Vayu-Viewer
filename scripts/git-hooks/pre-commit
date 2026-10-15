@@ -5,6 +5,7 @@ set -e
 
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 cd "${REPO_ROOT}"
+GIT_DIR="$(git rev-parse --absolute-git-dir 2>/dev/null || echo "${REPO_ROOT}/.git")"
 
 echo "==> Running diff-focused pre-commit checks..."
 
@@ -52,6 +53,24 @@ if failed:
     # 4. Diff-focused clang-format check
     if command -v git-clang-format >/dev/null 2>&1 && [ -f ".clang-format" ]; then
         STAGED_CPP=$(echo "${STAGED_FILES}" | rg '\.(cpp|c|h|hpp|inl)$' || true)
+        # A merge or a cherry-pick brings another tree's lines in, and Alchemy
+        # enforces no .clang-format of its own (no workflow in .github runs
+        # clang-format), so what it ships drifts from ours and a verbatim merge
+        # inherits all of it. Formatting that here buys cosmetics and costs a
+        # conflict on every upstream edit to the same lines, so the check judges
+        # what this commit authors: the files the merge left to a human.
+        # AUTO_MERGE is git's record of what it would have written, conflict
+        # markers and all, so the diff against it is exactly the hand-written
+        # lines. No AUTO_MERGE means the merge needed no resolution, so nothing
+        # here is ours -- hand edits made after it are the author's to format.
+        if [ -f "${GIT_DIR}/MERGE_HEAD" ] || [ -f "${GIT_DIR}/CHERRY_PICK_HEAD" ]; then
+            if git rev-parse --verify -q AUTO_MERGE >/dev/null 2>&1; then
+                STAGED_CPP=$(git diff --name-only AUTO_MERGE | rg '\.(cpp|c|h|hpp|inl)$' | tr '\n' ' ' || true)
+            else
+                STAGED_CPP=""
+                echo "    (merge with no AUTO_MERGE: no clang-format check -- run 'git clang-format --staged' on any hand edits)"
+            fi
+        fi
         if [ -n "${STAGED_CPP}" ]; then
             FORMAT_DIFF=$(git clang-format --diff --staged --extensions cpp,c,h,hpp,inl -- ${STAGED_CPP} 2>/dev/null || true)
             if echo "${FORMAT_DIFF}" | rg -q '^diff --git'; then
@@ -70,7 +89,11 @@ if failed:
         STAGED_CPP=$(echo "${STAGED_FILES}" | rg '\.(cpp|c|h|hpp|inl)$' || true)
         if [ -n "${STAGED_CPP}" ]; then
             echo "Running ast-grep architectural rules on staged C++ files..."
-            if ! ast-grep scan ${STAGED_CPP}; then
+            # In batches: a merge stages every file the other tree touched, and
+            # handing ast-grep all of them as argv fails with ENAMETOOLONG.
+            if ! SCAN_OUT=$(echo "${STAGED_CPP}" | tr ' ' '\n' | rg . | xargs -r -n 40 ast-grep scan 2>&1); then
+                echo "" >&2
+                echo "${SCAN_OUT}" >&2
                 echo "" >&2
                 echo "Error: ast-grep architectural rule violation detected in staged files." >&2
                 echo "Refer to .ast-grep/rules/ for details." >&2
