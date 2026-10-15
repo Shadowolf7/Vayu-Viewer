@@ -140,25 +140,22 @@ target_precompile_headers(llimage REUSE_FROM llprecompiled)
 
 # Add tests
 if(AL_BUILD_TESTS)
-  al_add_test(
-    llimageworker UNIT PROJECT llimage
+  # The BC texture cache, the block compressor and the decode thread that uses
+  # them: one binary, as Alchemy builds a library's tests, and the sources they
+  # share belong to that binary alone.
+  al_add_test_binary(
+    llimage_vayu_tests
+    PROJECT llimage
     SOURCES
+      tests/llimageworker_test.cpp
+      tests/vayuimageblockcompressor_test.cpp
+      tests/vayubctexturecache_test.cpp
       vayuimageblockcompressor.cpp
       vayubctexturecache.cpp
       bc7e/rgbcx.cpp
       ${BC7E_SOURCES}
+    UNIT llimageworker.cpp
     LIBRARIES llfilesystem ll::libyuv
-  )
-  al_add_test(
-    vayuimageblockcompressor UNIT PROJECT llimage
-    SOURCES
-      bc7e/rgbcx.cpp
-      ${BC7E_SOURCES}
-    LIBRARIES ll::libyuv
-  )
-  al_add_test(
-    vayubctexturecache UNIT PROJECT llimage
-    LIBRARIES llfilesystem
   )
 
   # The locks images are read and written under, over the library itself.

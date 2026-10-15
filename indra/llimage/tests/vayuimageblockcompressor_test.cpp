@@ -5,28 +5,19 @@
 
 #include "linden_common.h"
 #include "../vayuimageblockcompressor.h"
-#include "../test/lltut.h"
+#include <catch2/catch_test_macros.hpp>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 
-// Stubs for unit test harness
-const U8* LLImageBase::getData() const { return NULL; }
-U8* LLImageBase::getData() { return NULL; }
-bool LLImageBase::isBufferInvalid() const { return false; }
+// LLImageBase::getData() and isBufferInvalid() are satisfied by
+// llimageworker_test.cpp: this binary builds all three test files together, one
+// definition each, and nothing here reads an image's pixels.
 
-namespace tut
+namespace
 {
-    struct block_compressor_test
-    {
-    };
-
-    typedef test_group<block_compressor_test> block_compressor_group;
-    typedef block_compressor_group::object block_compressor_object;
-    block_compressor_group block_compressor_testgroup("VayuImageBlockCompressor");
-
 #if LL_DARWIN
     constexpr EVayuBlockCompressionFormat kExpectedTranslucentFormat = EVayuBlockCompressionFormat::BC3;
 #else
@@ -38,20 +29,24 @@ namespace tut
 #endif
 
     // Test 1: Eligibility checks
-    template<> template<>
-    void block_compressor_object::test<1>()
+    TEST_CASE("VayuImageBlockCompressor: Eligibility checks", "[VayuImageBlockCompressor]")
     {
-        ensure("Valid 64x64 RGBA is eligible", VayuImageBlockCompressor::isEligible(64, 64, 4));
-        ensure("Valid 16x16 RGB is eligible", VayuImageBlockCompressor::isEligible(16, 16, 3));
-        ensure("Valid 32x32 RG is eligible", VayuImageBlockCompressor::isEligible(32, 32, 2));
-        ensure("Valid 8x8 Grayscale is eligible", VayuImageBlockCompressor::isEligible(8, 8, 1));
-        ensure("Below min dimension (2x2) is not eligible", !VayuImageBlockCompressor::isEligible(2, 2, 4));
-        ensure("Invalid components (5) is not eligible", !VayuImageBlockCompressor::isEligible(16, 16, 5));
+        UNSCOPED_INFO("Valid 64x64 RGBA is eligible");
+        CHECK(VayuImageBlockCompressor::isEligible(64, 64, 4));
+        UNSCOPED_INFO("Valid 16x16 RGB is eligible");
+        CHECK(VayuImageBlockCompressor::isEligible(16, 16, 3));
+        UNSCOPED_INFO("Valid 32x32 RG is eligible");
+        CHECK(VayuImageBlockCompressor::isEligible(32, 32, 2));
+        UNSCOPED_INFO("Valid 8x8 Grayscale is eligible");
+        CHECK(VayuImageBlockCompressor::isEligible(8, 8, 1));
+        UNSCOPED_INFO("Below min dimension (2x2) is not eligible");
+        CHECK_FALSE(VayuImageBlockCompressor::isEligible(2, 2, 4));
+        UNSCOPED_INFO("Invalid components (5) is not eligible");
+        CHECK_FALSE(VayuImageBlockCompressor::isEligible(16, 16, 5));
     }
 
     // Test 2: Auto selection for opaque RGBA -> BC1
-    template<> template<>
-    void block_compressor_object::test<2>()
+    TEST_CASE("VayuImageBlockCompressor: Auto selection for opaque RGBA to BC1", "[VayuImageBlockCompressor]")
     {
         const U32 width = 16, height = 16;
         std::vector<U8> rgba(width * height * 4);
@@ -66,16 +61,21 @@ namespace tut
         VayuBlockCompressionResult result;
         bool ok = VayuImageBlockCompressor::encode(rgba.data(), width, height, 4, result, EVayuBlockCompressionFormat::Auto,
                                                    EVayuTextureJob::Albedo);
-        ensure("Encoding opaque RGBA succeeded", ok);
-        ensure("Opaque RGBA resolves to BC1", result.mFormat == EVayuBlockCompressionFormat::BC1);
-        ensure("Mip levels are calculated down to 1x1", result.mMipLevels == 5); // 16, 8, 4, 2, 1
-        ensure("Buffer size matches total mips", result.mBuffer.size() > 0);
-        ensure("Largest mip offset is valid", result.getLargestMipOffset() < result.mBuffer.size());
+        UNSCOPED_INFO("Encoding opaque RGBA succeeded");
+        CHECK(ok);
+        UNSCOPED_INFO("Opaque RGBA resolves to BC1");
+        CHECK(result.mFormat == EVayuBlockCompressionFormat::BC1);
+        UNSCOPED_INFO("Mip levels are calculated down to 1x1");
+        CHECK(result.mMipLevels == 5); // 16, 8, 4, 2, 1
+        UNSCOPED_INFO("Buffer size matches total mips");
+        REQUIRE(result.mBuffer.size() > 0);
+        UNSCOPED_INFO("Largest mip offset is valid");
+        REQUIRE(result.getLargestMipOffset() < result.mBuffer.size());
     }
 
     // Test 3: Auto selection for fully transparent RGBA (all 0s) -> BC7 (or BC3 on macOS)
-    template<> template<>
-    void block_compressor_object::test<3>()
+    TEST_CASE("VayuImageBlockCompressor: Auto selection for fully transparent RGBA (all 0s) to BC7 (or BC3 on macOS)",
+              "[VayuImageBlockCompressor]")
     {
         const U32 width = 16, height = 16;
         std::vector<U8> rgba(width * height * 4);
@@ -90,13 +90,15 @@ namespace tut
         VayuBlockCompressionResult result;
         bool ok = VayuImageBlockCompressor::encode(rgba.data(), width, height, 4, result, EVayuBlockCompressionFormat::Auto,
                                                    EVayuTextureJob::Albedo);
-        ensure("Encoding fully transparent RGBA succeeded", ok);
-        ensure("Fully transparent RGBA resolves to translucent format", result.mFormat == kExpectedTranslucentFormat);
+        UNSCOPED_INFO("Encoding fully transparent RGBA succeeded");
+        CHECK(ok);
+        UNSCOPED_INFO("Fully transparent RGBA resolves to translucent format");
+        CHECK(result.mFormat == kExpectedTranslucentFormat);
     }
 
     // Test 4: Auto selection for genuine cutout/translucent RGBA -> BC7 (or BC3 on macOS)
-    template<> template<>
-    void block_compressor_object::test<4>()
+    TEST_CASE("VayuImageBlockCompressor: Auto selection for genuine cutout/translucent RGBA to BC7 (or BC3 on macOS)",
+              "[VayuImageBlockCompressor]")
     {
         const U32 width = 16, height = 16;
         std::vector<U8> rgba(width * height * 4);
@@ -111,13 +113,15 @@ namespace tut
         VayuBlockCompressionResult result;
         bool ok = VayuImageBlockCompressor::encode(rgba.data(), width, height, 4, result, EVayuBlockCompressionFormat::Auto,
                                                    EVayuTextureJob::Albedo);
-        ensure("Encoding translucent RGBA succeeded", ok);
-        ensure("Translucent RGBA resolves to translucent format", result.mFormat == kExpectedTranslucentFormat);
+        UNSCOPED_INFO("Encoding translucent RGBA succeeded");
+        CHECK(ok);
+        UNSCOPED_INFO("Translucent RGBA resolves to translucent format");
+        CHECK(result.mFormat == kExpectedTranslucentFormat);
     }
 
     // Test 5: Normal map compression (2-channel -> BC5, requires a PBRNormal claim)
-    template<> template<>
-    void block_compressor_object::test<5>()
+    TEST_CASE("VayuImageBlockCompressor: Normal map compression (2-channel to BC5, requires a PBRNormal claim)",
+              "[VayuImageBlockCompressor]")
     {
         const U32 width = 16, height = 16;
         std::vector<U8> rg(width * height * 2);
@@ -131,14 +135,17 @@ namespace tut
         bool ok = VayuImageBlockCompressor::encode(rg.data(), width, height, 2, result,
                                                    EVayuBlockCompressionFormat::Auto,
                                                    EVayuTextureJob::PBRNormal);
-        ensure("Encoding 2-channel normal succeeded", ok);
-        ensure("2-channel normal resolves to BC5", result.mFormat == EVayuBlockCompressionFormat::BC5);
+        UNSCOPED_INFO("Encoding 2-channel normal succeeded");
+        CHECK(ok);
+        UNSCOPED_INFO("2-channel normal resolves to BC5");
+        CHECK(result.mFormat == EVayuBlockCompressionFormat::BC5);
     }
 
     // Test 6: 1-channel raw is refused under color jobs (SL decodes >=3 channels;
     // no mono content exists on the wire). BC4 is only reachable via an explicit format.
-    template<> template<>
-    void block_compressor_object::test<6>()
+    TEST_CASE("VayuImageBlockCompressor: 1-channel raw is refused under color jobs (SL decodes >=3 channels; no mono content exists on the "
+              "wire). BC4 is only reachable via an explicit format.",
+              "[VayuImageBlockCompressor]")
     {
         const U32 width = 16, height = 16;
         std::vector<U8> gray(width * height);
@@ -150,12 +157,13 @@ namespace tut
         VayuBlockCompressionResult result;
         bool ok = VayuImageBlockCompressor::encode(gray.data(), width, height, 1, result, EVayuBlockCompressionFormat::Auto,
                                                    EVayuTextureJob::Albedo);
-        ensure("Unclaimed 1-channel raw is refused", !ok);
+        UNSCOPED_INFO("Unclaimed 1-channel raw is refused");
+        CHECK_FALSE(ok);
     }
 
     // Test 7: Binary 1-bit alpha cutout (0 and 255) -> must resolve to BC7 (or BC3 on macOS), not BC1
-    template<> template<>
-    void block_compressor_object::test<7>()
+    TEST_CASE("VayuImageBlockCompressor: Binary 1-bit alpha cutout (0 and 255) to must resolve to BC7 (or BC3 on macOS), not BC1",
+              "[VayuImageBlockCompressor]")
     {
         const U32 width = 16, height = 16;
         std::vector<U8> rgba(width * height * 4);
@@ -171,13 +179,14 @@ namespace tut
         VayuBlockCompressionResult result;
         bool ok = VayuImageBlockCompressor::encode(rgba.data(), width, height, 4, result, EVayuBlockCompressionFormat::Auto,
                                                    EVayuTextureJob::Albedo);
-        ensure("Encoding binary cutout RGBA succeeded", ok);
-        ensure("Binary cutout RGBA resolves to translucent format", result.mFormat == kExpectedTranslucentFormat);
+        UNSCOPED_INFO("Encoding binary cutout RGBA succeeded");
+        CHECK(ok);
+        UNSCOPED_INFO("Binary cutout RGBA resolves to translucent format");
+        CHECK(result.mFormat == kExpectedTranslucentFormat);
     }
 
     // Test 8: Standardized Slow preset model produces valid compression results
-    template<> template<>
-    void block_compressor_object::test<8>()
+    TEST_CASE("VayuImageBlockCompressor: Standardized Slow preset model produces valid compression results", "[VayuImageBlockCompressor]")
     {
         const U32 width = 16, height = 16;
         std::vector<U8> rgba(width * height * 4);
@@ -189,33 +198,44 @@ namespace tut
             rgba[i * 4 + 3] = (i % 3 == 0) ? 128 : 255; // partial alpha -> BC7 (or BC3 on macOS)
         }
 
-        ensure("getPreset returns Slow", VayuImageBlockCompressor::getPreset() == EVayuBlockCompressionPreset::Slow);
-        ensure("Default hybrid mips is true", VayuImageBlockCompressor::getHybridMips());
+        UNSCOPED_INFO("getPreset returns Slow");
+        CHECK(VayuImageBlockCompressor::getPreset() == EVayuBlockCompressionPreset::Slow);
+        UNSCOPED_INFO("Default hybrid mips is true");
+        CHECK(VayuImageBlockCompressor::getHybridMips());
 
         VayuBlockCompressionResult result;
         bool ok = VayuImageBlockCompressor::encode(rgba.data(), width, height, 4, result, EVayuBlockCompressionFormat::Auto,
                                                    EVayuTextureJob::Albedo);
-        ensure("Encoding succeeds", ok);
-        ensure("Result preset is Slow", result.mPreset == EVayuBlockCompressionPreset::Slow);
-        ensure("Format resolves to translucent format", result.mFormat == kExpectedTranslucentFormat);
-        ensure("Result produces mipchain buffer", result.mBuffer.size() > 0);
-        ensure("Result has multiple mip levels", result.mMipLevels > 1);
+        UNSCOPED_INFO("Encoding succeeds");
+        CHECK(ok);
+        UNSCOPED_INFO("Result preset is Slow");
+        CHECK(result.mPreset == EVayuBlockCompressionPreset::Slow);
+        UNSCOPED_INFO("Format resolves to translucent format");
+        CHECK(result.mFormat == kExpectedTranslucentFormat);
+        UNSCOPED_INFO("Result produces mipchain buffer");
+        REQUIRE(result.mBuffer.size() > 0);
+        UNSCOPED_INFO("Result has multiple mip levels");
+        CHECK(result.mMipLevels > 1);
 
         // Test toggle to pure slow mode
         VayuImageBlockCompressor::setHybridMips(false);
-        ensure("setHybridMips(false) enables pure slow mode", !VayuImageBlockCompressor::getHybridMips());
+        UNSCOPED_INFO("setHybridMips(false) enables pure slow mode");
+        CHECK_FALSE(VayuImageBlockCompressor::getHybridMips());
         VayuBlockCompressionResult slow_res;
         bool slow_ok = VayuImageBlockCompressor::encode(rgba.data(), width, height, 4, slow_res, EVayuBlockCompressionFormat::Auto,
                                                         EVayuTextureJob::Albedo);
-        ensure("Pure slow mode encoding succeeds", slow_ok);
-        ensure("Pure slow mode produces valid buffer", slow_res.mBuffer.size() > 0);
+        UNSCOPED_INFO("Pure slow mode encoding succeeds");
+        CHECK(slow_ok);
+        UNSCOPED_INFO("Pure slow mode produces valid buffer");
+        REQUIRE(slow_res.mBuffer.size() > 0);
         VayuImageBlockCompressor::setHybridMips(true);
-        ensure("Reset hybrid mips to true", VayuImageBlockCompressor::getHybridMips());
+        UNSCOPED_INFO("Reset hybrid mips to true");
+        CHECK(VayuImageBlockCompressor::getHybridMips());
     }
 
     // Test 9: Progressive mip staging encoding produces valid sub-mips and reverse buffer order
-    template<> template<>
-    void block_compressor_object::test<9>()
+    TEST_CASE("VayuImageBlockCompressor: Progressive mip staging encoding produces valid sub-mips and reverse buffer order",
+              "[VayuImageBlockCompressor]")
     {
         const U32 width = 32, height = 32;
         std::vector<U8> rgb(width * height * 3, 128);
@@ -223,16 +243,21 @@ namespace tut
         VayuBlockCompressionResult result;
         bool ok = VayuImageBlockCompressor::encode(rgb.data(), width, height, 3, result, EVayuBlockCompressionFormat::BC1,
                                                    EVayuTextureJob::Albedo);
-        ensure("RGB BC1 encoding succeeds", ok);
-        ensure("Result preset is Slow", result.mPreset == EVayuBlockCompressionPreset::Slow);
-        ensure("BC1 produces correct mip count", result.mMipLevels == 6); // 32, 16, 8, 4, 2, 1
-        ensure("Largest mip offset matches reverse layout", result.getLargestMipOffset() > 0);
-        ensure("Discard 0 bytes matches 32x32 BC1 size", result.getMipBytes(0) == (8 * 8 * 8)); // 8x8 blocks * 8 bytes = 512
+        UNSCOPED_INFO("RGB BC1 encoding succeeds");
+        CHECK(ok);
+        UNSCOPED_INFO("Result preset is Slow");
+        CHECK(result.mPreset == EVayuBlockCompressionPreset::Slow);
+        UNSCOPED_INFO("BC1 produces correct mip count");
+        CHECK(result.mMipLevels == 6); // 32, 16, 8, 4, 2, 1
+        UNSCOPED_INFO("Largest mip offset matches reverse layout");
+        CHECK(result.getLargestMipOffset() > 0);
+        UNSCOPED_INFO("Discard 0 bytes matches 32x32 BC1 size");
+        CHECK(result.getMipBytes(0) == (8 * 8 * 8)); // 8x8 blocks * 8 bytes = 512
     }
 
     // Test 10: Non-power-of-two (NPOT) dimensions exercise both interior fast path and boundary clamping
-    template<> template<>
-    void block_compressor_object::test<10>()
+    TEST_CASE("VayuImageBlockCompressor: Non-power-of-two (NPOT) dimensions exercise both interior fast path and boundary clamping",
+              "[VayuImageBlockCompressor]")
     {
         const U32 width = 37, height = 53;
 
@@ -250,9 +275,12 @@ namespace tut
             VayuBlockCompressionResult result;
             bool ok = VayuImageBlockCompressor::encode(rgba.data(), width, height, 4, result, EVayuBlockCompressionFormat::Auto,
                                                        EVayuTextureJob::Albedo);
-            ensure("NPOT 4-channel opaque encodes successfully", ok);
-            ensure("NPOT 4-channel opaque resolves to BC1", result.mFormat == EVayuBlockCompressionFormat::BC1);
-            ensure("NPOT buffer size is non-zero", result.mBuffer.size() > 0);
+            UNSCOPED_INFO("NPOT 4-channel opaque encodes successfully");
+            CHECK(ok);
+            UNSCOPED_INFO("NPOT 4-channel opaque resolves to BC1");
+            CHECK(result.mFormat == EVayuBlockCompressionFormat::BC1);
+            UNSCOPED_INFO("NPOT buffer size is non-zero");
+            REQUIRE(result.mBuffer.size() > 0);
         }
 
         // 3-channel NPOT
@@ -268,15 +296,17 @@ namespace tut
             VayuBlockCompressionResult result;
             bool ok = VayuImageBlockCompressor::encode(rgb.data(), width, height, 3, result, EVayuBlockCompressionFormat::Auto,
                                                        EVayuTextureJob::Albedo);
-            ensure("NPOT 3-channel encodes successfully", ok);
-            ensure("NPOT 3-channel resolves to BC1", result.mFormat == EVayuBlockCompressionFormat::BC1);
-            ensure("NPOT buffer size is non-zero", result.mBuffer.size() > 0);
+            UNSCOPED_INFO("NPOT 3-channel encodes successfully");
+            CHECK(ok);
+            UNSCOPED_INFO("NPOT 3-channel resolves to BC1");
+            CHECK(result.mFormat == EVayuBlockCompressionFormat::BC1);
+            UNSCOPED_INFO("NPOT buffer size is non-zero");
+            REQUIRE(result.mBuffer.size() > 0);
         }
     }
 
     // Test 11: Vectorized alpha scan edge cases (tail cleanup and early detection)
-    template<> template<>
-    void block_compressor_object::test<11>()
+    TEST_CASE("VayuImageBlockCompressor: Vectorized alpha scan edge cases (tail cleanup and early detection)", "[VayuImageBlockCompressor]")
     {
         const U32 width = 37, height = 53;
         const size_t total_px = width * height;
@@ -289,8 +319,10 @@ namespace tut
             VayuBlockCompressionResult result;
             bool ok = VayuImageBlockCompressor::encode(rgba.data(), width, height, 4, result, EVayuBlockCompressionFormat::Auto,
                                                        EVayuTextureJob::Albedo);
-            ensure("Tail cutout encodes successfully", ok);
-            ensure("Tail cutout resolves to translucent format", result.mFormat == kExpectedTranslucentFormat);
+            UNSCOPED_INFO("Tail cutout encodes successfully");
+            CHECK(ok);
+            UNSCOPED_INFO("Tail cutout resolves to translucent format");
+            CHECK(result.mFormat == kExpectedTranslucentFormat);
         }
 
         // Case B: Cutout pixel placed early (index 2) (tests early SIMD exit)
@@ -301,8 +333,10 @@ namespace tut
             VayuBlockCompressionResult result;
             bool ok = VayuImageBlockCompressor::encode(rgba.data(), width, height, 4, result, EVayuBlockCompressionFormat::Auto,
                                                        EVayuTextureJob::Albedo);
-            ensure("Early cutout encodes successfully", ok);
-            ensure("Early cutout resolves to translucent format", result.mFormat == kExpectedTranslucentFormat);
+            UNSCOPED_INFO("Early cutout encodes successfully");
+            CHECK(ok);
+            UNSCOPED_INFO("Early cutout resolves to translucent format");
+            CHECK(result.mFormat == kExpectedTranslucentFormat);
         }
 
         // Case C: Fully opaque non-multiple-of-8 image resolves to BC1
@@ -312,14 +346,15 @@ namespace tut
             VayuBlockCompressionResult result;
             bool ok = VayuImageBlockCompressor::encode(rgba.data(), width, height, 4, result, EVayuBlockCompressionFormat::Auto,
                                                        EVayuTextureJob::Albedo);
-            ensure("Fully opaque NPOT encodes successfully", ok);
-            ensure("Fully opaque NPOT resolves to BC1", result.mFormat == EVayuBlockCompressionFormat::BC1);
+            UNSCOPED_INFO("Fully opaque NPOT encodes successfully");
+            CHECK(ok);
+            UNSCOPED_INFO("Fully opaque NPOT resolves to BC1");
+            CHECK(result.mFormat == EVayuBlockCompressionFormat::BC1);
         }
     }
 
     // Test 12: Downsampling across multiple mip levels for sRGB and Linear formats
-    template<> template<>
-    void block_compressor_object::test<12>()
+    TEST_CASE("VayuImageBlockCompressor: Downsampling across multiple mip levels for sRGB and Linear formats", "[VayuImageBlockCompressor]")
     {
         // 4-channel sRGB mip pyramid
         {
@@ -336,8 +371,10 @@ namespace tut
             VayuBlockCompressionResult result;
             bool ok = VayuImageBlockCompressor::encode(rgba.data(), width, height, 4, result, EVayuBlockCompressionFormat::BC1,
                                                        EVayuTextureJob::Albedo);
-            ensure("8x8 RGBA downsampling succeeds", ok);
-            ensure("8x8 produces 4 mip levels (8, 4, 2, 1)", result.mMipLevels == 4);
+            UNSCOPED_INFO("8x8 RGBA downsampling succeeds");
+            CHECK(ok);
+            UNSCOPED_INFO("8x8 produces 4 mip levels (8, 4, 2, 1)");
+            CHECK(result.mMipLevels == 4);
         }
 
         // 2-channel Linear (Normal map) mip pyramid
@@ -353,8 +390,10 @@ namespace tut
             VayuBlockCompressionResult result;
             bool ok = VayuImageBlockCompressor::encode(rg.data(), width, height, 2, result, EVayuBlockCompressionFormat::BC5,
                                                        EVayuTextureJob::Albedo);
-            ensure("4x4 RG downsampling succeeds", ok);
-            ensure("4x4 produces 3 mip levels (4, 2, 1)", result.mMipLevels == 3);
+            UNSCOPED_INFO("4x4 RG downsampling succeeds");
+            CHECK(ok);
+            UNSCOPED_INFO("4x4 produces 3 mip levels (4, 2, 1)");
+            CHECK(result.mMipLevels == 3);
         }
 
         // 1-channel Linear (Mask) mip pyramid
@@ -365,14 +404,15 @@ namespace tut
             VayuBlockCompressionResult result;
             bool ok = VayuImageBlockCompressor::encode(gray.data(), width, height, 1, result, EVayuBlockCompressionFormat::BC4,
                                                        EVayuTextureJob::Albedo);
-            ensure("4x4 Grayscale downsampling succeeds", ok);
-            ensure("4x4 produces 3 mip levels (4, 2, 1)", result.mMipLevels == 3);
+            UNSCOPED_INFO("4x4 Grayscale downsampling succeeds");
+            CHECK(ok);
+            UNSCOPED_INFO("4x4 produces 3 mip levels (4, 2, 1)");
+            CHECK(result.mMipLevels == 3);
         }
     }
 
     // Test 13: 512x512 full mip-chain compression across BC1, BC4, BC5, and BC7
-    template<> template<>
-    void block_compressor_object::test<13>()
+    TEST_CASE("VayuImageBlockCompressor: 512x512 full mip-chain compression across BC1, BC4, BC5, and BC7", "[VayuImageBlockCompressor]")
     {
         const U32 width = 512, height = 512;
         std::vector<U8> rgba(width * height * 4);
@@ -389,10 +429,14 @@ namespace tut
             VayuBlockCompressionResult result;
             bool ok = VayuImageBlockCompressor::encode(rgba.data(), width, height, 4, result, EVayuBlockCompressionFormat::BC7,
                                                        EVayuTextureJob::Albedo);
-            ensure("512x512 BC7 encodes successfully", ok);
-            ensure("512x512 has 10 mip levels", result.mMipLevels == 10);
-            ensure("Buffer size matches level count", result.mBuffer.size() > 0);
-            ensure("Largest mip offset valid", result.getLargestMipOffset() < result.mBuffer.size());
+            UNSCOPED_INFO("512x512 BC7 encodes successfully");
+            CHECK(ok);
+            UNSCOPED_INFO("512x512 has 10 mip levels");
+            CHECK(result.mMipLevels == 10);
+            UNSCOPED_INFO("Buffer size matches level count");
+            REQUIRE(result.mBuffer.size() > 0);
+            UNSCOPED_INFO("Largest mip offset valid");
+            REQUIRE(result.getLargestMipOffset() < result.mBuffer.size());
         }
 
         // Test BC1 on 512x512
@@ -400,9 +444,12 @@ namespace tut
             VayuBlockCompressionResult result;
             bool ok = VayuImageBlockCompressor::encode(rgba.data(), width, height, 4, result, EVayuBlockCompressionFormat::BC1,
                                                        EVayuTextureJob::Albedo);
-            ensure("512x512 BC1 encodes successfully", ok);
-            ensure("512x512 has 10 mip levels", result.mMipLevels == 10);
-            ensure("Buffer size is non-empty", result.mBuffer.size() > 0);
+            UNSCOPED_INFO("512x512 BC1 encodes successfully");
+            CHECK(ok);
+            UNSCOPED_INFO("512x512 has 10 mip levels");
+            CHECK(result.mMipLevels == 10);
+            UNSCOPED_INFO("Buffer size is non-empty");
+            REQUIRE(result.mBuffer.size() > 0);
         }
 
         // Test BC5 on 512x512 (2-channel)
@@ -416,14 +463,15 @@ namespace tut
             VayuBlockCompressionResult result;
             bool ok = VayuImageBlockCompressor::encode(rg.data(), width, height, 2, result, EVayuBlockCompressionFormat::BC5,
                                                        EVayuTextureJob::Albedo);
-            ensure("512x512 BC5 encodes successfully", ok);
-            ensure("512x512 has 10 mip levels", result.mMipLevels == 10);
+            UNSCOPED_INFO("512x512 BC5 encodes successfully");
+            CHECK(ok);
+            UNSCOPED_INFO("512x512 has 10 mip levels");
+            CHECK(result.mMipLevels == 10);
         }
     }
 
     // Test 14: Microbenchmark timing across 1024x1024 textures
-    template<> template<>
-    void block_compressor_object::test<14>()
+    TEST_CASE("VayuImageBlockCompressor: Microbenchmark timing across 1024x1024 textures", "[VayuImageBlockCompressor]")
     {
         const U32 width = 1024, height = 1024;
         std::vector<U8> rgba_trans(width * height * 4);
@@ -484,8 +532,7 @@ namespace tut
     }
 
     // Test 15: Explicit BC3 compression for translucent textures
-    template<> template<>
-    void block_compressor_object::test<15>()
+    TEST_CASE("VayuImageBlockCompressor: Explicit BC3 compression for translucent textures", "[VayuImageBlockCompressor]")
     {
         const U32 width = 16, height = 16;
         std::vector<U8> rgba(width * height * 4);
@@ -500,15 +547,18 @@ namespace tut
         VayuBlockCompressionResult result;
         bool ok = VayuImageBlockCompressor::encode(rgba.data(), width, height, 4, result, EVayuBlockCompressionFormat::BC3,
                                                    EVayuTextureJob::Albedo);
-        ensure("Encoding explicit BC3 succeeded", ok);
-        ensure("Explicit BC3 format is preserved", result.mFormat == EVayuBlockCompressionFormat::BC3);
-        ensure("BC3 produces correct mip levels", result.mMipLevels == 5);
-        ensure("BC3 buffer size is non-zero", result.mBuffer.size() > 0);
+        UNSCOPED_INFO("Encoding explicit BC3 succeeded");
+        CHECK(ok);
+        UNSCOPED_INFO("Explicit BC3 format is preserved");
+        CHECK(result.mFormat == EVayuBlockCompressionFormat::BC3);
+        UNSCOPED_INFO("BC3 produces correct mip levels");
+        CHECK(result.mMipLevels == 5);
+        UNSCOPED_INFO("BC3 buffer size is non-zero");
+        REQUIRE(result.mBuffer.size() > 0);
     }
 
     // Test 16: Demote BC7 to BC3 on macOS, preserve BC7 on other platforms
-    template<> template<>
-    void block_compressor_object::test<16>()
+    TEST_CASE("VayuImageBlockCompressor: Demote BC7 to BC3 on macOS, preserve BC7 on other platforms", "[VayuImageBlockCompressor]")
     {
         const U32 width = 16, height = 16;
         std::vector<U8> rgba(width * height * 4, 255);
@@ -516,17 +566,19 @@ namespace tut
         VayuBlockCompressionResult result;
         bool ok = VayuImageBlockCompressor::encode(rgba.data(), width, height, 4, result, EVayuBlockCompressionFormat::BC7,
                                                    EVayuTextureJob::Albedo);
-        ensure("Encoding BC7 succeeded", ok);
+        UNSCOPED_INFO("Encoding BC7 succeeded");
+        CHECK(ok);
 #if LL_DARWIN
-        ensure("BC7 demoted to BC3 on macOS", result.mFormat == EVayuBlockCompressionFormat::BC3);
+        UNSCOPED_INFO("BC7 demoted to BC3 on macOS");
+        REQUIRE(result.mFormat == EVayuBlockCompressionFormat::BC3);
 #else
-        ensure("BC7 preserved on non-macOS", result.mFormat == EVayuBlockCompressionFormat::BC7);
+        UNSCOPED_INFO("BC7 preserved on non-macOS");
+        CHECK(result.mFormat == EVayuBlockCompressionFormat::BC7);
 #endif
     }
 
     // Test 17: Opaque 4-channel texture signs mIsMask == true and chooses BC1
-    template<> template<>
-    void block_compressor_object::test<17>()
+    TEST_CASE("VayuImageBlockCompressor: Opaque 4-channel texture signs mIsMask == true and chooses BC1", "[VayuImageBlockCompressor]")
     {
         const U32 width = 16, height = 16;
         std::vector<U8> rgba(width * height * 4, 255);
@@ -534,14 +586,17 @@ namespace tut
         VayuBlockCompressionResult result;
         bool ok = VayuImageBlockCompressor::encode(rgba.data(), width, height, 4, result, EVayuBlockCompressionFormat::Auto,
                                                    EVayuTextureJob::Albedo);
-        ensure("Encoding opaque RGBA succeeded", ok);
-        ensure("Opaque RGBA resolves to BC1", result.mFormat == EVayuBlockCompressionFormat::BC1);
-        ensure("Opaque RGBA signs as mask", result.mIsMask == true);
+        UNSCOPED_INFO("Encoding opaque RGBA succeeded");
+        CHECK(ok);
+        UNSCOPED_INFO("Opaque RGBA resolves to BC1");
+        CHECK(result.mFormat == EVayuBlockCompressionFormat::BC1);
+        UNSCOPED_INFO("Opaque RGBA signs as mask");
+        CHECK(result.mIsMask);
     }
 
     // Test 18: Cutout 1-bit alpha signs mIsMask == true and chooses translucent format
-    template<> template<>
-    void block_compressor_object::test<18>()
+    TEST_CASE("VayuImageBlockCompressor: Cutout 1-bit alpha signs mIsMask == true and chooses translucent format",
+              "[VayuImageBlockCompressor]")
     {
         const U32 width = 16, height = 16;
         std::vector<U8> rgba(width * height * 4);
@@ -561,14 +616,17 @@ namespace tut
         VayuBlockCompressionResult result;
         bool ok = VayuImageBlockCompressor::encode(rgba.data(), width, height, 4, result, EVayuBlockCompressionFormat::Auto,
                                                    EVayuTextureJob::Albedo);
-        ensure("Encoding cutout RGBA succeeded", ok);
-        ensure("Cutout RGBA resolves to translucent format", result.mFormat == kExpectedTranslucentFormat);
-        ensure("Cutout RGBA signs as mask", result.mIsMask == true);
+        UNSCOPED_INFO("Encoding cutout RGBA succeeded");
+        CHECK(ok);
+        UNSCOPED_INFO("Cutout RGBA resolves to translucent format");
+        CHECK(result.mFormat == kExpectedTranslucentFormat);
+        UNSCOPED_INFO("Cutout RGBA signs as mask");
+        CHECK(result.mIsMask);
     }
 
     // Test 19: Smooth translucent gradient signs mIsMask == false and chooses translucent format
-    template<> template<>
-    void block_compressor_object::test<19>()
+    TEST_CASE("VayuImageBlockCompressor: Smooth translucent gradient signs mIsMask == false and chooses translucent format",
+              "[VayuImageBlockCompressor]")
     {
         const U32 width = 16, height = 16;
         std::vector<U8> rgba(width * height * 4);
@@ -584,23 +642,52 @@ namespace tut
         VayuBlockCompressionResult result;
         bool ok = VayuImageBlockCompressor::encode(rgba.data(), width, height, 4, result, EVayuBlockCompressionFormat::Auto,
                                                    EVayuTextureJob::Albedo);
-        ensure("Encoding gradient RGBA succeeded", ok);
-        ensure("Gradient RGBA resolves to translucent format", result.mFormat == kExpectedTranslucentFormat);
-        ensure("Gradient RGBA does NOT sign as mask", result.mIsMask == false);
+        UNSCOPED_INFO("Encoding gradient RGBA succeeded");
+        CHECK(ok);
+        UNSCOPED_INFO("Gradient RGBA resolves to translucent format");
+        CHECK(result.mFormat == kExpectedTranslucentFormat);
+        UNSCOPED_INFO("Gradient RGBA does NOT sign as mask");
+        CHECK_FALSE(result.mIsMask);
     }
 
     // Test 20: Probe dump of a synthetic periodic normal map (BC7 + BC5) for
     // the offline analyzer in scripts/perf/analyze_vayu_dump.py. Writes the
     // unconverted pyramid + compressed buffer via VAYU_DUMP_DIR. The captured
     // output is analyzed off-line; the assertions here only cover resolve.
-    template<> template<>
-    void block_compressor_object::test<20>()
+    TEST_CASE("VayuImageBlockCompressor: Probe dump of a synthetic periodic normal map (BC7 + BC5) for the offline analyzer in "
+              "scripts/perf/analyze_vayu_dump.py. Writes the unconverted pyramid + compressed buffer via VAYU_DUMP_DIR. The captured "
+              "output is analyzed off-line; the assertions here only cover resolve.",
+              "[VayuImageBlockCompressor]")
     {
         const char* out = std::getenv("VAYU_DUMP_PROBE_DIR");
         std::filesystem::path d = (out && out[0]) ? std::filesystem::path(out)
                                                   : std::filesystem::path("/tmp/vayu_dump_probe");
         std::filesystem::remove_all(d);
         std::filesystem::create_directories(d);
+        // Restored by the guard below, however the case ends: the harness's state
+        // guard reads the environment a case leaves behind, and a REQUIRE that
+        // fails before a trailing call would skip it.
+        const char*       previous      = std::getenv("VAYU_DUMP_DIR");
+        const std::string previous_dump = previous ? previous : std::string();
+        struct DumpDirGuard
+        {
+            std::string mPrevious;
+            ~DumpDirGuard()
+            {
+#ifdef _WIN32
+                _putenv_s("VAYU_DUMP_DIR", mPrevious.empty() ? "" : mPrevious.c_str());
+#else
+                if (mPrevious.empty())
+                {
+                    unsetenv("VAYU_DUMP_DIR");
+                }
+                else
+                {
+                    setenv("VAYU_DUMP_DIR", mPrevious.c_str(), 1);
+                }
+#endif
+            }
+        } dump_dir_guard{ previous_dump };
 #ifdef _WIN32
         _putenv_s("VAYU_DUMP_DIR", d.string().c_str());
 #else
@@ -629,11 +716,10 @@ namespace tut
         }
 
         VayuBlockCompressionResult r1;
-        ensure("RGBA normal probe encodes",
-               VayuImageBlockCompressor::encode(rgba.data(), W, H, 4, r1,
-                                                EVayuBlockCompressionFormat::Auto,
-                                                EVayuTextureJob::PBRNormal));
-        ensure("RGBA normal resolves to BC5", r1.mFormat == EVayuBlockCompressionFormat::BC5);
+        UNSCOPED_INFO("RGBA normal probe encodes");
+        REQUIRE(VayuImageBlockCompressor::encode(rgba.data(), W, H, 4, r1, EVayuBlockCompressionFormat::Auto, EVayuTextureJob::PBRNormal));
+        UNSCOPED_INFO("RGBA normal resolves to BC5");
+        CHECK(r1.mFormat == EVayuBlockCompressionFormat::BC5);
 
         std::vector<U8> rg((size_t)W * H * 2);
         for (size_t i = 0; i < (size_t)W * H; i++)
@@ -642,32 +728,30 @@ namespace tut
             rg[i * 2 + 1] = rgba[i * 4 + 1];
         }
         VayuBlockCompressionResult r2;
-        ensure("RG normal probe encodes",
-               VayuImageBlockCompressor::encode(rg.data(), W, H, 2, r2,
-                                                EVayuBlockCompressionFormat::Auto,
-                                                EVayuTextureJob::PBRNormal));
-        ensure("RG normal resolves to BC5", r2.mFormat == EVayuBlockCompressionFormat::BC5);
+        UNSCOPED_INFO("RG normal probe encodes");
+        REQUIRE(VayuImageBlockCompressor::encode(rg.data(), W, H, 2, r2, EVayuBlockCompressionFormat::Auto, EVayuTextureJob::PBRNormal));
+        UNSCOPED_INFO("RG normal resolves to BC5");
+        CHECK(r2.mFormat == EVayuBlockCompressionFormat::BC5);
 
         VayuBlockCompressionResult r3;
-        ensure("4ch opaque albedo encodes",
-               VayuImageBlockCompressor::encode(rgba.data(), W, H, 4, r3,
-                                                EVayuBlockCompressionFormat::Auto,
-                                                EVayuTextureJob::Albedo));
-        ensure("4ch opaque under Albedo resolves to BC1", r3.mFormat == EVayuBlockCompressionFormat::BC1);
+        UNSCOPED_INFO("4ch opaque albedo encodes");
+        REQUIRE(VayuImageBlockCompressor::encode(rgba.data(), W, H, 4, r3, EVayuBlockCompressionFormat::Auto, EVayuTextureJob::Albedo));
+        UNSCOPED_INFO("4ch opaque under Albedo resolves to BC1");
+        CHECK(r3.mFormat == EVayuBlockCompressionFormat::BC1);
 
         VayuBlockCompressionResult r4;
-        ensure("3ch albedo encodes",
-               VayuImageBlockCompressor::encode(rgba.data(), W, H, 3, r4,
-                                                EVayuBlockCompressionFormat::Auto,
-                                                EVayuTextureJob::Albedo));
-        ensure("3ch under Albedo resolves to BC1", r4.mFormat == EVayuBlockCompressionFormat::BC1);
+        UNSCOPED_INFO("3ch albedo encodes");
+        REQUIRE(VayuImageBlockCompressor::encode(rgba.data(), W, H, 3, r4, EVayuBlockCompressionFormat::Auto, EVayuTextureJob::Albedo));
+        UNSCOPED_INFO("3ch under Albedo resolves to BC1");
+        CHECK(r4.mFormat == EVayuBlockCompressionFormat::BC1);
     }
 
     // Test 21: Verify that 3-channel and 4-channel inputs passed to
     // VayuImageBlockCompressor::encode with EVayuTextureJob::PBRNormal resolve to
     // EVayuBlockCompressionFormat::BC5 with is_srgb = false and 2 components.
-    template<> template<>
-    void block_compressor_object::test<21>()
+    TEST_CASE("VayuImageBlockCompressor: Verify that 3-channel and 4-channel inputs passed to VayuImageBlockCompressor::encode with "
+              "EVayuTextureJob::PBRNormal resolve to EVayuBlockCompressionFormat::BC5 with is_srgb = false and 2 components.",
+              "[VayuImageBlockCompressor]")
     {
         const U32 W = 64, H = 64;
 
@@ -682,14 +766,15 @@ namespace tut
         }
 
         VayuBlockCompressionResult r_4ch;
-        ensure("4-channel PBRNormal encodes successfully",
-               VayuImageBlockCompressor::encode(rgba.data(), W, H, 4, r_4ch,
-                                                EVayuBlockCompressionFormat::Auto,
-                                                EVayuTextureJob::PBRNormal));
-        ensure("4-channel PBRNormal resolves to BC5", r_4ch.mFormat == EVayuBlockCompressionFormat::BC5);
-        ensure("4-channel PBRNormal has 2 components", r_4ch.mComponents == 2);
-        ensure("4-channel PBRNormal GL internal format is GL_COMPRESSED_RG_RGTC2",
-               r_4ch.mGLInternalFormat == GL_COMPRESSED_RG_RGTC2);
+        UNSCOPED_INFO("4-channel PBRNormal encodes successfully");
+        REQUIRE(
+            VayuImageBlockCompressor::encode(rgba.data(), W, H, 4, r_4ch, EVayuBlockCompressionFormat::Auto, EVayuTextureJob::PBRNormal));
+        UNSCOPED_INFO("4-channel PBRNormal resolves to BC5");
+        CHECK(r_4ch.mFormat == EVayuBlockCompressionFormat::BC5);
+        UNSCOPED_INFO("4-channel PBRNormal has 2 components");
+        CHECK(r_4ch.mComponents == 2);
+        UNSCOPED_INFO("4-channel PBRNormal GL internal format is GL_COMPRESSED_RG_RGTC2");
+        CHECK(r_4ch.mGLInternalFormat == GL_COMPRESSED_RG_RGTC2);
 
         // 3-channel test
         std::vector<U8> rgb((size_t)W * H * 3, 128);
@@ -701,21 +786,23 @@ namespace tut
         }
 
         VayuBlockCompressionResult r_3ch;
-        ensure("3-channel PBRNormal encodes successfully",
-               VayuImageBlockCompressor::encode(rgb.data(), W, H, 3, r_3ch,
-                                                EVayuBlockCompressionFormat::Auto,
-                                                EVayuTextureJob::PBRNormal));
-        ensure("3-channel PBRNormal resolves to BC5", r_3ch.mFormat == EVayuBlockCompressionFormat::BC5);
-        ensure("3-channel PBRNormal has 2 components", r_3ch.mComponents == 2);
-        ensure("3-channel PBRNormal GL internal format is GL_COMPRESSED_RG_RGTC2",
-               r_3ch.mGLInternalFormat == GL_COMPRESSED_RG_RGTC2);
+        UNSCOPED_INFO("3-channel PBRNormal encodes successfully");
+        REQUIRE(
+            VayuImageBlockCompressor::encode(rgb.data(), W, H, 3, r_3ch, EVayuBlockCompressionFormat::Auto, EVayuTextureJob::PBRNormal));
+        UNSCOPED_INFO("3-channel PBRNormal resolves to BC5");
+        CHECK(r_3ch.mFormat == EVayuBlockCompressionFormat::BC5);
+        UNSCOPED_INFO("3-channel PBRNormal has 2 components");
+        CHECK(r_3ch.mComponents == 2);
+        UNSCOPED_INFO("3-channel PBRNormal GL internal format is GL_COMPRESSED_RG_RGTC2");
+        CHECK(r_3ch.mGLInternalFormat == GL_COMPRESSED_RG_RGTC2);
     }
 
     // Test 22: Verify that EVayuTextureJob::Albedo and Emissive
     // produce byte-identical compressed output (SC-004), and that
     // EVayuTextureJob::LegacyMaterialNormal preserves all 4 channels (RGB + Alpha glossiness) via BC7/BC3.
-    template<> template<>
-    void block_compressor_object::test<22>()
+    TEST_CASE("VayuImageBlockCompressor: Verify that EVayuTextureJob::Albedo and Emissive produce byte-identical compressed output "
+              "(SC-004), and that EVayuTextureJob::LegacyMaterialNormal preserves all 4 channels (RGB + Alpha glossiness) via BC7/BC3.",
+              "[VayuImageBlockCompressor]")
     {
         const U32 W = 64, H = 64;
 
@@ -730,37 +817,37 @@ namespace tut
         }
 
         VayuBlockCompressionResult r_albedo;
-        ensure("Albedo job encodes",
-               VayuImageBlockCompressor::encode(rgba.data(), W, H, 4, r_albedo,
-                                                EVayuBlockCompressionFormat::Auto,
-                                                EVayuTextureJob::Albedo));
+        UNSCOPED_INFO("Albedo job encodes");
+        REQUIRE(
+            VayuImageBlockCompressor::encode(rgba.data(), W, H, 4, r_albedo, EVayuBlockCompressionFormat::Auto, EVayuTextureJob::Albedo));
 
         VayuBlockCompressionResult r_emissive;
-        ensure("Emissive job encodes",
-               VayuImageBlockCompressor::encode(rgba.data(), W, H, 4, r_emissive,
-                                                EVayuBlockCompressionFormat::Auto,
-                                                EVayuTextureJob::Emissive));
+        UNSCOPED_INFO("Emissive job encodes");
+        REQUIRE(VayuImageBlockCompressor::encode(rgba.data(), W, H, 4, r_emissive, EVayuBlockCompressionFormat::Auto,
+                                                 EVayuTextureJob::Emissive));
 
-        ensure("Emissive is byte-identical to Albedo", r_emissive.mBuffer == r_albedo.mBuffer);
-        ensure("Emissive format matches Albedo", r_emissive.mFormat == r_albedo.mFormat);
+        UNSCOPED_INFO("Emissive is byte-identical to Albedo");
+        CHECK(r_emissive.mBuffer == r_albedo.mBuffer);
+        UNSCOPED_INFO("Emissive format matches Albedo");
+        CHECK(r_emissive.mFormat == r_albedo.mFormat);
 
         // Generic color maps (legacy diffuse, terrain, water): same sRGB
         // encoding as Albedo, byte-identical.
         VayuBlockCompressionResult r_rgba;
-        ensure("RGBA job encodes",
-               VayuImageBlockCompressor::encode(rgba.data(), W, H, 4, r_rgba,
-                                                EVayuBlockCompressionFormat::Auto,
-                                                EVayuTextureJob::RGBA));
-        ensure("RGBA is byte-identical to Albedo", r_rgba.mBuffer == r_albedo.mBuffer);
-        ensure("RGBA format matches Albedo", r_rgba.mFormat == r_albedo.mFormat);
+        UNSCOPED_INFO("RGBA job encodes");
+        REQUIRE(VayuImageBlockCompressor::encode(rgba.data(), W, H, 4, r_rgba, EVayuBlockCompressionFormat::Auto, EVayuTextureJob::RGBA));
+        UNSCOPED_INFO("RGBA is byte-identical to Albedo");
+        CHECK(r_rgba.mBuffer == r_albedo.mBuffer);
+        UNSCOPED_INFO("RGBA format matches Albedo");
+        CHECK(r_rgba.mFormat == r_albedo.mFormat);
 
         // MetallicRoughness: 4-channel linear
         VayuBlockCompressionResult r_mr;
-        ensure("MetallicRoughness job encodes",
-               VayuImageBlockCompressor::encode(rgba.data(), W, H, 4, r_mr,
-                                                EVayuBlockCompressionFormat::Auto,
-                                                EVayuTextureJob::MetallicRoughness));
-        ensure_equals("MetallicRoughness has 4 components", r_mr.mComponents, 4);
+        UNSCOPED_INFO("MetallicRoughness job encodes");
+        REQUIRE(VayuImageBlockCompressor::encode(rgba.data(), W, H, 4, r_mr, EVayuBlockCompressionFormat::Auto,
+                                                 EVayuTextureJob::MetallicRoughness));
+        UNSCOPED_INFO("MetallicRoughness has 4 components");
+        CHECK(r_mr.mComponents == 4);
 
         // Legacy Blinn-Phong material normal: 4-channel with gloss variation in alpha
         std::vector<U8> normal_with_gloss = rgba;
@@ -768,16 +855,18 @@ namespace tut
         normal_with_gloss[7] = 200; // texel 1 has gloss < 255
 
         VayuBlockCompressionResult r_norm_gloss;
-        ensure("LegacyMaterialNormal encodes",
-               VayuImageBlockCompressor::encode(normal_with_gloss.data(), W, H, 4, r_norm_gloss,
-                                                EVayuBlockCompressionFormat::Auto,
-                                                EVayuTextureJob::LegacyMaterialNormal));
+        UNSCOPED_INFO("LegacyMaterialNormal encodes");
+        REQUIRE(VayuImageBlockCompressor::encode(normal_with_gloss.data(), W, H, 4, r_norm_gloss, EVayuBlockCompressionFormat::Auto,
+                                                 EVayuTextureJob::LegacyMaterialNormal));
 #if LL_DARWIN
-        ensure("LegacyMaterialNormal falls back to BC3", r_norm_gloss.mFormat == EVayuBlockCompressionFormat::BC3);
+        UNSCOPED_INFO("LegacyMaterialNormal falls back to BC3");
+        REQUIRE(r_norm_gloss.mFormat == EVayuBlockCompressionFormat::BC3);
 #else
-        ensure("LegacyMaterialNormal encodes to BC7", r_norm_gloss.mFormat == EVayuBlockCompressionFormat::BC7);
+        UNSCOPED_INFO("LegacyMaterialNormal encodes to BC7");
+        CHECK(r_norm_gloss.mFormat == EVayuBlockCompressionFormat::BC7);
 #endif
-        ensure_equals("LegacyMaterialNormal preserves 4 components", r_norm_gloss.mComponents, 4);
+        UNSCOPED_INFO("LegacyMaterialNormal preserves 4 components");
+        CHECK(r_norm_gloss.mComponents == 4);
 
         // Legacy Blinn-Phong specular: RGB is an sRGB tint, alpha only scales env
         // intensity (no gloss in any map's alpha). Stored sRGB so the software mip filter
@@ -785,31 +874,36 @@ namespace tut
         // This does NOT govern whether the shader decodes -- ALSampler::SRGBDecode does,
         // and a bound sampler overrides the texture's internal format.
         VayuBlockCompressionResult r_spec;
-        ensure("LegacySpecular encodes",
-               VayuImageBlockCompressor::encode(normal_with_gloss.data(), W, H, 4, r_spec,
-                                                EVayuBlockCompressionFormat::Auto,
-                                                EVayuTextureJob::LegacySpecular));
+        UNSCOPED_INFO("LegacySpecular encodes");
+        REQUIRE(VayuImageBlockCompressor::encode(normal_with_gloss.data(), W, H, 4, r_spec, EVayuBlockCompressionFormat::Auto,
+                                                 EVayuTextureJob::LegacySpecular));
 #if LL_DARWIN
-        ensure("LegacySpecular falls back to BC3", r_spec.mFormat == EVayuBlockCompressionFormat::BC3);
+        UNSCOPED_INFO("LegacySpecular falls back to BC3");
+        REQUIRE(r_spec.mFormat == EVayuBlockCompressionFormat::BC3);
 #else
-        ensure("LegacySpecular encodes to BC7", r_spec.mFormat == EVayuBlockCompressionFormat::BC7);
+        UNSCOPED_INFO("LegacySpecular encodes to BC7");
+        CHECK(r_spec.mFormat == EVayuBlockCompressionFormat::BC7);
 #endif
-        ensure_equals("LegacySpecular preserves 4 components", r_spec.mComponents, 4);
-        ensure("LegacySpecular differs from the linear LegacyMaterialNormal", r_spec.mBuffer != r_norm_gloss.mBuffer);
-        ensure("LegacySpecular stores an sRGB GL internal format, the normal a linear one",
-               r_spec.mGLInternalFormat != r_norm_gloss.mGLInternalFormat);
+        UNSCOPED_INFO("LegacySpecular preserves 4 components");
+        CHECK(r_spec.mComponents == 4);
+        UNSCOPED_INFO("LegacySpecular differs from the linear LegacyMaterialNormal");
+        CHECK(r_spec.mBuffer != r_norm_gloss.mBuffer);
+        UNSCOPED_INFO("LegacySpecular stores an sRGB GL internal format, the normal a linear one");
+        CHECK(r_spec.mGLInternalFormat != r_norm_gloss.mGLInternalFormat);
 
         // A data map bound without SRGBDecode must stay linear: the shader reads its bytes
         // verbatim, so an sRGB store would bend the vector. GL_COMPRESSED_RGBA_BPTC_UNORM,
         // spelled numerically because the GL enums are private to the compressor .cpp.
-        ensure_equals("LegacyMaterialNormal stores the linear BC7 format", r_norm_gloss.mGLInternalFormat, 0x8E8Cu);
+        UNSCOPED_INFO("LegacyMaterialNormal stores the linear BC7 format");
+        CHECK(r_norm_gloss.mGLInternalFormat == 0x8E8Cu);
     }
 
     // Test 23: An Unknown (unclaimed) texture job must never be block-compressed.
     // encode() refuses it outright; the worker gate and fetch probe gate keep it
     // out upstream. Defense in depth: direct encode() calls also refuse.
-    template<> template<>
-    void block_compressor_object::test<23>()
+    TEST_CASE("VayuImageBlockCompressor: An Unknown (unclaimed) texture job must never be block-compressed. encode() refuses it outright; "
+              "the worker gate and fetch probe gate keep it out upstream. Defense in depth: direct encode() calls also refuse.",
+              "[VayuImageBlockCompressor]")
     {
         const U32 W = 64, H = 64;
         std::vector<U8> rgba((size_t)W * H * 4);
@@ -822,15 +916,15 @@ namespace tut
         }
 
         VayuBlockCompressionResult r_unknown;
-        ensure("Unknown job is refused by encode()",
-               !VayuImageBlockCompressor::encode(rgba.data(), W, H, 4, r_unknown,
-                                                  EVayuBlockCompressionFormat::Auto,
-                                                  EVayuTextureJob::Unknown));
-        ensure("Unknown never resolves a format", r_unknown.mBuffer.empty());
+        UNSCOPED_INFO("Unknown job is refused by encode()");
+        REQUIRE_FALSE(
+            VayuImageBlockCompressor::encode(rgba.data(), W, H, 4, r_unknown, EVayuBlockCompressionFormat::Auto, EVayuTextureJob::Unknown));
+        UNSCOPED_INFO("Unknown never resolves a format");
+        REQUIRE(r_unknown.mBuffer.empty());
 
-        ensure("Unknown resolves no cache key either",
-               VayuImageBlockCompressor::resolveFormat(rgba.data(), W, H, 4, EVayuTextureJob::Unknown, EVayuBlockCompressionFormat::Auto) ==
-                   EVayuBlockCompressionFormat::Auto);
+        UNSCOPED_INFO("Unknown resolves no cache key either");
+        CHECK(VayuImageBlockCompressor::resolveFormat(rgba.data(), W, H, 4, EVayuTextureJob::Unknown, EVayuBlockCompressionFormat::Auto) ==
+              EVayuBlockCompressionFormat::Auto);
     }
 
     // Test 24: resolveFormat() must AGREE with encode() for every input.
@@ -845,9 +939,9 @@ namespace tut
     //
     // This is the regression guard for that: assert equality across every job role and
     // component count, including the opaque/alpha split that actually broke.
-    template<>
-    template<>
-    void block_compressor_object::test<24>()
+    TEST_CASE("VayuImageBlockCompressor: This is the regression guard for that: assert equality across every job role and component count, "
+              "including the opaque/alpha split that actually broke.",
+              "[VayuImageBlockCompressor]")
     {
         const U32    W = 64, H = 64;
         const size_t px = (size_t)W * H;
@@ -897,7 +991,8 @@ namespace tut
             VayuBlockCompressionResult encoded;
             const bool                 ok =
                 VayuImageBlockCompressor::encode(c.mData, W, H, c.mComponents, encoded, EVayuBlockCompressionFormat::Auto, c.mJob);
-            ensure(c.mName, ok);
+            UNSCOPED_INFO(c.mName);
+            REQUIRE(ok);
             if (!ok)
                 continue;
 
@@ -905,35 +1000,36 @@ namespace tut
                 VayuImageBlockCompressor::resolveFormat(c.mData, W, H, c.mComponents, c.mJob, EVayuBlockCompressionFormat::Auto);
             // The cache-key prediction must match the format the bytes were actually
             // written in, or the worker probes a filename that does not exist.
-            ensure_equals((std::string(c.mName) + ": resolveFormat matches encode()").c_str(), (int)predicted, (int)encoded.mFormat);
+            UNSCOPED_INFO((std::string(c.mName) + ": resolveFormat matches encode()").c_str());
+            REQUIRE((int)predicted == (int)encoded.mFormat);
         }
 
         // Pin the specific regression: opaque 4-channel is BC1, NOT BC7. If the alpha
         // scan ever stops influencing the choice, this catches it directly rather than
         // only as a side effect of the loop above.
-        ensure("opaque 4ch resolves to BC1",
-               VayuImageBlockCompressor::resolveFormat(rgba_opaque.data(), W, H, 4, EVayuTextureJob::Albedo,
-                                                       EVayuBlockCompressionFormat::Auto) == EVayuBlockCompressionFormat::BC1);
-        ensure("cutout 4ch does not resolve to BC1",
-               VayuImageBlockCompressor::resolveFormat(rgba_cutout.data(), W, H, 4, EVayuTextureJob::Albedo,
-                                                       EVayuBlockCompressionFormat::Auto) != EVayuBlockCompressionFormat::BC1);
+        UNSCOPED_INFO("opaque 4ch resolves to BC1");
+        CHECK(VayuImageBlockCompressor::resolveFormat(rgba_opaque.data(), W, H, 4, EVayuTextureJob::Albedo,
+                                                      EVayuBlockCompressionFormat::Auto) == EVayuBlockCompressionFormat::BC1);
+        UNSCOPED_INFO("cutout 4ch does not resolve to BC1");
+        CHECK(VayuImageBlockCompressor::resolveFormat(rgba_cutout.data(), W, H, 4, EVayuTextureJob::Albedo,
+                                                      EVayuBlockCompressionFormat::Auto) != EVayuBlockCompressionFormat::BC1);
 
         // An explicit format request must pass through untouched (subject to encode()'s
         // own platform demotion, which this comparison inherits by construction).
         VayuBlockCompressionResult explicit_bc7;
-        ensure("explicit BC7 encodes",
-               VayuImageBlockCompressor::encode(rgba_cutout.data(), W, H, 4, explicit_bc7, EVayuBlockCompressionFormat::BC7,
-                                                EVayuTextureJob::Albedo));
-        ensure("explicit BC7 resolves to what encode() produced",
-               VayuImageBlockCompressor::resolveFormat(rgba_cutout.data(), W, H, 4, EVayuTextureJob::Albedo,
-                                                       EVayuBlockCompressionFormat::BC7) == explicit_bc7.mFormat);
+        UNSCOPED_INFO("explicit BC7 encodes");
+        REQUIRE(VayuImageBlockCompressor::encode(rgba_cutout.data(), W, H, 4, explicit_bc7, EVayuBlockCompressionFormat::BC7,
+                                                 EVayuTextureJob::Albedo));
+        UNSCOPED_INFO("explicit BC7 resolves to what encode() produced");
+        CHECK(VayuImageBlockCompressor::resolveFormat(rgba_cutout.data(), W, H, 4, EVayuTextureJob::Albedo,
+                                                      EVayuBlockCompressionFormat::BC7) == explicit_bc7.mFormat);
     }
 
     // Test 25: max_mips must truncate the pyramid to exactly the finest N levels.
     // This is what lets a refinement encode only its gap instead of a whole chain.
-    template<>
-    template<>
-    void block_compressor_object::test<25>()
+    TEST_CASE("VayuImageBlockCompressor: max_mips must truncate the pyramid to exactly the finest N levels. This is what lets a refinement "
+              "encode only its gap instead of a whole chain.",
+              "[VayuImageBlockCompressor]")
     {
         const U32       W = 64, H = 64; // full chain is 7 levels: 64,32,16,8,4,2,1
         std::vector<U8> rgba((size_t)W * H * 4);
@@ -946,9 +1042,10 @@ namespace tut
         }
 
         VayuBlockCompressionResult full;
-        ensure("full chain encodes",
-               VayuImageBlockCompressor::encode(rgba.data(), W, H, 4, full, EVayuBlockCompressionFormat::Auto, EVayuTextureJob::Albedo));
-        ensure_equals("64x64 full chain is 7 levels", full.mMipLevels, 7);
+        UNSCOPED_INFO("full chain encodes");
+        REQUIRE(VayuImageBlockCompressor::encode(rgba.data(), W, H, 4, full, EVayuBlockCompressionFormat::Auto, EVayuTextureJob::Albedo));
+        UNSCOPED_INFO("64x64 full chain is 7 levels");
+        CHECK(full.mMipLevels == 7);
 
         // Truncation must be exact and self-consistent: the buffer holds only the finest
         // N mips, and getLargestMipOffset()/getMipBytes() still resolve within it --
@@ -958,36 +1055,43 @@ namespace tut
             VayuBlockCompressionResult part;
             const bool                 ok =
                 VayuImageBlockCompressor::encode(rgba.data(), W, H, 4, part, EVayuBlockCompressionFormat::Auto, EVayuTextureJob::Albedo, n);
-            ensure_equals("truncated encode succeeds", ok, true);
-            ensure_equals("truncated mip count", part.mMipLevels, n);
+            UNSCOPED_INFO("truncated encode succeeds");
+            REQUIRE(ok == true);
+            UNSCOPED_INFO("truncated mip count");
+            REQUIRE(part.mMipLevels == n);
 
             size_t expect_bytes = 0;
             for (S32 i = 0; i < n; ++i)
                 expect_bytes += part.getMipBytes(i);
-            ensure_equals("truncated buffer is exactly the finest N mips", part.mBuffer.size(), expect_bytes);
+            UNSCOPED_INFO("truncated buffer is exactly the finest N mips");
+            REQUIRE(part.mBuffer.size() == expect_bytes);
 
             const size_t largest = part.getLargestMipOffset();
-            ensure("largest mip offset is in range", largest + part.getMipBytes(0) == part.mBuffer.size());
+            UNSCOPED_INFO("largest mip offset is in range");
+            REQUIRE(largest + part.getMipBytes(0) == part.mBuffer.size());
 
             // The retained finest mip must be byte-identical to the full chain's, since
             // it is the same level 0 encoded the same way -- that is what makes the
             // append a true "encode the gap only" operation.
-            ensure("truncated finest mip matches the full chain",
-                   std::equal(part.mBuffer.begin() + largest, part.mBuffer.end(), full.mBuffer.begin() + full.getLargestMipOffset()));
+            UNSCOPED_INFO("truncated finest mip matches the full chain");
+            REQUIRE(std::equal(part.mBuffer.begin() + largest, part.mBuffer.end(), full.mBuffer.begin() + full.getLargestMipOffset()));
         }
 
         // max_mips beyond the chain length must not over-report levels.
         VayuBlockCompressionResult over;
-        ensure(
-            "over-large max_mips encodes",
+        UNSCOPED_INFO("over-large max_mips encodes");
+        REQUIRE(
             VayuImageBlockCompressor::encode(rgba.data(), W, H, 4, over, EVayuBlockCompressionFormat::Auto, EVayuTextureJob::Albedo, 99));
-        ensure_equals("over-large max_mips clamps to the real chain", over.mMipLevels, 7);
+        UNSCOPED_INFO("over-large max_mips clamps to the real chain");
+        CHECK(over.mMipLevels == 7);
 
         // 0 means "no limit" and must be identical to the default.
         VayuBlockCompressionResult zero;
-        ensure("max_mips=0 encodes",
-               VayuImageBlockCompressor::encode(rgba.data(), W, H, 4, zero, EVayuBlockCompressionFormat::Auto, EVayuTextureJob::Albedo, 0));
-        ensure("max_mips=0 equals the default full chain", zero.mBuffer == full.mBuffer);
+        UNSCOPED_INFO("max_mips=0 encodes");
+        REQUIRE(
+            VayuImageBlockCompressor::encode(rgba.data(), W, H, 4, zero, EVayuBlockCompressionFormat::Auto, EVayuTextureJob::Albedo, 0));
+        UNSCOPED_INFO("max_mips=0 equals the default full chain");
+        CHECK(zero.mBuffer == full.mBuffer);
     }
 
     // Test 26: A full-chain result must always carry one mip per level down to 1x1.
@@ -1003,9 +1107,10 @@ namespace tut
     // worker's incremental path re-merges the cached tail before uploading. The truncated
     // case is asserted below as deliberately failing this invariant, so the hazard stays
     // visible: anything that builds a partial pyramid for upload is a bug.
-    template<>
-    template<>
-    void block_compressor_object::test<26>()
+    TEST_CASE("VayuImageBlockCompressor: Handing GL a truncated result is therefore an out-of-bounds read, which is why the worker's "
+              "incremental path re-merges the cached tail before uploading. The truncated case is asserted below as deliberately failing "
+              "this invariant, so the hazard stays visible: anything that builds a partial pyramid for upload is a bug.",
+              "[VayuImageBlockCompressor]")
     {
         const auto levels_to_1x1 = [](U32 w, U32 h)
         {
@@ -1033,24 +1138,28 @@ namespace tut
             VayuBlockCompressionResult r;
             const bool                 ok =
                 VayuImageBlockCompressor::encode(rgba.data(), W, H, 4, r, EVayuBlockCompressionFormat::Auto, EVayuTextureJob::Albedo);
-            ensure_equals((std::string("encode ok for ") + std::to_string(W) + "x" + std::to_string(H)).c_str(), ok, eligible);
+            UNSCOPED_INFO((std::string("encode ok for ") + std::to_string(W) + "x" + std::to_string(H)).c_str());
+            REQUIRE(ok == eligible);
             if (!ok)
                 continue;
 
-            ensure_equals("full chain reaches 1x1 and matches GL's level count", r.mMipLevels, levels_to_1x1(W, H));
+            UNSCOPED_INFO("full chain reaches 1x1 and matches GL's level count");
+            REQUIRE(r.mMipLevels == levels_to_1x1(W, H));
 
             // The walk GL performs must stay inside the buffer: it starts at the largest mip
             // and steps back once per level.
-            ensure("largest mip offset is the start of level 0", r.getLargestMipOffset() + r.getMipBytes(0) == r.mBuffer.size());
+            UNSCOPED_INFO("largest mip offset is the start of level 0");
+            REQUIRE(r.getLargestMipOffset() + r.getMipBytes(0) == r.mBuffer.size());
 
             // A truncated result must NOT satisfy the invariant -- that is the point.
             if (r.mMipLevels > 1)
             {
                 VayuBlockCompressionResult part;
-                ensure("truncated encode ok",
-                       VayuImageBlockCompressor::encode(rgba.data(), W, H, 4, part, EVayuBlockCompressionFormat::Auto,
-                                                        EVayuTextureJob::Albedo, 1));
-                ensure("truncated result is short of GL's level count", part.mMipLevels < levels_to_1x1(W, H));
+                UNSCOPED_INFO("truncated encode ok");
+                REQUIRE(VayuImageBlockCompressor::encode(rgba.data(), W, H, 4, part, EVayuBlockCompressionFormat::Auto,
+                                                         EVayuTextureJob::Albedo, 1));
+                UNSCOPED_INFO("truncated result is short of GL's level count");
+                REQUIRE(part.mMipLevels < levels_to_1x1(W, H));
             }
         }
     }
@@ -1069,9 +1178,9 @@ namespace tut
     // The cache-side merge (VayuBCTextureCache::appendEntry) splices in the other direction
     // and was already correct and covered; only this in-memory GL merge was wrong, and it had
     // no coverage at all.
-    template<>
-    template<>
-    void block_compressor_object::test<27>()
+    TEST_CASE("VayuImageBlockCompressor: The cache-side merge (VayuBCTextureCache::appendEntry) splices in the other direction and was "
+              "already correct and covered; only this in-memory GL merge was wrong, and it had no coverage at all.",
+              "[VayuImageBlockCompressor]")
     {
         auto fill_rgba = [](U32 W, U32 H)
         {
@@ -1089,18 +1198,20 @@ namespace tut
         // The texture's first sight at discard 3 -> an 8x8 image and a 4-level chain.
         const std::vector<U8>      src8 = fill_rgba(8, 8);
         VayuBlockCompressionResult coarse;
-        ensure("8x8 coarse chain encodes",
-               VayuImageBlockCompressor::encode(src8.data(), 8, 8, 4, coarse, EVayuBlockCompressionFormat::Auto, EVayuTextureJob::Albedo));
-        ensure_equals("8x8 chain is 4 levels", coarse.mMipLevels, 4);
+        UNSCOPED_INFO("8x8 coarse chain encodes");
+        REQUIRE(VayuImageBlockCompressor::encode(src8.data(), 8, 8, 4, coarse, EVayuBlockCompressionFormat::Auto, EVayuTextureJob::Albedo));
+        UNSCOPED_INFO("8x8 chain is 4 levels");
+        CHECK(coarse.mMipLevels == 4);
 
         // The refinement at discard 2 -> a 16x16 image; max_mips = 3 - 2 = 1, so only its
         // finest mip is encoded. That single mip is the largest in the merged pyramid.
         const std::vector<U8>      src16 = fill_rgba(16, 16);
         VayuBlockCompressionResult gap;
-        ensure(
-            "16x16 gap encodes",
+        UNSCOPED_INFO("16x16 gap encodes");
+        REQUIRE(
             VayuImageBlockCompressor::encode(src16.data(), 16, 16, 4, gap, EVayuBlockCompressionFormat::Auto, EVayuTextureJob::Albedo, 1));
-        ensure_equals("gap is exactly one mip", gap.mMipLevels, 1);
+        UNSCOPED_INFO("gap is exactly one mip");
+        CHECK(gap.mMipLevels == 1);
 
         // Rebuild the GL payload through the SAME helper ImageRequest::processRequest()
         // uses, so this test actually guards the production call site. An earlier version
@@ -1109,43 +1220,50 @@ namespace tut
         VayuBlockCompressionResult merged = gap;
         merged.prependSmallerMips(coarse.mBuffer, coarse.mMipLevels);
 
-        ensure_equals("merged level count", merged.mMipLevels, 5);
-        ensure_equals("merged buffer is exactly coarse + gap",
-                      (int)merged.mBuffer.size(),
-                      (int)(coarse.mBuffer.size() + gap.mBuffer.size()));
+        UNSCOPED_INFO("merged level count");
+        CHECK(merged.mMipLevels == 5);
+        UNSCOPED_INFO("merged buffer is exactly coarse + gap");
+        REQUIRE((int)merged.mBuffer.size() == (int)(coarse.mBuffer.size() + gap.mBuffer.size()));
 
         // The layout contract getLargestMipOffset()/getMipBytes() rely on.
         const size_t largest = merged.getLargestMipOffset();
-        ensure("largest mip offset lands at the end of the buffer", largest + merged.getMipBytes(0) == merged.mBuffer.size());
+        UNSCOPED_INFO("largest mip offset lands at the end of the buffer");
+        REQUIRE(largest + merged.getMipBytes(0) == merged.mBuffer.size());
 
         // Decisive check: the bytes at the tail must be the refinement's finest mip (16x16).
         // Under the inverted merge the tail would hold the coarse chain's last mip (1x1),
         // which is what produced the banding.
         const size_t gap_largest = gap.getLargestMipOffset();
         const size_t gap_bytes   = gap.getMipBytes(0);
-        ensure("gap's own layout is consistent", gap_largest + gap_bytes == gap.mBuffer.size());
-        ensure("merged tail is the refinement's finest mip",
-               std::equal(merged.mBuffer.begin() + largest, merged.mBuffer.end(), gap.mBuffer.begin() + gap_largest));
+        UNSCOPED_INFO("gap's own layout is consistent");
+        REQUIRE(gap_largest + gap_bytes == gap.mBuffer.size());
+        UNSCOPED_INFO("merged tail is the refinement's finest mip");
+        CHECK(std::equal(merged.mBuffer.begin() + largest, merged.mBuffer.end(), gap.mBuffer.begin() + gap_largest));
 
         // And the head must still be the coarse chain's smallest-first tail.
-        ensure("merged head is the cached coarser tail",
-               std::equal(merged.mBuffer.begin(), merged.mBuffer.begin() + coarse.mBuffer.size(), coarse.mBuffer.begin()));
+        UNSCOPED_INFO("merged head is the cached coarser tail");
+        REQUIRE(std::equal(merged.mBuffer.begin(), merged.mBuffer.begin() + coarse.mBuffer.size(), coarse.mBuffer.begin()));
 
         // Pin that the helper prepends. If it is ever "simplified" to append, this fails.
-        ensure("the inverted order is demonstrably WRONG (regression is caught)",
-               [&]
-               {
-                   VayuBlockCompressionResult inverted = gap;
-                   inverted.mBuffer.insert(inverted.mBuffer.end(), coarse.mBuffer.begin(), coarse.mBuffer.end());
-                   inverted.mMipLevels = coarse.mMipLevels + gap.mMipLevels;
-                   return !std::equal(inverted.mBuffer.begin() + inverted.getLargestMipOffset(),
-                                      inverted.mBuffer.end(),
-                                      gap.mBuffer.begin() + gap_largest);
-               }());
+        UNSCOPED_INFO("the inverted order is demonstrably WRONG (regression is caught)");
+        CHECK(
+            [&]
+            {
+                VayuBlockCompressionResult inverted = gap;
+                inverted.mBuffer.insert(inverted.mBuffer.end(), coarse.mBuffer.begin(), coarse.mBuffer.end());
+                inverted.mMipLevels = coarse.mMipLevels + gap.mMipLevels;
+                return !std::equal(inverted.mBuffer.begin() + inverted.getLargestMipOffset(),
+                                   inverted.mBuffer.end(),
+                                   gap.mBuffer.begin() + gap_largest);
+            }());
 
         // And that the helper is a no-op rather than corrupting on empty/zero input.
         VayuBlockCompressionResult noop = gap;
         noop.prependSmallerMips({}, 0);
-        ensure("empty prepend is a no-op", noop.mBuffer == gap.mBuffer && noop.mMipLevels == gap.mMipLevels);
+        {
+            INFO("empty prepend is a no-op");
+            CHECK(noop.mBuffer == gap.mBuffer);
+            CHECK(noop.mMipLevels == gap.mMipLevels);
+        }
     }
-    } // namespace tut
+    } // anonymous namespace

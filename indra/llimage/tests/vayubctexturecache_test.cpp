@@ -5,7 +5,7 @@
 
 #include "linden_common.h"
 
-#include "../test/lltut.h"
+#include <catch2/catch_test_macros.hpp>
 
 #include "../vayubctexturecache.h"
 #include "boost/filesystem.hpp"
@@ -17,16 +17,8 @@
 #include <utility>
 #include <vector>
 
-namespace tut
+namespace
 {
-    struct bc_texture_cache_test
-    {
-    };
-
-    typedef test_group<bc_texture_cache_test> bc_texture_cache_group;
-    typedef bc_texture_cache_group::object bc_texture_cache_object;
-    bc_texture_cache_group bc_texture_cache_testgroup("VayuBCTextureCache");
-
     static std::filesystem::path test_dir(const char* name)
     {
         return std::filesystem::temp_directory_path() / (std::string("vayu_bccache_test_") + name);
@@ -56,8 +48,7 @@ namespace tut
     }
 
     // Test 1: write then read round-trips header and buffer bytes exactly
-    template<> template<>
-    void bc_texture_cache_object::test<1>()
+    TEST_CASE("VayuBCTextureCache: write then read round-trips header and buffer bytes exactly", "[VayuBCTextureCache]")
     {
         auto dir = test_dir("roundtrip");
         std::filesystem::remove_all(dir);
@@ -77,19 +68,24 @@ namespace tut
         std::vector<U8> read_buffer;
         bool ok = VayuBCTextureCache::instance().readEntry(id, 0, read_header, read_buffer);
 
-        ensure("Write-then-read succeeds", ok);
-        ensure_equals("Format round-trips", read_header.mFormat, header.mFormat);
-        ensure_equals("Preset round-trips", read_header.mPreset, header.mPreset);
-        ensure_equals("IsMask round-trips", read_header.mIsMask, header.mIsMask);
-        ensure_equals("Width round-trips", read_header.mWidth, header.mWidth);
-        ensure("Buffer bytes round-trip", read_buffer == buffer);
+        UNSCOPED_INFO("Write-then-read succeeds");
+        CHECK(ok);
+        UNSCOPED_INFO("Format round-trips");
+        CHECK(read_header.mFormat == header.mFormat);
+        UNSCOPED_INFO("Preset round-trips");
+        CHECK(read_header.mPreset == header.mPreset);
+        UNSCOPED_INFO("IsMask round-trips");
+        CHECK(read_header.mIsMask == header.mIsMask);
+        UNSCOPED_INFO("Width round-trips");
+        CHECK(read_header.mWidth == header.mWidth);
+        UNSCOPED_INFO("Buffer bytes round-trip");
+        CHECK(read_buffer == buffer);
 
         VayuBCTextureCache::instance().clear();
     }
 
     // Test 2: unknown (id, discard) is a miss
-    template<> template<>
-    void bc_texture_cache_object::test<2>()
+    TEST_CASE("VayuBCTextureCache: unknown (id, discard) is a miss", "[VayuBCTextureCache]")
     {
         auto dir = test_dir("miss");
         std::filesystem::remove_all(dir);
@@ -100,14 +96,14 @@ namespace tut
         VayuBCCacheEntryHeader header;
         std::vector<U8> buffer;
         bool ok = VayuBCTextureCache::instance().readEntry(id, 0, header, buffer);
-        ensure("Unknown entry is a miss", !ok);
+        UNSCOPED_INFO("Unknown entry is a miss");
+        CHECK_FALSE(ok);
 
         VayuBCTextureCache::instance().clear();
     }
 
     // Test 3: a cached entry hits immediately regardless of encode preset (zero penalty)
-    template<> template<>
-    void bc_texture_cache_object::test<3>()
+    TEST_CASE("VayuBCTextureCache: a cached entry hits immediately regardless of encode preset (zero penalty)", "[VayuBCTextureCache]")
     {
         auto dir = test_dir("immediate_hit");
         std::filesystem::remove_all(dir);
@@ -126,15 +122,16 @@ namespace tut
         std::vector<U8> out_buffer;
 
         bool hit = VayuBCTextureCache::instance().readEntry(id, 0, out_header, out_buffer);
-        ensure("Cached entry hits immediately without preset penalty", hit);
-        ensure_equals("Read buffer matches", out_buffer, buffer);
+        UNSCOPED_INFO("Cached entry hits immediately without preset penalty");
+        CHECK(hit);
+        UNSCOPED_INFO("Read buffer matches");
+        CHECK(out_buffer == buffer);
 
         VayuBCTextureCache::instance().clear();
     }
 
     // Test 4: purge() removes oldest files when exceeding nominal budget
-    template<> template<>
-    void bc_texture_cache_object::test<4>()
+    TEST_CASE("VayuBCTextureCache: purge() removes oldest files when exceeding nominal budget", "[VayuBCTextureCache]")
     {
         auto dir = test_dir("eviction");
         std::filesystem::remove_all(dir);
@@ -171,23 +168,26 @@ namespace tut
 
         VayuBCTextureCache::instance().purge();
 
-        ensure("Cache stays within its nominal size budget",
-               VayuBCTextureCache::instance().getCurrentSize() <= approx_entry_size * 2);
+        UNSCOPED_INFO("Cache stays within its nominal size budget");
+        CHECK(VayuBCTextureCache::instance().getCurrentSize() <= approx_entry_size * 2);
 
         VayuBCCacheEntryHeader out_header;
         std::vector<U8> out_buffer;
         bool a_survived = VayuBCTextureCache::instance().readEntry(id_a, 0, out_header, out_buffer);
         bool c_survived = VayuBCTextureCache::instance().readEntry(id_c, 0, out_header, out_buffer);
-        ensure("Most recently written entry survives purge", c_survived);
-        ensure("Oldest entry was purged to make room", !a_survived);
+        UNSCOPED_INFO("Most recently written entry survives purge");
+        CHECK(c_survived);
+        UNSCOPED_INFO("Oldest entry was purged to make room");
+        CHECK_FALSE(a_survived);
 
         VayuBCTextureCache::instance().clear();
     }
 
     // Test 5: Concurrent multi-threaded direct worker writes across multiple
     // threads execute lock-free without queues, dropped writes, or data races.
-    template<> template<>
-    void bc_texture_cache_object::test<5>()
+    TEST_CASE("VayuBCTextureCache: Concurrent multi-threaded direct worker writes across multiple threads execute lock-free without "
+              "queues, dropped writes, or data races.",
+              "[VayuBCTextureCache]")
     {
         auto dir = test_dir("concurrent_worker_writes");
         std::filesystem::remove_all(dir);
@@ -254,18 +254,21 @@ namespace tut
             }
         }
 
-        ensure_equals("All concurrent worker writes succeeded and persisted intact", verified, kTotalWrites);
-        ensure_equals("Atomic entry count tracks all concurrent writes",
-                      VayuBCTextureCache::instance().getEntryCount(), kTotalWrites);
-        ensure("Total cache size is strictly positive", VayuBCTextureCache::instance().getCurrentSize() > 0);
+        UNSCOPED_INFO("All concurrent worker writes succeeded and persisted intact");
+        CHECK(verified == kTotalWrites);
+        UNSCOPED_INFO("Atomic entry count tracks all concurrent writes");
+        CHECK(VayuBCTextureCache::instance().getEntryCount() == kTotalWrites);
+        UNSCOPED_INFO("Total cache size is strictly positive");
+        CHECK(VayuBCTextureCache::instance().getCurrentSize() > 0);
 
         VayuBCTextureCache::instance().clear();
     }
 
     // Test 6: Many uniquely-keyed writes written back-to-back are immediately
     // persisted to disk and shutdown() completes deterministically.
-    template<> template<>
-    void bc_texture_cache_object::test<6>()
+    TEST_CASE("VayuBCTextureCache: Many uniquely-keyed writes written back-to-back are immediately persisted to disk and shutdown() "
+              "completes deterministically.",
+              "[VayuBCTextureCache]")
     {
         auto dir = test_dir("immediate_persistence");
         std::filesystem::remove_all(dir);
@@ -303,7 +306,8 @@ namespace tut
             if (stamped == i)
                 ++verified;
         }
-        ensure_equals("Every direct worker write is readable and intact", verified, kCount);
+        UNSCOPED_INFO("Every direct worker write is readable and intact");
+        CHECK(verified == kCount);
 
         // Cross-check against the raw files across the 16 subdirectories on disk
         size_t bc_file_count = 0;
@@ -324,17 +328,17 @@ namespace tut
                 }
             }
         }
-        ensure_equals("Every entry actually reached disk across subdirectories", bc_file_count, kCount);
+        UNSCOPED_INFO("Every entry actually reached disk across subdirectories");
+        CHECK(bc_file_count == kCount);
 
-        ensure_equals("Entry count matches total direct writes",
-                      VayuBCTextureCache::instance().getEntryCount(), kCount);
+        UNSCOPED_INFO("Entry count matches total direct writes");
+        CHECK(VayuBCTextureCache::instance().getEntryCount() == kCount);
 
         VayuBCTextureCache::instance().clear();
     }
 
     // Test 7: 16 hex subdirectories ('0' - 'f') partition and file path structure
-    template<> template<>
-    void bc_texture_cache_object::test<7>()
+    TEST_CASE("VayuBCTextureCache: 16 hex subdirectories ('0' - 'f') partition and file path structure", "[VayuBCTextureCache]")
     {
         auto dir = test_dir("subdirs");
         std::filesystem::remove_all(dir);
@@ -342,7 +346,8 @@ namespace tut
 
         for (char ch : std::string("0123456789abcdef"))
         {
-            ensure("Subdirectory exists", std::filesystem::is_directory(dir / std::string(1, ch)));
+            UNSCOPED_INFO("Subdirectory exists");
+            REQUIRE(std::filesystem::is_directory(dir / std::string(1, ch)));
         }
 
         LLUUID id;
@@ -350,15 +355,14 @@ namespace tut
         std::string expected_subdir(1, id.asString()[0]);
         std::string filepath = VayuBCTextureCache::instance().getFilePath(id);
 
-        ensure("File path contains correct hex subdir",
-               filepath.find((dir / expected_subdir).string()) != std::string::npos);
+        UNSCOPED_INFO("File path contains correct hex subdir");
+        REQUIRE(filepath.find((dir / expected_subdir).string()) != std::string::npos);
 
         VayuBCTextureCache::instance().clear();
     }
 
     // Test 8: Migration of legacy flat root files into 16 subdirectories
-    template<> template<>
-    void bc_texture_cache_object::test<8>()
+    TEST_CASE("VayuBCTextureCache: Migration of legacy flat root files into 16 subdirectories", "[VayuBCTextureCache]")
     {
         auto dir = test_dir("migration");
         std::filesystem::remove_all(dir);
@@ -374,22 +378,24 @@ namespace tut
             std::ofstream out(legacy_path, std::ios::binary);
             out << "dummy";
         }
-        ensure("Legacy file exists in root", std::filesystem::exists(legacy_path));
+        UNSCOPED_INFO("Legacy file exists in root");
+        CHECK(std::filesystem::exists(legacy_path));
 
         // Init cache should trigger migration
         VayuBCTextureCache::instance().initCache(dir, 1024 * 1024);
 
-        ensure("Legacy file removed from root", !std::filesystem::exists(legacy_path));
+        UNSCOPED_INFO("Legacy file removed from root");
+        CHECK_FALSE(std::filesystem::exists(legacy_path));
         std::string expected_subdir(1, id.asString()[0]);
         std::filesystem::path migrated_path = dir / expected_subdir / legacy_filename;
-        ensure("File migrated into hex subdirectory", std::filesystem::exists(migrated_path));
+        UNSCOPED_INFO("File migrated into hex subdirectory");
+        CHECK(std::filesystem::exists(migrated_path));
 
         VayuBCTextureCache::instance().clear();
     }
 
     // Test 9: Atomic byte accounting (addBytesWritten)
-    template<> template<>
-    void bc_texture_cache_object::test<9>()
+    TEST_CASE("VayuBCTextureCache: Atomic byte accounting (addBytesWritten)", "[VayuBCTextureCache]")
     {
         auto dir = test_dir("accounting");
         std::filesystem::remove_all(dir);
@@ -397,20 +403,19 @@ namespace tut
 
         S64 initial_size = VayuBCTextureCache::instance().getCurrentSize();
         VayuBCTextureCache::instance().addBytesWritten(5000);
-        ensure_equals("addBytesWritten increases size",
-                      VayuBCTextureCache::instance().getCurrentSize(), initial_size + 5000);
+        UNSCOPED_INFO("addBytesWritten increases size");
+        CHECK(VayuBCTextureCache::instance().getCurrentSize() == initial_size + 5000);
 
         VayuBCTextureCache::instance().addBytesWritten(-2000);
-        ensure_equals("addBytesWritten with negative decreases size",
-                      VayuBCTextureCache::instance().getCurrentSize(), initial_size + 3000);
+        UNSCOPED_INFO("addBytesWritten with negative decreases size");
+        CHECK(VayuBCTextureCache::instance().getCurrentSize() == initial_size + 3000);
 
         VayuBCTextureCache::instance().clear();
         VayuBCTextureCache::instance().shutdown();
     }
 
     // Test 10: Directory self-healing on write if subdirectories were deleted externally
-    template<> template<>
-    void bc_texture_cache_object::test<10>()
+    TEST_CASE("VayuBCTextureCache: Directory self-healing on write if subdirectories were deleted externally", "[VayuBCTextureCache]")
     {
         auto dir = test_dir("self_healing_write");
         std::filesystem::remove_all(dir);
@@ -420,7 +425,8 @@ namespace tut
         for (char ch : std::string("0123456789abcdef"))
         {
             std::filesystem::remove_all(dir / std::string(1, ch));
-            ensure("Subdirectory deleted", !std::filesystem::exists(dir / std::string(1, ch)));
+            UNSCOPED_INFO("Subdirectory deleted");
+            REQUIRE_FALSE(std::filesystem::exists(dir / std::string(1, ch)));
         }
 
         LLUUID id;
@@ -436,21 +442,23 @@ namespace tut
 
         // Hex subdirectory must have been recreated
         std::string expected_subdir(1, id.asString()[0]);
-        ensure("Subdirectory was self-healed", std::filesystem::is_directory(dir / expected_subdir));
+        UNSCOPED_INFO("Subdirectory was self-healed");
+        CHECK(std::filesystem::is_directory(dir / expected_subdir));
 
         // Cache entry must be readable
         VayuBCCacheEntryHeader read_header;
         std::vector<U8> read_buffer;
         bool ok = VayuBCTextureCache::instance().readEntry(id, 0, read_header, read_buffer);
-        ensure("Read entry succeeds after self-healing write", ok);
-        ensure("Buffer matches", read_buffer == buffer);
+        UNSCOPED_INFO("Read entry succeeds after self-healing write");
+        CHECK(ok);
+        UNSCOPED_INFO("Buffer matches");
+        CHECK(read_buffer == buffer);
 
         VayuBCTextureCache::instance().clear();
     }
 
     // Test 11: Directory self-healing on clear if root cache dir was deleted externally
-    template<> template<>
-    void bc_texture_cache_object::test<11>()
+    TEST_CASE("VayuBCTextureCache: Directory self-healing on clear if root cache dir was deleted externally", "[VayuBCTextureCache]")
     {
         auto dir = test_dir("self_healing_clear");
         std::filesystem::remove_all(dir);
@@ -458,15 +466,18 @@ namespace tut
 
         // Simulate external purge destroying the entire cache directory
         std::filesystem::remove_all(dir);
-        ensure("Cache directory deleted", !std::filesystem::exists(dir));
+        UNSCOPED_INFO("Cache directory deleted");
+        CHECK_FALSE(std::filesystem::exists(dir));
 
         // clear() should restore the cache directory and 16 hex subdirectories
         VayuBCTextureCache::instance().clear();
 
-        ensure("Root cache directory restored", std::filesystem::is_directory(dir));
+        UNSCOPED_INFO("Root cache directory restored");
+        CHECK(std::filesystem::is_directory(dir));
         for (char ch : std::string("0123456789abcdef"))
         {
-            ensure("Subdirectory restored", std::filesystem::is_directory(dir / std::string(1, ch)));
+            UNSCOPED_INFO("Subdirectory restored");
+            REQUIRE(std::filesystem::is_directory(dir / std::string(1, ch)));
         }
 
         // Writes should succeed in the restored hierarchy
@@ -481,8 +492,10 @@ namespace tut
         VayuBCCacheEntryHeader read_header;
         std::vector<U8> read_buffer;
         bool ok = VayuBCTextureCache::instance().readEntry(id, 0, read_header, read_buffer);
-        ensure("Read entry succeeds in restored cache", ok);
-        ensure("Buffer matches", read_buffer == buffer);
+        UNSCOPED_INFO("Read entry succeeds in restored cache");
+        CHECK(ok);
+        UNSCOPED_INFO("Buffer matches");
+        CHECK(read_buffer == buffer);
 
         VayuBCTextureCache::instance().clear();
     }
@@ -490,8 +503,9 @@ namespace tut
     // Test 12: Dynamic sub-mip prefix slicing: Full-resolution cache entry (discard = 0)
     // satisfies coarser requests (discard = 1, discard = 2) with correctly truncated buffer
     // and adjusted header dimensions and mip counts.
-    template<> template<>
-    void bc_texture_cache_object::test<12>()
+    TEST_CASE("VayuBCTextureCache: Dynamic sub-mip prefix slicing: Full-resolution cache entry (discard = 0) satisfies coarser requests "
+              "(discard = 1, discard = 2) with correctly truncated buffer and adjusted header dimensions and mip counts.",
+              "[VayuBCTextureCache]")
     {
         auto dir = test_dir("sub_mip_slicing");
         std::filesystem::remove_all(dir);
@@ -527,13 +541,20 @@ namespace tut
             VayuBCCacheEntryHeader out_h;
             std::vector<U8> out_b;
             bool ok = VayuBCTextureCache::instance().readEntry(id, 0, out_h, out_b);
-            ensure("Read at discard 0 succeeds", ok);
-            ensure_equals("Discard 0 width", out_h.mWidth, 16u);
-            ensure_equals("Discard 0 height", out_h.mHeight, 16u);
-            ensure_equals("Discard 0 mips", out_h.mMipLevels, 3);
-            ensure_equals("Discard 0 discard level", (int)out_h.mDiscardLevel, 0);
-            ensure_equals("Discard 0 buffer size", out_b.size(), 168u);
-            ensure("Discard 0 buffer matches payload", out_b == payload);
+            UNSCOPED_INFO("Read at discard 0 succeeds");
+            CHECK(ok);
+            UNSCOPED_INFO("Discard 0 width");
+            CHECK(out_h.mWidth == 16u);
+            UNSCOPED_INFO("Discard 0 height");
+            CHECK(out_h.mHeight == 16u);
+            UNSCOPED_INFO("Discard 0 mips");
+            CHECK(out_h.mMipLevels == 3);
+            UNSCOPED_INFO("Discard 0 discard level");
+            CHECK((int)out_h.mDiscardLevel == 0);
+            UNSCOPED_INFO("Discard 0 buffer size");
+            REQUIRE(out_b.size() == 168u);
+            UNSCOPED_INFO("Discard 0 buffer matches payload");
+            CHECK(out_b == payload);
         }
 
         // Read at discard 1 (half res: 8x8, 2 mips, prefix size 40)
@@ -541,14 +562,21 @@ namespace tut
             VayuBCCacheEntryHeader out_h;
             std::vector<U8> out_b;
             bool ok = VayuBCTextureCache::instance().readEntry(id, 1, out_h, out_b);
-            ensure("Read at discard 1 succeeds via slicing", ok);
-            ensure_equals("Discard 1 width", out_h.mWidth, 8u);
-            ensure_equals("Discard 1 height", out_h.mHeight, 8u);
-            ensure_equals("Discard 1 mips", out_h.mMipLevels, 2);
-            ensure_equals("Discard 1 discard level", (int)out_h.mDiscardLevel, 1);
-            ensure_equals("Discard 1 buffer size", out_b.size(), 40u);
+            UNSCOPED_INFO("Read at discard 1 succeeds via slicing");
+            CHECK(ok);
+            UNSCOPED_INFO("Discard 1 width");
+            CHECK(out_h.mWidth == 8u);
+            UNSCOPED_INFO("Discard 1 height");
+            CHECK(out_h.mHeight == 8u);
+            UNSCOPED_INFO("Discard 1 mips");
+            CHECK(out_h.mMipLevels == 2);
+            UNSCOPED_INFO("Discard 1 discard level");
+            CHECK((int)out_h.mDiscardLevel == 1);
+            UNSCOPED_INFO("Discard 1 buffer size");
+            REQUIRE(out_b.size() == 40u);
             std::vector<U8> expected(payload.begin(), payload.begin() + 40);
-            ensure("Discard 1 buffer prefix matches", out_b == expected);
+            UNSCOPED_INFO("Discard 1 buffer prefix matches");
+            CHECK(out_b == expected);
         }
 
         // Read at discard 2 (quarter res: 4x4, 1 mip, prefix size 8)
@@ -556,14 +584,21 @@ namespace tut
             VayuBCCacheEntryHeader out_h;
             std::vector<U8> out_b;
             bool ok = VayuBCTextureCache::instance().readEntry(id, 2, out_h, out_b);
-            ensure("Read at discard 2 succeeds via slicing", ok);
-            ensure_equals("Discard 2 width", out_h.mWidth, 4u);
-            ensure_equals("Discard 2 height", out_h.mHeight, 4u);
-            ensure_equals("Discard 2 mips", out_h.mMipLevels, 1);
-            ensure_equals("Discard 2 discard level", (int)out_h.mDiscardLevel, 2);
-            ensure_equals("Discard 2 buffer size", out_b.size(), 8u);
+            UNSCOPED_INFO("Read at discard 2 succeeds via slicing");
+            CHECK(ok);
+            UNSCOPED_INFO("Discard 2 width");
+            CHECK(out_h.mWidth == 4u);
+            UNSCOPED_INFO("Discard 2 height");
+            CHECK(out_h.mHeight == 4u);
+            UNSCOPED_INFO("Discard 2 mips");
+            CHECK(out_h.mMipLevels == 1);
+            UNSCOPED_INFO("Discard 2 discard level");
+            CHECK((int)out_h.mDiscardLevel == 2);
+            UNSCOPED_INFO("Discard 2 buffer size");
+            REQUIRE(out_b.size() == 8u);
             std::vector<U8> expected(payload.begin(), payload.begin() + 8);
-            ensure("Discard 2 buffer prefix matches", out_b == expected);
+            UNSCOPED_INFO("Discard 2 buffer prefix matches");
+            CHECK(out_b == expected);
         }
 
         VayuBCTextureCache::instance().clear();
@@ -571,8 +606,9 @@ namespace tut
 
     // Test 13: Overwrite prevention rule: Higher resolution (lower discard) overwrites
     // lower resolution, but coarser resolution (higher discard) never overwrites higher resolution.
-    template<> template<>
-    void bc_texture_cache_object::test<13>()
+    TEST_CASE("VayuBCTextureCache: Overwrite prevention rule: Higher resolution (lower discard) overwrites lower resolution, but coarser "
+              "resolution (higher discard) never overwrites higher resolution.",
+              "[VayuBCTextureCache]")
     {
         auto dir = test_dir("overwrite_rule");
         std::filesystem::remove_all(dir);
@@ -600,9 +636,12 @@ namespace tut
         VayuBCCacheEntryHeader read_h;
         std::vector<U8> read_b;
         bool ok = VayuBCTextureCache::instance().readEntry(id, 0, read_h, read_b);
-        ensure("Entry still readable at discard 0", ok);
-        ensure_equals("Discard level is still 0", (int)read_h.mDiscardLevel, 0);
-        ensure("Payload was preserved", read_b == payload0);
+        UNSCOPED_INFO("Entry still readable at discard 0");
+        CHECK(ok);
+        UNSCOPED_INFO("Discard level is still 0");
+        CHECK((int)read_h.mDiscardLevel == 0);
+        UNSCOPED_INFO("Payload was preserved");
+        CHECK(read_b == payload0);
 
         // Now test the opposite: start with discard 2, then write discard 0
         LLUUID id2;
@@ -617,9 +656,12 @@ namespace tut
 
         read_b.clear();
         ok = VayuBCTextureCache::instance().readEntry(id2, 0, read_h, read_b);
-        ensure("Higher-resolution write overwrote lower-resolution entry", ok);
-        ensure_equals("Discard level upgraded to 0", (int)read_h.mDiscardLevel, 0);
-        ensure("Payload upgraded to full-res", read_b == payload0);
+        UNSCOPED_INFO("Higher-resolution write overwrote lower-resolution entry");
+        CHECK(ok);
+        UNSCOPED_INFO("Discard level upgraded to 0");
+        CHECK((int)read_h.mDiscardLevel == 0);
+        UNSCOPED_INFO("Payload upgraded to full-res");
+        CHECK(read_b == payload0);
 
         VayuBCTextureCache::instance().clear();
     }
@@ -632,8 +674,11 @@ namespace tut
     // per-discard filename form, the getFilePath overload and the three-name probe, and
     // no file on disk uses the form. The test kept asserting it anyway, so it failed
     // against the current code. Only the stale-version half was live.
-    template<> template<>
-    void bc_texture_cache_object::test<14>()
+    TEST_CASE("VayuBCTextureCache: This used to share a test body with a \"<uuid>_<discard>.bc1\" legacy read fallback. That fallback "
+              "never existed in the read path: commit 94c2eb0745 removed the per-discard filename form, the getFilePath overload and the "
+              "three-name probe, and no file on disk uses the form. The test kept asserting it anyway, so it failed against the current "
+              "code. Only the stale-version half was live.",
+              "[VayuBCTextureCache]")
     {
         auto dir = test_dir("stale_version");
         std::filesystem::remove_all(dir);
@@ -676,25 +721,32 @@ namespace tut
         const auto             good_path = write_raw(good, VayuBCTextureCache::kFormatVersion, payload);
         VayuBCCacheEntryHeader out_h;
         std::vector<U8> out_b;
-        ensure("same-version raw entry is readable", VayuBCTextureCache::instance().readEntry(good, 0, out_h, out_b));
-        ensure("same-version payload round-trips", out_b == payload);
+        UNSCOPED_INFO("same-version raw entry is readable");
+        REQUIRE(VayuBCTextureCache::instance().readEntry(good, 0, out_h, out_b));
+        UNSCOPED_INFO("same-version payload round-trips");
+        CHECK(out_b == payload);
 
         // An older version must be refused and the file reaped.
         LLUUID stale;
         stale.generate();
         const auto stale_path = write_raw(stale, VayuBCTextureCache::kFormatVersion - 1, payload);
-        ensure("Stale version file exists before read", std::filesystem::exists(stale_path));
+        UNSCOPED_INFO("Stale version file exists before read");
+        CHECK(std::filesystem::exists(stale_path));
 
         out_b.clear();
-        ensure("Stale version file rejected", !VayuBCTextureCache::instance().readEntry(stale, 0, out_h, out_b));
-        ensure("Stale version file removed from disk", !std::filesystem::exists(stale_path));
+        UNSCOPED_INFO("Stale version file rejected");
+        CHECK_FALSE(VayuBCTextureCache::instance().readEntry(stale, 0, out_h, out_b));
+        UNSCOPED_INFO("Stale version file removed from disk");
+        CHECK_FALSE(std::filesystem::exists(stale_path));
 
         // So must a file claiming our magic with a future version.
         LLUUID future;
         future.generate();
         const auto future_path = write_raw(future, VayuBCTextureCache::kFormatVersion + 1, payload);
-        ensure("Future version file rejected", !VayuBCTextureCache::instance().readEntry(future, 0, out_h, out_b));
-        ensure("Future version file removed from disk", !std::filesystem::exists(future_path));
+        UNSCOPED_INFO("Future version file rejected");
+        CHECK_FALSE(VayuBCTextureCache::instance().readEntry(future, 0, out_h, out_b));
+        UNSCOPED_INFO("Future version file removed from disk");
+        CHECK_FALSE(std::filesystem::exists(future_path));
 
         // And one whose magic is wrong, which must not be served or left behind either.
         LLUUID bogus;
@@ -710,17 +762,19 @@ namespace tut
             out.write(reinterpret_cast<const char*>(&fh), sizeof(fh));
             out.write(reinterpret_cast<const char*>(payload.data()), (std::streamsize)payload.size());
         }
-        ensure("Bad-magic file rejected", !VayuBCTextureCache::instance().readEntry(bogus, 0, out_h, out_b));
-        ensure("Bad-magic file removed from disk", !std::filesystem::exists(bogus_path));
+        UNSCOPED_INFO("Bad-magic file rejected");
+        CHECK_FALSE(VayuBCTextureCache::instance().readEntry(bogus, 0, out_h, out_b));
+        UNSCOPED_INFO("Bad-magic file removed from disk");
+        CHECK_FALSE(std::filesystem::exists(bogus_path));
 
-        ensure("Surviving good entry untouched", std::filesystem::exists(good_path));
+        UNSCOPED_INFO("Surviving good entry untouched");
+        CHECK(std::filesystem::exists(good_path));
 
         VayuBCTextureCache::instance().clear();
     }
 
     // Test 15: Single-file naming: written files have naming <uuid>.bc without discard suffix
-    template<> template<>
-    void bc_texture_cache_object::test<15>()
+    TEST_CASE("VayuBCTextureCache: Single-file naming: written files have naming <uuid>.bc without discard suffix", "[VayuBCTextureCache]")
     {
         auto dir = test_dir("single_file_naming");
         std::filesystem::remove_all(dir);
@@ -738,8 +792,10 @@ namespace tut
         std::filesystem::path new_path = dir / expected_subdir / (id.asString() + ".bc1");
         std::filesystem::path old_path = dir / expected_subdir / (id.asString() + "_0.bc1");
 
-        ensure("File exists as <uuid>.bc1", std::filesystem::exists(new_path));
-        ensure("File does NOT exist as <uuid>_0.bc1", !std::filesystem::exists(old_path));
+        UNSCOPED_INFO("File exists as <uuid>.bc1");
+        CHECK(std::filesystem::exists(new_path));
+        UNSCOPED_INFO("File does NOT exist as <uuid>_0.bc1");
+        CHECK_FALSE(std::filesystem::exists(old_path));
 
         VayuBCTextureCache::instance().clear();
     }
@@ -748,8 +804,9 @@ namespace tut
     // When a high-resolution entry (discard 0) is written, a subsequent
     // lower-resolution entry (discard 2) written does not
     // overwrite or replace the high-resolution entry on disk.
-    template<> template<>
-    void bc_texture_cache_object::test<16>()
+    TEST_CASE("VayuBCTextureCache: Direct filesystem overwrite protection: When a high-resolution entry (discard 0) is written, a "
+              "subsequent lower-resolution entry (discard 2) written does not overwrite or replace the high-resolution entry on disk.",
+              "[VayuBCTextureCache]")
     {
         auto dir = test_dir("direct_overwrite_protection");
         std::filesystem::remove_all(dir);
@@ -779,9 +836,12 @@ namespace tut
         VayuBCCacheEntryHeader read_h;
         std::vector<U8> read_b;
         bool ok = VayuBCTextureCache::instance().readEntry(id, 0, read_h, read_b);
-        ensure("High resolution entry survived concurrent queue attempt", ok);
-        ensure_equals("Discard level is 0", (int)read_h.mDiscardLevel, 0);
-        ensure("Payload matches high-res payload", read_b == payload0);
+        UNSCOPED_INFO("High resolution entry survived concurrent queue attempt");
+        CHECK(ok);
+        UNSCOPED_INFO("Discard level is 0");
+        CHECK((int)read_h.mDiscardLevel == 0);
+        UNSCOPED_INFO("Payload matches high-res payload");
+        CHECK(read_b == payload0);
 
         VayuBCTextureCache::instance().clear();
     }
@@ -790,8 +850,10 @@ namespace tut
     // Verifies that a single UUID written as both color (e.g. BC1) and normal (BC5)
     // coexists on disk under <uuid>.bc1 and <uuid>.bc5n, neither overwrites the other,
     // and each reads back with matching format.
-    template<> template<>
-    void bc_texture_cache_object::test<17>()
+    TEST_CASE("VayuBCTextureCache: Coexistence of form + role for the same UUID. Verifies that a single UUID written as both color (e.g. "
+              "BC1) and normal (BC5) coexists on disk under <uuid>.bc1 and <uuid>.bc5n, neither overwrites the other, and each reads back "
+              "with matching format.",
+              "[VayuBCTextureCache]")
     {
         auto dir = test_dir("coexistence");
         std::filesystem::remove_all(dir);
@@ -821,24 +883,32 @@ namespace tut
         std::filesystem::path bc_path = dir / expected_subdir / (id.asString() + ".bc1");
         std::filesystem::path bc5_path = dir / expected_subdir / (id.asString() + ".bc5n");
 
-        ensure("File exists as <uuid>.bc1", std::filesystem::exists(bc_path));
-        ensure("File exists as <uuid>.bc5n", std::filesystem::exists(bc5_path));
+        UNSCOPED_INFO("File exists as <uuid>.bc1");
+        CHECK(std::filesystem::exists(bc_path));
+        UNSCOPED_INFO("File exists as <uuid>.bc5n");
+        CHECK(std::filesystem::exists(bc5_path));
 
         // Read back color entry
         VayuBCCacheEntryHeader read_color_h;
         std::vector<U8> read_color_b;
         bool ok_color = VayuBCTextureCache::instance().readEntry(id, 0, read_color_h, read_color_b, ".bc", VayuBCTextureCache::kFormatBC1);
-        ensure("Color entry read succeeded", ok_color);
-        ensure_equals("Color format is BC1", read_color_h.mFormat, VayuBCTextureCache::kFormatBC1);
-        ensure("Color payload matches", read_color_b == payload_color);
+        UNSCOPED_INFO("Color entry read succeeded");
+        CHECK(ok_color);
+        UNSCOPED_INFO("Color format is BC1");
+        CHECK(read_color_h.mFormat == VayuBCTextureCache::kFormatBC1);
+        UNSCOPED_INFO("Color payload matches");
+        CHECK(read_color_b == payload_color);
 
         // Read back normal entry
         VayuBCCacheEntryHeader read_normal_h;
         std::vector<U8> read_normal_b;
         bool ok_normal = VayuBCTextureCache::instance().readEntry(id, 0, read_normal_h, read_normal_b, ".bc5", VayuBCTextureCache::kFormatBC5, VayuBCTextureCache::kRoleNormal);
-        ensure("Normal entry read succeeded", ok_normal);
-        ensure_equals("Normal format is BC5", read_normal_h.mFormat, VayuBCTextureCache::kFormatBC5);
-        ensure("Normal payload matches", read_normal_b == payload_normal);
+        UNSCOPED_INFO("Normal entry read succeeded");
+        CHECK(ok_normal);
+        UNSCOPED_INFO("Normal format is BC5");
+        CHECK(read_normal_h.mFormat == VayuBCTextureCache::kFormatBC5);
+        UNSCOPED_INFO("Normal payload matches");
+        CHECK(read_normal_b == payload_normal);
 
         // Same-format dual-role: an albedo that also encodes BC7 must not share a
         // file with a legacy-normal BC7 encode of the same UUID. They coexist as
@@ -862,20 +932,28 @@ namespace tut
         VayuBCTextureCache::instance().shutdown();
 
         std::string subdir2(1, id2.asString()[0]);
-        ensure("Color BC7 file exists as <uuid>.bc7",
-               std::filesystem::exists(dir / subdir2 / (id2.asString() + ".bc7")));
-        ensure("Normal BC7 file exists as <uuid>.bc7n",
-               std::filesystem::exists(dir / subdir2 / (id2.asString() + ".bc7n")));
+        UNSCOPED_INFO("Color BC7 file exists as <uuid>.bc7");
+        CHECK(std::filesystem::exists(dir / subdir2 / (id2.asString() + ".bc7")));
+        UNSCOPED_INFO("Normal BC7 file exists as <uuid>.bc7n");
+        CHECK(std::filesystem::exists(dir / subdir2 / (id2.asString() + ".bc7n")));
 
         VayuBCCacheEntryHeader read_bc7_h;
         std::vector<U8> read_bc7_b;
         bool ok_bc7 = VayuBCTextureCache::instance().readEntry(id2, 0, read_bc7_h, read_bc7_b, ".bc7", VayuBCTextureCache::kFormatBC7, VayuBCTextureCache::kRoleColor);
-        ensure("Color BC7 reads back independently", ok_bc7 && read_bc7_b == payload_color7);
+        {
+            INFO("Color BC7 reads back independently");
+            CHECK(ok_bc7);
+            CHECK(read_bc7_b == payload_color7);
+        }
 
         VayuBCCacheEntryHeader read_legacy_h;
         std::vector<U8> read_legacy_b;
         bool ok_legacy = VayuBCTextureCache::instance().readEntry(id2, 0, read_legacy_h, read_legacy_b, ".bc7", VayuBCTextureCache::kFormatBC7, VayuBCTextureCache::kRoleNormal);
-        ensure("Normal BC7 reads back independently of color BC7", ok_legacy && read_legacy_b == payload_legacy);
+        {
+            INFO("Normal BC7 reads back independently of color BC7");
+            CHECK(ok_legacy);
+            CHECK(read_legacy_b == payload_legacy);
+        }
 
         VayuBCTextureCache::instance().clear();
     }
@@ -885,9 +963,11 @@ namespace tut
     // decide whether it needs to encode at all, then reads the raw entry to merge the
     // coarser tail. If either disagreed with readEntry's own validation, the probe could
     // report a hit for an entry the real reader refuses, or miss one it would serve.
-    template<>
-    template<>
-    void bc_texture_cache_object::test<18>()
+    TEST_CASE("VayuBCTextureCache: readEntryHeader / readEntryRaw must agree with readEntry about what exists. These back the incremental "
+              "append path's cache probe: the worker stats a header to decide whether it needs to encode at all, then reads the raw entry "
+              "to merge the coarser tail. If either disagreed with readEntry's own validation, the probe could report a hit for an entry "
+              "the real reader refuses, or miss one it would serve.",
+              "[VayuBCTextureCache]")
     {
         auto dir = test_dir("header_raw_probe");
         std::filesystem::remove_all(dir);
@@ -906,43 +986,50 @@ namespace tut
         VayuBCCacheEntryHeader h_hdr;
         const bool             ok_hdr =
             VayuBCTextureCache::instance().readEntryHeader(id, VayuBCTextureCache::kFormatBC1, VayuBCTextureCache::kRoleColor, h_hdr);
-        ensure("Header probe finds a written entry", ok_hdr);
-        ensure_equals("Header probe reports the discard level", (int)h_hdr.mDiscardLevel, 2);
-        ensure_equals("Header probe reports the mip count", h_hdr.mMipLevels, 5);
-        ensure_equals("Header probe reports the format", (int)h_hdr.mFormat, (int)VayuBCTextureCache::kFormatBC1);
+        UNSCOPED_INFO("Header probe finds a written entry");
+        CHECK(ok_hdr);
+        UNSCOPED_INFO("Header probe reports the discard level");
+        CHECK((int)h_hdr.mDiscardLevel == 2);
+        UNSCOPED_INFO("Header probe reports the mip count");
+        CHECK(h_hdr.mMipLevels == 5);
+        UNSCOPED_INFO("Header probe reports the format");
+        CHECK((int)h_hdr.mFormat == (int)VayuBCTextureCache::kFormatBC1);
 
         VayuBCCacheEntryHeader h_raw;
         std::vector<U8>        b_raw;
         const bool             ok_raw =
             VayuBCTextureCache::instance().readEntryRaw(id, VayuBCTextureCache::kFormatBC1, VayuBCTextureCache::kRoleColor, h_raw, b_raw);
-        ensure("Raw probe finds the entry", ok_raw);
-        ensure("Raw probe returns the exact payload", b_raw == payload);
-        ensure_equals("Raw probe reports the discard level", (int)h_raw.mDiscardLevel, 2);
+        UNSCOPED_INFO("Raw probe finds the entry");
+        CHECK(ok_raw);
+        UNSCOPED_INFO("Raw probe returns the exact payload");
+        CHECK(b_raw == payload);
+        UNSCOPED_INFO("Raw probe reports the discard level");
+        CHECK((int)h_raw.mDiscardLevel == 2);
 
         // A format the entry was NOT written under must miss on both probes. This is the
         // shape of the bug that disabled the append path: probe .bc7 against a file really
         // stored as .bc1, miss, and re-encode the whole pyramid on every refinement.
         VayuBCCacheEntryHeader h_wrong;
-        ensure(
-            "Header probe misses on the wrong format",
-            !VayuBCTextureCache::instance().readEntryHeader(id, VayuBCTextureCache::kFormatBC7, VayuBCTextureCache::kRoleColor, h_wrong));
+        UNSCOPED_INFO("Header probe misses on the wrong format");
+        REQUIRE_FALSE(
+            VayuBCTextureCache::instance().readEntryHeader(id, VayuBCTextureCache::kFormatBC7, VayuBCTextureCache::kRoleColor, h_wrong));
 
         std::vector<U8> b_wrong;
-        ensure("Raw probe misses on the wrong format",
-               !VayuBCTextureCache::instance().readEntryRaw(id, VayuBCTextureCache::kFormatBC7, VayuBCTextureCache::kRoleColor, h_wrong,
-                                                            b_wrong));
+        UNSCOPED_INFO("Raw probe misses on the wrong format");
+        CHECK_FALSE(VayuBCTextureCache::instance().readEntryRaw(id, VayuBCTextureCache::kFormatBC7, VayuBCTextureCache::kRoleColor, h_wrong,
+                                                                b_wrong));
 
         // Colour and normal namespaces are separate files.
-        ensure(
-            "Header probe misses on the wrong role",
-            !VayuBCTextureCache::instance().readEntryHeader(id, VayuBCTextureCache::kFormatBC1, VayuBCTextureCache::kRoleNormal, h_wrong));
+        UNSCOPED_INFO("Header probe misses on the wrong role");
+        CHECK_FALSE(
+            VayuBCTextureCache::instance().readEntryHeader(id, VayuBCTextureCache::kFormatBC1, VayuBCTextureCache::kRoleNormal, h_wrong));
 
         // An absent UUID must miss cleanly rather than yield a zeroed header.
         LLUUID absent;
         absent.generate();
-        ensure("Header probe misses on an absent entry",
-               !VayuBCTextureCache::instance().readEntryHeader(absent, VayuBCTextureCache::kFormatBC1, VayuBCTextureCache::kRoleColor,
-                                                               h_wrong));
+        UNSCOPED_INFO("Header probe misses on an absent entry");
+        CHECK_FALSE(VayuBCTextureCache::instance().readEntryHeader(absent, VayuBCTextureCache::kFormatBC1, VayuBCTextureCache::kRoleColor,
+                                                                   h_wrong));
 
         VayuBCTextureCache::instance().clear();
         // shutdown(), not just clear(): it closes and resets the write pool. Leaving a live
@@ -962,9 +1049,11 @@ namespace tut
     // test would be asserting the wrong thing.
     // A 16x16 BC1 base is 4x4 blocks = 128 bytes; each halving is 4x fewer, floor 1 block:
     //   mip 0 (16x16) 128 | mip 1 (8x8) 32 | mip 2 (4x4) 8 | mip 3 (2x2) 8 | mip 4 (1x1) 8
-    template<>
-    template<>
-    void bc_texture_cache_object::test<19>()
+    TEST_CASE("VayuBCTextureCache: The payload uses REAL BC1 block geometry, not arbitrary bytes: readEntry's mip fallback recomputes "
+              "per-level sizes with calcSubBufferBytes(), so a pyramid whose stored byte counts do not match the format is not readable at "
+              "coarser levels and the test would be asserting the wrong thing. A 16x16 BC1 base is 4x4 blocks = 128 bytes; each halving is "
+              "4x fewer, floor 1 block: mip 0 (16x16) 128 | mip 1 (8x8) 32 | mip 2 (4x4) 8 | mip 3 (2x2) 8 | mip 4 (1x1) 8",
+              "[VayuBCTextureCache]")
     {
         auto dir = test_dir("append_pyramid");
         std::filesystem::remove_all(dir);
@@ -1020,20 +1109,24 @@ namespace tut
             hn.mWidth                 = llmax(1u, base >> step);
             hn.mHeight                = hn.mWidth;
 
-            ensure("append succeeds at each refinement step",
-                   VayuBCTextureCache::instance().appendEntry(id, step, hn, make_buffer(new_mip), 1));
+            UNSCOPED_INFO("append succeeds at each refinement step");
+            REQUIRE(VayuBCTextureCache::instance().appendEntry(id, step, hn, make_buffer(new_mip), 1));
             VayuBCTextureCache::instance().waitForPendingWrites();
 
             VayuBCCacheEntryHeader got;
             std::vector<U8>        buf;
-            ensure(
-                "entry readable after append",
+            UNSCOPED_INFO("entry readable after append");
+            REQUIRE(
                 VayuBCTextureCache::instance().readEntryRaw(id, VayuBCTextureCache::kFormatBC1, VayuBCTextureCache::kRoleColor, got, buf));
 
-            ensure("appended buffer matches the expected pyramid", buf == expected);
-            ensure_equals("header discard level tracks the finest mip", (int)got.mDiscardLevel, (int)step);
-            ensure_equals("header mip count tracks the pyramid height", got.mMipLevels, (base_discard + 2) - step);
-            ensure_equals("header width describes the new level 0", (int)got.mWidth, (int)(llmax(1u, base >> step)));
+            UNSCOPED_INFO("appended buffer matches the expected pyramid");
+            REQUIRE(buf == expected);
+            UNSCOPED_INFO("header discard level tracks the finest mip");
+            REQUIRE((int)got.mDiscardLevel == (int)step);
+            UNSCOPED_INFO("header mip count tracks the pyramid height");
+            REQUIRE(got.mMipLevels == (base_discard + 2) - step);
+            UNSCOPED_INFO("header width describes the new level 0");
+            REQUIRE((int)got.mWidth == (int)(llmax(1u, base >> step)));
         }
 
         // The finished file must be a single entry holding the whole pyramid, and it must
@@ -1042,23 +1135,29 @@ namespace tut
         size_t want_total = 0;
         for (S32 l = 0; l <= 4; ++l)
             want_total += level_bytes(l);
-        ensure_equals("one file holds the entire pyramid", (int)expected.size(), (int)want_total);
+        UNSCOPED_INFO("one file holds the entire pyramid");
+        REQUIRE((int)expected.size() == (int)want_total);
         for (S32 d = 0; d <= base_discard; ++d)
         {
             VayuBCCacheEntryHeader rh;
             std::vector<U8>        rb;
-            ensure("finished pyramid serves every discard level", VayuBCTextureCache::instance().readEntry(id, d, rh, rb));
-            ensure_equals("served level reports its own discard level", (int)rh.mDiscardLevel, (int)d);
-            ensure("served level returns a non-empty slice", !rb.empty());
+            UNSCOPED_INFO("finished pyramid serves every discard level");
+            REQUIRE(VayuBCTextureCache::instance().readEntry(id, d, rh, rb));
+            UNSCOPED_INFO("served level reports its own discard level");
+            REQUIRE((int)rh.mDiscardLevel == (int)d);
+            UNSCOPED_INFO("served level returns a non-empty slice");
+            REQUIRE_FALSE(rb.empty());
         }
 
         // And a coarse read must reproduce exactly the bytes that were appended for it,
         // proving the merge spliced at the right offset rather than merely appending.
         VayuBCCacheEntryHeader rh;
         std::vector<U8>        rb;
-        ensure("coarse read of the first-sight level hits", VayuBCTextureCache::instance().readEntry(id, base_discard, rh, rb));
+        UNSCOPED_INFO("coarse read of the first-sight level hits");
+        REQUIRE(VayuBCTextureCache::instance().readEntry(id, base_discard, rh, rb));
         std::vector<U8> want_coarse(expected.begin(), expected.begin() + (int)(level_bytes(3) + level_bytes(4)));
-        ensure("coarse slice is byte-exact", rb == want_coarse);
+        UNSCOPED_INFO("coarse slice is byte-exact");
+        CHECK(rb == want_coarse);
 
         VayuBCTextureCache::instance().clear();
         // shutdown(), not just clear(): it closes and resets the write pool. Leaving a live
@@ -1072,9 +1171,10 @@ namespace tut
     // non-contiguous gap, a finer-or-equal level, degenerate inputs, and a missing entry.
     // Each refusal must leave the existing entry byte-identical so the caller's fallback
     // full write is always safe.
-    template<>
-    template<>
-    void bc_texture_cache_object::test<20>()
+    TEST_CASE("VayuBCTextureCache: appendEntry must refuse anything that would corrupt the pyramid -- a non-contiguous gap, a "
+              "finer-or-equal level, degenerate inputs, and a missing entry. Each refusal must leave the existing entry byte-identical so "
+              "the caller's fallback full write is always safe.",
+              "[VayuBCTextureCache]")
     {
         auto dir = test_dir("append_guards");
         std::filesystem::remove_all(dir);
@@ -1095,8 +1195,8 @@ namespace tut
         {
             VayuBCCacheEntryHeader h;
             std::vector<U8>        b;
-            ensure("entry still readable",
-                   VayuBCTextureCache::instance().readEntryRaw(id, VayuBCTextureCache::kFormatBC1, VayuBCTextureCache::kRoleColor, h, b));
+            UNSCOPED_INFO("entry still readable");
+            REQUIRE(VayuBCTextureCache::instance().readEntryRaw(id, VayuBCTextureCache::kFormatBC1, VayuBCTextureCache::kRoleColor, h, b));
             return b == original;
         };
 
@@ -1105,48 +1205,61 @@ namespace tut
         VayuBCCacheEntryHeader gap = make_header(1, 2);
         gap.mDiscardLevel          = 1;
         gap.mMipLevels             = 1;
-        ensure("non-contiguous append is refused", !VayuBCTextureCache::instance().appendEntry(id, 1, gap, make_buffer({ 0xEE }), 1));
-        ensure("refusal left the entry untouched (non-contiguous)", still_original());
+        UNSCOPED_INFO("non-contiguous append is refused");
+        CHECK_FALSE(VayuBCTextureCache::instance().appendEntry(id, 1, gap, make_buffer({ 0xEE }), 1));
+        UNSCOPED_INFO("refusal left the entry untouched (non-contiguous)");
+        CHECK(still_original());
 
         // Finer-or-equal: the existing entry already carries this level or finer.
         VayuBCCacheEntryHeader same = make_header(1, 2);
         same.mDiscardLevel          = 3;
         same.mMipLevels             = 1;
-        ensure("equal-level append is refused", !VayuBCTextureCache::instance().appendEntry(id, 3, same, make_buffer({ 0xEE }), 1));
-        ensure("refusal left the entry untouched (equal level)", still_original());
+        UNSCOPED_INFO("equal-level append is refused");
+        CHECK_FALSE(VayuBCTextureCache::instance().appendEntry(id, 3, same, make_buffer({ 0xEE }), 1));
+        UNSCOPED_INFO("refusal left the entry untouched (equal level)");
+        CHECK(still_original());
 
         VayuBCCacheEntryHeader coarser = make_header(1, 2);
         coarser.mDiscardLevel          = 4;
         coarser.mMipLevels             = 1;
-        ensure("coarser append is refused", !VayuBCTextureCache::instance().appendEntry(id, 4, coarser, make_buffer({ 0xEE }), 1));
-        ensure("refusal left the entry untouched (coarser)", still_original());
+        UNSCOPED_INFO("coarser append is refused");
+        CHECK_FALSE(VayuBCTextureCache::instance().appendEntry(id, 4, coarser, make_buffer({ 0xEE }), 1));
+        UNSCOPED_INFO("refusal left the entry untouched (coarser)");
+        CHECK(still_original());
 
         VayuBCCacheEntryHeader h2 = make_header(1, 2);
         h2.mDiscardLevel          = 2;
         h2.mMipLevels             = 1;
-        ensure("empty mip buffer is refused", !VayuBCTextureCache::instance().appendEntry(id, 2, h2, make_buffer({}), 1));
-        ensure("zero mip count is refused", !VayuBCTextureCache::instance().appendEntry(id, 2, h2, make_buffer({ 0xEE }), 0));
-        ensure("refusal left the entry untouched (degenerate)", still_original());
+        UNSCOPED_INFO("empty mip buffer is refused");
+        CHECK_FALSE(VayuBCTextureCache::instance().appendEntry(id, 2, h2, make_buffer({}), 1));
+        UNSCOPED_INFO("zero mip count is refused");
+        CHECK_FALSE(VayuBCTextureCache::instance().appendEntry(id, 2, h2, make_buffer({ 0xEE }), 0));
+        UNSCOPED_INFO("refusal left the entry untouched (degenerate)");
+        CHECK(still_original());
 
         LLUUID absent;
         absent.generate();
-        ensure("append to an absent entry is refused",
-               !VayuBCTextureCache::instance().appendEntry(absent, 2, h2, make_buffer({ 0xEE }), 1));
+        UNSCOPED_INFO("append to an absent entry is refused");
+        CHECK_FALSE(VayuBCTextureCache::instance().appendEntry(absent, 2, h2, make_buffer({ 0xEE }), 1));
 
         // A legitimate contiguous append must still work, proving the guards are not
         // simply rejecting everything.
-        ensure("contiguous append still accepted afterwards",
-               VayuBCTextureCache::instance().appendEntry(id, 2, h2, make_buffer({ 0xEE }), 1));
+        UNSCOPED_INFO("contiguous append still accepted afterwards");
+        CHECK(VayuBCTextureCache::instance().appendEntry(id, 2, h2, make_buffer({ 0xEE }), 1));
         VayuBCTextureCache::instance().waitForPendingWrites();
 
         VayuBCCacheEntryHeader h;
         std::vector<U8>        b;
-        ensure("entry readable after the good append",
-               VayuBCTextureCache::instance().readEntryRaw(id, VayuBCTextureCache::kFormatBC1, VayuBCTextureCache::kRoleColor, h, b));
-        ensure_equals("good append extended the buffer", (int)b.size(), (int)original.size() + 1);
-        ensure_equals("good append kept the original prefix", (int)b[0], (int)original[0]);
-        ensure_equals("good append appended at the tail", (int)b.back(), 0xEE);
-        ensure_equals("good append lowered the discard level", (int)h.mDiscardLevel, 2);
+        UNSCOPED_INFO("entry readable after the good append");
+        REQUIRE(VayuBCTextureCache::instance().readEntryRaw(id, VayuBCTextureCache::kFormatBC1, VayuBCTextureCache::kRoleColor, h, b));
+        UNSCOPED_INFO("good append extended the buffer");
+        REQUIRE((int)b.size() == (int)original.size() + 1);
+        UNSCOPED_INFO("good append kept the original prefix");
+        CHECK((int)b[0] == (int)original[0]);
+        UNSCOPED_INFO("good append appended at the tail");
+        CHECK((int)b.back() == 0xEE);
+        UNSCOPED_INFO("good append lowered the discard level");
+        CHECK((int)h.mDiscardLevel == 2);
 
         VayuBCTextureCache::instance().clear();
         // shutdown(), not just clear(): it closes and resets the write pool. Leaving a live

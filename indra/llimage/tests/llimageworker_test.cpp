@@ -36,7 +36,7 @@
 // for lltrace class
 #include "../llcommon/lltrace.h"
 // Tut header
-#include "../test/lltut.h"
+#include <catch2/catch_test_macros.hpp>
 #include <filesystem>
 
 // -------------------------------------------------------------------------------------------
@@ -144,8 +144,6 @@ const std::string& LLImage::getLastThreadError() { static std::string msg; retur
 // TUT
 // -------------------------------------------------------------------------------------------
 
-namespace tut
-{
 namespace
 {
     // Test wrapper declarations
@@ -243,36 +241,30 @@ namespace
         }
     };
 
-    // Tut templating thingamagic: test group, object and test instance
-    typedef test_group<imagedecodethread_test> imagedecodethread_t;
-    typedef imagedecodethread_t::object imagedecodethread_object_t;
-    tut::imagedecodethread_t tut_imagedecodethread("LLImageDecodeThread");
-}
 
     // ---------------------------------------------------------------------------------------
     // Test functions
     // Notes:
     // * Test as many as you possibly can without requiring a full blown simulation of everything
-    // * The tests are executed in sequence so the test instance state may change between calls
-    // * Remember that you cannot test private methods with tut
     // ---------------------------------------------------------------------------------------
 
     // ---------------------------------------------------------------------------------------
     // Test the LLImageDecodeThread interface
     // ---------------------------------------------------------------------------------------
 
-    template<> template<>
-    void imagedecodethread_object_t::test<1>()
+    TEST_CASE_METHOD(imagedecodethread_test, "LLImageDecodeThread: a threaded decodeImage calls the responder", "[LLImageDecodeThread]")
     {
         // Test a *threaded* instance of the class
         mThread = new LLImageDecodeThread(true);
-        ensure("LLImageDecodeThread: threaded constructor failed", mThread != NULL);
+        UNSCOPED_INFO("LLImageDecodeThread: threaded constructor failed");
+        REQUIRE(mThread != NULL);
         // Insert something in the queue
         bool done = false;
         LLImageDecodeThread::handle_t decodeHandle =
             mThread->decodeImage(NULL, 0, false, true, new responder_test(&done), LLUUID::null, EVayuTextureJob::Unknown);
         // Verifies we get back a valid handle
-        ensure("LLImageDecodeThread:  threaded decodeImage(), returned handle is null", decodeHandle != 0);
+        UNSCOPED_INFO("LLImageDecodeThread:  threaded decodeImage(), returned handle is null");
+        CHECK(decodeHandle != 0);
         // Wait till the thread has time to handle the work order (though it doesn't do much per work order...)
         const U32 INCREMENT_TIME = 500;             // 500 milliseconds
         const U32 MAX_TIME = 20 * INCREMENT_TIME;   // Do the loop 20 times max, i.e. wait 10 seconds but no more
@@ -283,11 +275,13 @@ namespace
             total_time += INCREMENT_TIME;
         }
         // Verifies that the responder has now been called
-        ensure("LLImageDecodeThread: threaded work unit not processed", done == true);
+        UNSCOPED_INFO("LLImageDecodeThread: threaded work unit not processed");
+        CHECK(done);
     }
 
-    template<> template<>
-    void imagedecodethread_object_t::test<2>()
+    TEST_CASE_METHOD(imagedecodethread_test,
+                     "LLImageDecodeThread: a coarse decode attaches its compressed blocks and writes the cache entry",
+                     "[LLImageDecodeThread]")
     {
         // Test coarse decode (discard > 0) attaches compressed blocks in RAM and writes entry to cache
         auto test_dir = std::filesystem::temp_directory_path() / "vayu_llimageworker_test_coarse";
@@ -299,7 +293,8 @@ namespace
         VayuBCTextureCache::instance().initCache(test_dir, 1024 * 1024);
 
         mThread = new LLImageDecodeThread(true);
-        ensure("LLImageDecodeThread: constructor succeeded", mThread != NULL);
+        UNSCOPED_INFO("LLImageDecodeThread: constructor succeeded");
+        REQUIRE(mThread != NULL);
 
         LLUUID test_id;
         test_id.generate();
@@ -313,7 +308,8 @@ namespace
         // Explicitly claim Albedo: an Unknown job must never compress.
         LLImageDecodeThread::handle_t handle = mThread->decodeImage(
             mock_image, 2, false, true, new responder_test(&done, &success, &decoded_raw), test_id, EVayuTextureJob::Albedo);
-        ensure("Valid handle for coarse decode", handle != 0);
+        UNSCOPED_INFO("Valid handle for coarse decode");
+        CHECK(handle != 0);
 
         const U32 INCREMENT_TIME = 50;
         const U32 MAX_TIME = 100 * INCREMENT_TIME;
@@ -324,11 +320,16 @@ namespace
             total_time += INCREMENT_TIME;
         }
 
-        ensure("Coarse decode work unit completed", done == true);
-        ensure("Decode succeeded", success == true);
-        ensure("Raw image returned to responder", decoded_raw.notNull());
-        ensure("Coarse decode attaches compressed blocks in RAM", decoded_raw->getBlockCompressionResult() != nullptr);
-        ensure_equals("Discard level in RAM block width matches", decoded_raw->getBlockCompressionResult()->mWidth, 16u);
+        UNSCOPED_INFO("Coarse decode work unit completed");
+        CHECK(done);
+        UNSCOPED_INFO("Decode succeeded");
+        CHECK(success);
+        UNSCOPED_INFO("Raw image returned to responder");
+        REQUIRE(decoded_raw.notNull());
+        UNSCOPED_INFO("Coarse decode attaches compressed blocks in RAM");
+        REQUIRE(decoded_raw->getBlockCompressionResult() != nullptr);
+        UNSCOPED_INFO("Discard level in RAM block width matches");
+        CHECK(decoded_raw->getBlockCompressionResult()->mWidth == 16u);
 
         // Allow cache writer thread to flush pending write
         VayuBCTextureCache::instance().shutdown();
@@ -337,8 +338,10 @@ namespace
         VayuBCCacheEntryHeader cache_header;
         std::vector<U8> cache_buffer;
         bool cache_hit = VayuBCTextureCache::instance().readEntry(test_id, 2, cache_header, cache_buffer);
-        ensure("Cache entry recorded with valid discard level", cache_hit);
-        ensure_equals("Cache entry header discard matches", (int)cache_header.mDiscardLevel, 2);
+        UNSCOPED_INFO("Cache entry recorded with valid discard level");
+        CHECK(cache_hit);
+        UNSCOPED_INFO("Cache entry header discard matches");
+        CHECK((int)cache_header.mDiscardLevel == 2);
 
         VayuBCTextureCache::instance().clear();
         std::filesystem::remove_all(test_dir, ec);
