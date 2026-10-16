@@ -65,18 +65,6 @@ struct VayuBlockCompressionResult
     // Size in bytes of a specific discard level (0 = largest mip)
     size_t getMipBytes(S32 discard_level) const;
 
-    // Splice an already-encoded coarser mip chain onto the front of this result.
-    //
-    // Used when a texture refinement encodes only the finer "gap" mips and the coarser
-    // tail is served from the BC cache. mBuffer is SMALLEST mip at offset 0, LARGEST at
-    // the end, so the incoming tail -- which holds the smaller mips -- must be placed at
-    // the FRONT. Appending it after the gap inverts the entire pyramid, which makes
-    // getLargestMipOffset() resolve to the wrong level and causes GL to upload garbage
-    // for every mip (horizontal banding on every refined texture).
-    //
-    // Lives here rather than inline in the caller so the ordering rule has exactly one
-    // implementation that both the worker and its unit test exercise.
-    void prependSmallerMips(const std::vector<U8>& smaller_first_mips, S32 num_mips);
 };
 
 class VayuImageBlockCompressor
@@ -118,10 +106,10 @@ public:
                                                      EVayuBlockCompressionFormat format);
 
     // Compress raw pixel buffer into a mipped block-compressed payload.
-    // max_mips (when > 0) limits the pyramid to the finest N mips, avoiding wasted
-    // encode work when the coarser remainder is already cached on disk.
+    // Always encodes the full chain down to 1x1: every level is derived from the same
+    // decode, so the pyramid stays internally consistent.
     static bool encode(const U8* src_data, U32 width, U32 height, S32 components, VayuBlockCompressionResult& result,
-                       EVayuBlockCompressionFormat format, EVayuTextureJob job, S32 max_mips = 0);
+                       EVayuBlockCompressionFormat format, EVayuTextureJob job);
 
     // Convenience overload to encode from an LLImageRaw.
     // job is required: passing Unknown falls back to the raw image's own job and refuses to
@@ -131,6 +119,5 @@ public:
     static bool encode(const LLImageRaw*           raw_image,
                        VayuBlockCompressionResult& result,
                        EVayuBlockCompressionFormat format,
-                       EVayuTextureJob             job,
-                       S32                         max_mips = 0);
+                       EVayuTextureJob             job);
 };

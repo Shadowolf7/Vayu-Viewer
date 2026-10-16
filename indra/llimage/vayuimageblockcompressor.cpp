@@ -523,17 +523,6 @@ size_t VayuBlockCompressionResult::getLargestMipOffset() const
     return (mBuffer.size() >= level0_bytes) ? (mBuffer.size() - level0_bytes) : 0;
 }
 
-void VayuBlockCompressionResult::prependSmallerMips(const std::vector<U8>& smaller_first_mips, S32 num_mips)
-{
-    if (smaller_first_mips.empty() || num_mips <= 0)
-        return;
-
-    // Front insertion is the whole point -- see the header note. Do not "optimise" this to
-    // insert(end(), ...); that inverts the pyramid and corrupts every refined texture.
-    mBuffer.insert(mBuffer.begin(), smaller_first_mips.begin(), smaller_first_mips.end());
-    mMipLevels += num_mips;
-}
-
 void VayuImageBlockCompressor::init()
 {
     init_compression_tables();
@@ -560,13 +549,13 @@ bool VayuImageBlockCompressor::isEligible(U32 width, U32 height, S32 components)
 }
 
 bool VayuImageBlockCompressor::encode(const LLImageRaw* raw_image, VayuBlockCompressionResult& result, EVayuBlockCompressionFormat format,
-                                      EVayuTextureJob job, S32 max_mips)
+                                      EVayuTextureJob job)
 {
     if (!raw_image || raw_image->isBufferInvalid())
         return false;
     const EVayuTextureJob resolved_job = (job != EVayuTextureJob::Unknown) ? job : raw_image->getTextureJob();
     return encode(raw_image->getData(), raw_image->getWidth(), raw_image->getHeight(), raw_image->getComponents(), result, format,
-                  resolved_job, max_mips);
+                  resolved_job);
 }
 
 bool VayuImageBlockCompressor::analyzeAlphaMask(
@@ -712,8 +701,8 @@ namespace
 // cache-key probe the worker performs before encoding can never drift from what encode()
 // actually picks. An earlier version of resolveFormat() duplicated this decision and
 // guessed BC7 for every 4-channel image while encode() scans alpha and picks BC1 when the
-// image is opaque -- which made the cache probe miss and silently disabled the whole
-// incremental append path for the most common texture class.
+// image is opaque -- which made the cache probe miss and silently disabled cache reuse
+// for the most common texture class.
 struct VayuEncodeTargets
 {
     EVayuBlockCompressionFormat mFormat = EVayuBlockCompressionFormat::Auto;
@@ -903,7 +892,7 @@ EVayuBlockCompressionFormat VayuImageBlockCompressor::resolveFormat(const U8* sr
 }
 
 bool VayuImageBlockCompressor::encode(const U8* src_data, U32 width, U32 height, S32 components, VayuBlockCompressionResult& result,
-                                      EVayuBlockCompressionFormat format, EVayuTextureJob job, S32 max_mips)
+                                      EVayuBlockCompressionFormat format, EVayuTextureJob job)
 {
     if (!src_data || !isEligible(width, height, components))
         return false;
@@ -925,13 +914,9 @@ bool VayuImageBlockCompressor::encode(const U8* src_data, U32 width, U32 height,
     const bool                        is_mask  = targets.mIsMask;
     const bool                        is_srgb  = targets.mIsSrgb;
 
-    // max_mips limits the pyramid to the finest N mips. When appending to an existing
-    // cache entry, the coarser remainder is already on disk; encoding it again is waste.
-    S32 effective_max_mips = max_mips;
-
     const uint32_t block_bytes = (resolved == EVayuBlockCompressionFormat::BC1 || resolved == EVayuBlockCompressionFormat::BC4) ? 8 : 16;
 
-    // 2. Generate uncompressed mip pyramid (limited to effective_max_mips when > 0)
+    // 2. Generate uncompressed mip pyramid, down to 1x1
     std::vector<std::vector<uint8_t>> uncompressed_mips;
     {
         // Level 0
@@ -941,8 +926,7 @@ bool VayuImageBlockCompressor::encode(const U8* src_data, U32 width, U32 height,
 
         uint32_t cur_w = width;
         uint32_t cur_h = height;
-        S32      mips_generated = 1;
-        while ((cur_w > 1 || cur_h > 1) && (effective_max_mips <= 0 || mips_generated < effective_max_mips))
+        while (cur_w > 1 || cur_h > 1)
         {
             uint32_t nw = llmax(1u, cur_w / 2);
             uint32_t nh = llmax(1u, cur_h / 2);
@@ -958,7 +942,6 @@ bool VayuImageBlockCompressor::encode(const U8* src_data, U32 width, U32 height,
             uncompressed_mips.push_back(std::move(next_mip));
             cur_w = nw;
             cur_h = nh;
-            ++mips_generated;
         }
     }
 

@@ -61,7 +61,7 @@ public:
     // invalidation knob: bumping it makes initCache() (llappviewer.cpp) clear the
     // entire JPEG2000 + BC texture cache on the next startup, so any on-disk
     // format or encode-config change wipes both dumb caches at once.
-    static constexpr U32 kFormatVersion = 11;
+    static constexpr U32 kFormatVersion = 12;
 
     static constexpr U8 kFormatBC1 = 1;
     static constexpr U8 kFormatBC3 = 2;
@@ -148,21 +148,6 @@ public:
     // worker to determine the existing entry's discard level before deciding
     // whether to encode the full pyramid or only the missing finer mips.
     bool readEntryHeader(const LLUUID& id, U8 format, U8 role, VayuBCCacheEntryHeader& header) const;
-
-    // Reads the full raw entry (header + buffer) without mip-fallback slicing.
-    // Returns false if the file is missing or corrupt. Used by the append path
-    // to retrieve the existing coarser mips for merging with newly encoded finer
-    // mips before a GL upload.
-    bool readEntryRaw(const LLUUID& id, U8 format, U8 role, VayuBCCacheEntryHeader& header, std::vector<U8>& buffer) const;
-
-    // Appends new mips to an existing cache entry. The new mips must be finer
-    // (smaller discard_level) than the existing entry's mDiscardLevel. Reads
-    // the existing entry, appends new_mips to the end of its buffer (the
-    // largest-mip-last layout), updates the header's discard level and mip
-    // count, and writes the merged result atomically via temp+rename.
-    // Returns false if no compatible existing entry is found.
-    bool appendEntry(const LLUUID& id, S32 discard_level, const VayuBCCacheEntryHeader& new_header,
-                     const std::shared_ptr<const std::vector<U8>>& new_mips, S32 num_new_mips);
 
     // Blocks until every queued/in-flight write has been committed to disk.
     // No-op if no write pool exists. Tests use this as a write barrier.
