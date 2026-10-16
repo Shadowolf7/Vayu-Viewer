@@ -33,7 +33,6 @@
 #include "llglheaders.h"
 #include "llviewercontrol.h"
 #include "llcriticaldamp.h"
-#include "llfasttimer.h"
 #include "llrender.h"
 
 #include "llcubemap.h"
@@ -271,8 +270,7 @@ void LLDrawPoolAlpha::forwardRender(EAlphaStream stream)
     gGL.setColorMask(true, true);
 
     bool write_depth = stream == EAlphaStream::RIGGED ||
-        LLDrawPoolWater::sSkipScreenCopy
-        || getType() == LLDrawPoolAlpha::POOL_ALPHA_PRE_WATER; // needed for accurate water fog
+        getType() == LLDrawPoolAlpha::POOL_ALPHA_PRE_WATER; // needed for accurate water fog
 
 
     // in interleaved mode depth writes are decided per group inside renderAlpha
@@ -666,7 +664,7 @@ void LLDrawPoolAlpha::renderAlpha(U32 mask, bool depth_only, EAlphaStream stream
 
     // depth-write conditions that apply to every group in this pass; in merged
     // mode, stamped rigged groups additionally write depth (see below)
-    const bool write_depth_always = LLDrawPoolWater::sSkipScreenCopy ||
+    const bool write_depth_always =
                                     getType() == LLDrawPoolAlpha::POOL_ALPHA_PRE_WATER;
 
     // merged mode: per-group depth-write guard, re-emplaced only when the
