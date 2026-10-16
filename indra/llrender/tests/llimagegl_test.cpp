@@ -238,20 +238,15 @@ namespace
         // rounding UP both sides, not per-pixel linearly. A level whose
         // dimensions are not multiples of four therefore costs more than
         // w*h*bpp/8; imageSize must be the exact block-rounded count.
-        ensure_equals("150x150 DXT5 = 38x38 blocks * 16 = 23104",
-                      (S32)LLImageGL::dataFormatBytes(GL_COMPRESSED_RGBA_S3TC_DXT5_EXT, 150, 150), 23104);
-        ensure_equals("150x150 DXT1 = 38x38 blocks * 8 = 11552",
-                      (S32)LLImageGL::dataFormatBytes(GL_COMPRESSED_RGBA_S3TC_DXT1_EXT, 150, 150), 11552);
-        ensure_equals("150x150 BC7 = 38x38 blocks * 16 (sRGB)",
-                      (S32)LLImageGL::dataFormatBytes(GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM, 150, 150), 23104);
-        ensure_equals("150x150 RGTC2 = 38x38 blocks * 16",
-                      (S32)LLImageGL::dataFormatBytes(GL_COMPRESSED_RG_RGTC2, 150, 150), 23104);
+        // 38x38 blocks: DXT5 and BC7 and RGTC2 cost 16 bytes a block, DXT1 eight.
+        CHECK((S32)LLImageGL::dataFormatBytes(GL_COMPRESSED_RGBA_S3TC_DXT5_EXT, 150, 150) == 23104);
+        CHECK((S32)LLImageGL::dataFormatBytes(GL_COMPRESSED_RGBA_S3TC_DXT1_EXT, 150, 150) == 11552);
+        CHECK((S32)LLImageGL::dataFormatBytes(GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM, 150, 150) == 23104);
+        CHECK((S32)LLImageGL::dataFormatBytes(GL_COMPRESSED_RG_RGTC2, 150, 150) == 23104);
         // Dimensions below one block still occupy a single block.
-        ensure_equals("1x1 DXT5 = 1 block * 16",
-                      (S32)LLImageGL::dataFormatBytes(GL_COMPRESSED_RGBA_S3TC_DXT5_EXT, 1, 1), 16);
+        CHECK((S32)LLImageGL::dataFormatBytes(GL_COMPRESSED_RGBA_S3TC_DXT5_EXT, 1, 1) == 16);
         // Multiple-of-four dimensions unchanged from the old per-pixel math.
-        ensure_equals("600x600 BC7 = 150x150 blocks * 16 = 360000",
-                      (S32)LLImageGL::dataFormatBytes(GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM, 600, 600), 360000);
+        CHECK((S32)LLImageGL::dataFormatBytes(GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM, 600, 600) == 360000);
 
         // Host vs. VRAM split: dataFormatBits returns the tight host
         // layout (used for CPU upload-buffer math); dataFormatVRAMBits
