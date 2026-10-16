@@ -167,7 +167,8 @@ static void init_compression_tables()
 #include <libyuv.h>
 
 // Zero-allocation box-filter downsampling for 4-channel sRGB (RGBA)
-static void downsample_half_srgb_4ch(const uint8_t* src, uint32_t sw, uint32_t sh, uint8_t* dst)
+// If is_mask is true, uses max-pooling on alpha to preserve 0/255 binary mask edges.
+static void downsample_half_srgb_4ch(const uint8_t* src, uint32_t sw, uint32_t sh, uint8_t* dst, bool is_mask = false)
 {
     const uint32_t dw = llmax(1u, sw / 2);
     const uint32_t dh = llmax(1u, sh / 2);
@@ -199,7 +200,15 @@ static void downsample_half_srgb_4ch(const uint8_t* src, uint32_t sw, uint32_t s
             out[0] = linear_to_srgb_u8(lin_r);
             out[1] = linear_to_srgb_u8(lin_g);
             out[2] = linear_to_srgb_u8(lin_b);
-            out[3] = (uint8_t)((a[3] + b[3] + c[3] + d[3] + 2) >> 2);
+            if (is_mask)
+            {
+                // Max-pooling on alpha to preserve 0/255 binary mask edges
+                out[3] = (uint8_t)std::max(std::max(a[3], b[3]), std::max(c[3], d[3]));
+            }
+            else
+            {
+                out[3] = (uint8_t)((a[3] + b[3] + c[3] + d[3] + 2) >> 2);
+            }
             out += 4;
         }
     }
@@ -446,10 +455,10 @@ static void downsample_half_linear(const uint8_t* src, uint32_t sw, uint32_t sh,
     }
 }
 
-static void downsample_half_srgb(const uint8_t* src, uint32_t sw, uint32_t sh, S32 channels, uint8_t* dst)
+static void downsample_half_srgb(const uint8_t* src, uint32_t sw, uint32_t sh, S32 channels, uint8_t* dst, bool is_mask = false)
 {
     if (channels == 4)
-        downsample_half_srgb_4ch(src, sw, sh, dst);
+        downsample_half_srgb_4ch(src, sw, sh, dst, is_mask);
     else if (channels == 3)
         downsample_half_srgb_3ch(src, sw, sh, dst);
     else
@@ -951,7 +960,7 @@ bool VayuImageBlockCompressor::encode(const U8* src_data, U32 width, U32 height,
             if ((job == EVayuTextureJob::PBRNormal || job == EVayuTextureJob::LegacyMaterialNormal) && components >= 2)
                 downsample_half_normal(uncompressed_mips.back().data(), cur_w, cur_h, components, next_mip.data());
             else if (is_srgb)
-                downsample_half_srgb(uncompressed_mips.back().data(), cur_w, cur_h, components, next_mip.data());
+                downsample_half_srgb(uncompressed_mips.back().data(), cur_w, cur_h, components, next_mip.data(), is_mask);
             else
                 downsample_half_linear(uncompressed_mips.back().data(), cur_w, cur_h, components, next_mip.data());
 

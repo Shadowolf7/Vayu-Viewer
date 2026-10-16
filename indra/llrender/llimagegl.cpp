@@ -35,7 +35,6 @@
 #include "llimagegl.h"
 
 #include "llerror.h"
-#include "llfasttimer.h"
 #include "llimage.h"
 
 #include "llmath.h"
@@ -2483,16 +2482,23 @@ void LLImageGL::setPickMask(U8* mask, U16 width, U16 height)
     mPickMaskHeight = height;
 }
 
-void LLImageGL::setIsMask(bool is_mask)
+void LLImageGL::setAlphaAnalysis(const AlphaAnalysis& analysis)
 {
     if (stagesAlpha())
     {
-        mPendingAlpha.mIsMask    = is_mask;
-        mPendingAlpha.mHasIsMask = true;
+        mPendingAlpha.mAnalysis    = analysis;
+        mPendingAlpha.mHasAnalysis = true;
         return;
     }
 
-    mIsMask = is_mask;
+    mIsMask   = analysis.mIsMask;
+    mMaxAlpha = analysis.mMaxAlpha;
+}
+
+void LLImageGL::clearAlphaAnalysis()
+{
+    mIsMask   = false;
+    mMaxAlpha = 255;
 }
 
 void LLImageGL::publishPendingAlpha()
@@ -2505,9 +2511,10 @@ void LLImageGL::publishPendingAlpha()
         mPickMaskHeight = mPendingAlpha.mPickMaskHeight;
         mPendingAlpha.mPickMask = nullptr;
     }
-    if (mPendingAlpha.mHasIsMask)
+    if (mPendingAlpha.mHasAnalysis)
     {
-        mIsMask = mPendingAlpha.mIsMask;
+        mIsMask   = mPendingAlpha.mAnalysis.mIsMask;
+        mMaxAlpha = mPendingAlpha.mAnalysis.mMaxAlpha;
     }
     mPendingAlpha = PendingAlpha();
 }
@@ -3008,16 +3015,28 @@ void LLImageGL::resolveDeprecatedFormat()
     }
 }
 
-bool LLImageGL::analyzeAlphaData(
-    const void* data_in,
-    U32 w,
-    U32 h,
-    S8 alpha_offset,
-    S8 alpha_stride)
+LLImageGL::AlphaAnalysis LLImageGL::analyzeAlphaData(const void* data_in, U32 w, U32 h, S8 alpha_offset, S8 alpha_stride)
 {
+    if (!data_in || alpha_stride < 1)
+    {
+        return AlphaAnalysis();
+    }
+
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
-    return VayuImageBlockCompressor::analyzeAlphaMask(
-        static_cast<const U8*>(data_in), w, h, alpha_offset, alpha_stride);
+    // Mask bit from the shared Vayu analyzer so the GL masking decision agrees
+    // with what the BC encoder decided for this texture (see pre_comp/comp_res
+    // mIsMask above); max alpha from a direct scan for AlphaAnalysis.mMaxAlpha.
+    AlphaAnalysis analysis;
+    analysis.mIsMask    = VayuImageBlockCompressor::analyzeAlphaMask(static_cast<const U8*>(data_in), w, h, alpha_offset, alpha_stride);
+    U8        max_alpha = 0;
+    const U8* p         = static_cast<const U8*>(data_in) + alpha_offset;
+    for (U32 i = 0, n = w * h; i < n; ++i, p += alpha_stride)
+    {
+        if (*p > max_alpha)
+            max_alpha = *p;
+    }
+    analysis.mMaxAlpha = max_alpha;
+    return analysis;
 }
 
 void LLImageGL::analyzeAlpha(const void* data_in, U32 w, U32 h)
@@ -3034,7 +3053,7 @@ void LLImageGL::analyzeAlpha(const void* data_in, U32 w, U32 h)
         // but increment either way, for extra safety.
         ++mAlphaAnalysisSerial;
 
-        setIsMask(analyzeAlphaData(data_in, w, h, mAlphaOffset, mAlphaStride));
+        setAlphaAnalysis(analyzeAlphaData(data_in, w, h, mAlphaOffset, mAlphaStride));
         return;
     }
 
@@ -3052,7 +3071,7 @@ void LLImageGL::analyzeAlpha(const void* data_in, U32 w, U32 h)
     if (!data_copy)
     {
         LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
-        setIsMask(analyzeAlphaData(data_in, w, h, alpha_offset, alpha_stride));
+        setAlphaAnalysis(analyzeAlphaData(data_in, w, h, alpha_offset, alpha_stride));
         return;
     }
     memcpy(data_copy, static_cast<const U8*>(data_in), data_size);
@@ -3074,24 +3093,24 @@ void LLImageGL::analyzeAlpha(const void* data_in, U32 w, U32 h)
         posted_job = mainq->postTo(
             workerq,
             // Worker thread: analyze alpha
-            [data_copy, w, h, alpha_offset, alpha_stride]() -> bool
-        {
-            LL_PROFILE_ZONE_NAMED("Deffered alpha mask analysis");
-            bool is_mask = LLImageGL::analyzeAlphaData(data_copy, w, h, alpha_offset, alpha_stride);
-            delete[] data_copy;
-            return is_mask;
-        },
-            // Main thread: apply result
-            [this, request_serial](bool is_mask)
-        {
-            // Only apply if no newer analysis has been requested
-            if (mAlphaAnalysisSerial == request_serial)
+            [data_copy, w, h, alpha_offset, alpha_stride]() -> AlphaAnalysis
             {
-                mIsMask = is_mask;
-            }
-            unref();
-        }
-        );
+                LL_PROFILE_ZONE_NAMED("Deffered alpha mask analysis");
+                const AlphaAnalysis analysis = LLImageGL::analyzeAlphaData(data_copy, w, h, alpha_offset, alpha_stride);
+                delete[] data_copy;
+                return analysis;
+            },
+            // Main thread: apply result
+            [this, request_serial](AlphaAnalysis analysis)
+            {
+                // Only apply if no newer analysis has been requested
+                if (mAlphaAnalysisSerial == request_serial)
+                {
+                    mIsMask   = analysis.mIsMask;
+                    mMaxAlpha = analysis.mMaxAlpha;
+                }
+                unref();
+            });
 
         if (posted_job)
         {
@@ -3106,7 +3125,7 @@ void LLImageGL::analyzeAlpha(const void* data_in, U32 w, U32 h)
             ref();
 
             // Conservative default until analysis completes
-            mIsMask = false;
+            clearAlphaAnalysis();
         }
     }
     if (!posted_job)
@@ -3114,7 +3133,7 @@ void LLImageGL::analyzeAlpha(const void* data_in, U32 w, U32 h)
         LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
         // Queues not available - fall back to synchronous analysis
         delete[] data_copy;
-        setIsMask(analyzeAlphaData(data_in, w, h, mAlphaOffset, mAlphaStride));
+        setAlphaAnalysis(analyzeAlphaData(data_in, w, h, mAlphaOffset, mAlphaStride));
     }
 }
 
