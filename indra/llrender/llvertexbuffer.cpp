@@ -745,6 +745,16 @@ U32 LLVertexBuffer::sGLRenderIndices = 0;
 U32 LLVertexBuffer::sLastMask = 0;
 U32 LLVertexBuffer::sVertexCount = 0;
 
+// What the attribute pointers were last set up from: the buffer, the GL name it had, and the
+// attributes the program read. Being bound is not the same thing. An upload binds the buffer it
+// sends and leaves the pointers where the last draw set them, and a pointer keeps the buffer bound
+// when it was set, whatever is bound after. Cleared with the bindings by unbind(), and by a buffer
+// that goes or works out its offsets again, so a buffer made where a gone one was is never taken
+// for it.
+static const LLVertexBuffer* sSetupBuffer = nullptr;
+static U32 sSetupGLBuffer = 0;
+static U32 sSetupMask = 0;
+
 
 //NOTE: each component must be AT LEAST 4 bytes in size to avoid a performance penalty on AMD hardware
 const U32 LLVertexBuffer::sTypeSize[LLVertexBuffer::TYPE_MAX] =
@@ -1044,6 +1054,7 @@ void LLVertexBuffer::unbind()
     STOP_GLERROR;
     sGLRenderBuffer = 0;
     sGLRenderIndices = 0;
+    sSetupBuffer = nullptr;
 }
 
 //static
@@ -1153,6 +1164,11 @@ U32 LLVertexBuffer::calcVertexSize(const U32& typemask)
 //virtual
 LLVertexBuffer::~LLVertexBuffer()
 {
+    if (sSetupBuffer == this)
+    {
+        sSetupBuffer = nullptr;
+    }
+
     if (mMapped)
     { // is on the mapped buffer list but doesn't need to be flushed
         mMapped = false;
@@ -1291,6 +1307,12 @@ bool LLVertexBuffer::updateNumVerts(U32 nverts)
 
     bool success = true;
 
+    // The offsets are worked out again, and the attribute pointers were set from the old ones.
+    if (sSetupBuffer == this)
+    {
+        sSetupBuffer = nullptr;
+    }
+
     U32 needed_size = calcOffsets(mTypeMask, mOffsets, nverts);
 
     if (needed_size != mSize)
@@ -1368,10 +1390,14 @@ U8* LLVertexBuffer::mapVertexBuffer(LLVertexBuffer::AttributeType type, U32 inde
     }
 
 #if LL_DARWIN || LL_ARM64
-    // Region tracking not needed on apple silicon - it recreates entire buffer
-    // While mIsApple can be encountered under windows, this is a
+    // Apple's path gives GL whole stores, never ranges (see _unmapBuffer), so it marks only that
+    // the vertices were written. While mIsApple can be encountered under windows, this is a
     // macOS OpenGL behavior workaround. LL_ARM64 check might be not needed
-    if (!gGLManager.mIsApple)
+    if (gGLManager.mIsApple)
+    {
+        mVerticesWritten = true;
+    }
+    else
 #endif
     {
         U32 start = mOffsets[type] + sTypeSize[type] * index;
@@ -1410,7 +1436,11 @@ U8* LLVertexBuffer::mapIndexBuffer(U32 index, S32 count)
     }
 
 #if LL_DARWIN || LL_ARM64
-    if (!gGLManager.mIsApple)
+    if (gGLManager.mIsApple)
+    {
+        mIndicesWritten = true;
+    }
+    else
 #endif
     {
         U32 start = sizeof(U16) * index;
@@ -1458,6 +1488,14 @@ void LLVertexBuffer::flush_vbo(GLenum target, U32 start, U32 end, void* data, U8
         // on OS X, flush_vbo doesn't actually write to the GL buffer, so be sure to call
         // _mapBuffer to tag the buffer for flushing to GL
         _mapBuffer();
+        if (target == GL_ELEMENT_ARRAY_BUFFER)
+        {
+            mIndicesWritten = true;
+        }
+        else
+        {
+            mVerticesWritten = true;
+        }
         LL_PROFILE_ZONE_NAMED_CATEGORY_VERTEX("vb memcpy");
         STOP_GLERROR;
         // copy into mapped buffer
@@ -1517,57 +1555,48 @@ void LLVertexBuffer::_unmapBuffer()
 #if LL_DARWIN || LL_ARM64
     if (gGLManager.mIsApple)
     {
+        // Apple's GL-on-Metal is given the whole store again, under the name the buffer already
+        // has. glBufferData on a name the GPU may still be reading gives the name a new store and
+        // leaves the old one to the draws already queued, so nothing waits. glBufferSubData into
+        // that store makes the CPU wait for those draws, and frames slow with it. A new name for
+        // each upload, as this path once made, waits for nothing either, but pays to make and
+        // delete names and keeps every old store the frames delete_buffers holds it. Keep
+        // GL_STATIC_DRAW: a store given again as GL_DYNAMIC_DRAW takes many times as long.
+        //
+        // Only the stores the map wrote are sent, and any GL has no buffer for yet, which it is
+        // given whatever they hold: a rebuild of the vertices alone leaves the indices as GL has
+        // them. Like the other path, a store not sent is not bound either.
         STOP_GLERROR;
-        if (mMappedData)
+        if (mMappedData && (mVerticesWritten || !mGLBuffer))
         {
             if (!mGLBuffer)
             {
                 mGLBuffer = gen_buffer();
+            }
+            if (mGLBuffer != sGLRenderBuffer)
+            {
                 glBindBuffer(GL_ARRAY_BUFFER, mGLBuffer);
                 sGLRenderBuffer = mGLBuffer;
-                glBufferData(GL_ARRAY_BUFFER, mSize, mMappedData, GL_STATIC_DRAW);
             }
-            else
-            {
-                if (mGLBuffer != sGLRenderBuffer)
-                {
-                    glBindBuffer(GL_ARRAY_BUFFER, mGLBuffer);
-                    sGLRenderBuffer = mGLBuffer;
-                }
-                glBufferSubData(GL_ARRAY_BUFFER, 0, mSize, mMappedData);
-            }
+            glBufferData(GL_ARRAY_BUFFER, mSize, mMappedData, GL_STATIC_DRAW);
         }
-        else if (mGLBuffer != sGLRenderBuffer)
-        {
-            glBindBuffer(GL_ARRAY_BUFFER, mGLBuffer);
-            sGLRenderBuffer = mGLBuffer;
-        }
+        mVerticesWritten = false;
         STOP_GLERROR;
 
-        if (mMappedIndexData)
+        if (mMappedIndexData && (mIndicesWritten || !mGLIndices))
         {
             if (!mGLIndices)
             {
                 mGLIndices = gen_buffer();
+            }
+            if (mGLIndices != sGLRenderIndices)
+            {
                 glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mGLIndices);
                 sGLRenderIndices = mGLIndices;
-                glBufferData(GL_ELEMENT_ARRAY_BUFFER, mIndicesSize, mMappedIndexData, GL_STATIC_DRAW);
             }
-            else
-            {
-                if (mGLIndices != sGLRenderIndices)
-                {
-                    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mGLIndices);
-                    sGLRenderIndices = mGLIndices;
-                }
-                glBufferSubData(GL_ELEMENT_ARRAY_BUFFER, 0, mIndicesSize, mMappedIndexData);
-            }
+            glBufferData(GL_ELEMENT_ARRAY_BUFFER, mIndicesSize, mMappedIndexData, GL_STATIC_DRAW);
         }
-        else if (mGLIndices != sGLRenderIndices)
-        {
-            glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mGLIndices);
-            sGLRenderIndices = mGLIndices;
-        }
+        mIndicesWritten = false;
         STOP_GLERROR;
     }
     else
@@ -1786,13 +1815,17 @@ void LLVertexBuffer::setBuffer()
     {
         glBindBuffer(GL_ARRAY_BUFFER, mGLBuffer);
         sGLRenderBuffer = mGLBuffer;
-
-        setupVertexBuffer();
     }
-    else if (sLastMask != data_mask)
+
+    // Bound is not set up (see sSetupBuffer): the pointers are set whenever they were last set
+    // for another buffer, another name of this one, or another program's attributes. Which arrays
+    // are enabled is setupClientArrays' to say, and sLastMask with it.
+    if (sSetupBuffer != this || sSetupGLBuffer != mGLBuffer || sSetupMask != data_mask)
     {
         setupVertexBuffer();
-        sLastMask = data_mask;
+        sSetupBuffer = this;
+        sSetupGLBuffer = mGLBuffer;
+        sSetupMask = data_mask;
     }
 
     if (mGLIndices != sGLRenderIndices)

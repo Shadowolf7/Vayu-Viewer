@@ -1559,12 +1559,17 @@ bool LLViewerFetchedTexture::preCreateTexture(S32 usename/*= 0*/)
 
 bool LLViewerFetchedTexture::createTexture(S32 usename/*= 0*/)
 {
+    return createTexture(usename, getCategory());
+}
+
+bool LLViewerFetchedTexture::createTexture(S32 usename, S32 category)
+{
     if (!mNeedsCreateTexture)
     {
         return false;
     }
 
-    bool res = mGLTexturep->createGLTexture(mRawDiscardLevel, mRawImage, usename, true, getCategory());
+    bool res = mGLTexturep->createGLTexture(mRawDiscardLevel, mRawImage, usename, true, category);
 
     return res;
 }
@@ -1624,6 +1629,7 @@ void LLViewerFetchedTexture::scheduleCreateTexture()
 #endif
             mNeedsCreateTexture = true;
             auto mainq = LLImageGLThread::sEnabledTextures ? mMainQueue.lock() : nullptr;
+            bool posted = false;
             if (mainq)
             {
                 // Until the worker's texture publishes, the image goes on reporting the one
@@ -1631,13 +1637,12 @@ void LLViewerFetchedTexture::scheduleCreateTexture()
                 // before the post -- see LLImageGL::beginUpload -- and released in the
                 // callback below, whether or not a texture came of it.
                 LLPointer<LLImageGL> gl_image = mGLTexturep;
-                gl_image->beginUpload();
-                ref();
-                mainq->postTo(
+                gl_image->beginUpload(mRawImage->getComponents());
+                posted = mainq->postTo(
                     mImageQueue,
                     // work to be done on LLImageGL worker thread
 #if LL_IMAGEGL_THREAD_CHECK
-                    [this, data, data_copy, size]()
+                    [this, data, data_copy, size, category = getCategory()]()
                     {
                         mGLTexturep->mActiveThread = LLThread::currentID();
                         //verify data is unmodified
@@ -1645,11 +1650,11 @@ void LLViewerFetchedTexture::scheduleCreateTexture()
                         llassert(mRawImage->getDataSize() == size);
                         llassert(memcmp(data, data_copy, size) == 0);
 #else
-                    [this]()
+                    [this, category = getCategory()]()
                     {
 #endif
                         //actually create the texture on a background thread
-                        createTexture();
+                        createTexture(0, category);
 
 #if LL_IMAGEGL_THREAD_CHECK
                         //verify data is unmodified
@@ -1684,9 +1689,26 @@ void LLViewerFetchedTexture::scheduleCreateTexture()
                             unref();
                         });
                     });
+                if (posted)
+                {
+                    // Taken once the post has succeeded, as LLImageGL::analyzeAlpha takes its
+                    // own: the callback that lets it go runs on this thread's queue, so not
+                    // before this returns, and no reference is taken and dropped again when
+                    // the post fails.
+                    ref();
+                }
+                else
+                {
+                    // The LLImageGL thread has closed, as the viewer quits: nothing will run
+                    // the upload or end it.
+                    gl_image->endUpload();
+                }
             }
-            else
+            if (!posted)
             {
+#if LL_IMAGEGL_THREAD_CHECK
+                delete[] data_copy;
+#endif
                 if (!mCreatePending)
                 {
                     mCreatePending = true;

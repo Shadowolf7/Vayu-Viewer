@@ -38,6 +38,7 @@
 #include "raytrace.h"
 
 #include "alavatargroups.h"
+#include "alrenderisolation.h"
 #include "aoengine.h"
 #include "llagent.h" //  Get state values from here
 #include "llagentbenefits.h"
@@ -4034,7 +4035,7 @@ void LLVOAvatar::idleUpdateNameTagText(bool new_name)
 
         static const LLUIColor user_chat_color = LLUIColorTable::instance().getColor("UserChatColor");
         static const LLUIColor agent_chat_color = LLUIColorTable::instance().getColor("AgentChatColor");
-        LLColor4 new_chat = ALAvatarGroups::instance().getAvatarColor(this, isSelf() ? agent_chat_color : user_chat_color, ALAvatarGroups::COLOR_CHAT);
+        LLColor4 new_chat = ALAvatarGroups::instance().getAvatarColor(this, isSelf() ? user_chat_color : agent_chat_color, ALAvatarGroups::COLOR_CHAT);
         LLColor4 normal_chat = lerp(new_chat, LLColor4(0.8f, 0.8f, 0.8f, 1.f), 0.7f);
         LLColor4 old_chat = lerp(normal_chat, LLColor4(0.6f, 0.6f, 0.6f, 1.f), 0.7f);
 
@@ -4844,10 +4845,13 @@ void LLVOAvatar::computeUpdatePeriod()
             mUpdatePeriod = UPDATE_RATE_SLOW;
         }
         else if (!shouldImpostorByRank()
-            || mDrawable->mDistanceWRTCamera < 1.f + mag)
+            || mDrawable->mDistanceWRTCamera < 1.f + mag
+            || ALRenderIsolation::isArmedAvatar(this))
         {   // first 25% of max visible avatars are not impostored
             // also, don't impostor avatars whose bounding box may be penetrating the
             // impostor camera near clip plane
+            // nor the one a snapshot cutout is waiting to take: an impostor has
+            // no attachments and is a billboard
             mUpdatePeriod = 1;
         }
         else if (shouldImpostorByRank(4.0))
