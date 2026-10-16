@@ -11,6 +11,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
+#include <set>
 
 // LLImageBase::getData() and isBufferInvalid() are satisfied by
 // llimageworker_test.cpp: this binary builds all three test files together, one
@@ -1266,4 +1267,86 @@ namespace
             CHECK(noop.mMipLevels == gap.mMipLevels);
         }
     }
+
+    // No level of a chain is allowed to be a constant. A pyramid whose tail
+    // collapses to one repeated value renders as correct up close and flat at
+    // distance, which is what a texture stored in this cache was found doing:
+    // 248 distinct byte values at mip 2 and 3 at mip 3, sizes correct
+    // throughout. The cliff matters more than the average -- real mip chains
+    // converge gradually toward the image's mean, they do not stop dead at one
+    // level -- so this asserts a level stays non-constant whenever the one
+    // above it is, and that the distinct values never collapse by more than the
+    // block filter can explain.
+    TEST_CASE("VayuImageBlockCompressor: No mip level of an encoded chain is a constant", "[VayuImageBlockCompressor]")
+    {
+        const U32       W = 512, H = 512;
+        std::vector<U8> rgba((size_t)W * H * 4);
+        // Low-frequency base plus per-texel variation: every mip keeps some
+        // structure, so a level that loses all of it lost it in the encoder.
+        for (U32 y = 0; y < H; y++)
+        {
+            for (U32 x = 0; x < W; x++)
+            {
+                const size_t p = ((size_t)y * W + x) * 4;
+                rgba[p + 0]    = (U8)(32 + ((x * 8) >> 3));
+                rgba[p + 1]    = (U8)(64 + ((y * 8) >> 3));
+                rgba[p + 2]    = (U8)((x ^ y) & 0xFF);
+                rgba[p + 3]    = 255;
+            }
+        }
+
+        VayuBlockCompressionResult res;
+        REQUIRE(VayuImageBlockCompressor::encode(rgba.data(), W, H, 4, res, EVayuBlockCompressionFormat::Auto, EVayuTextureJob::RGBA));
+
+        // Smallest-first: walk from the end, which is the largest mip.
+        const auto level_bytes = [&](S32 i)
+        {
+            return llmax(1, (int)(W >> i) / 4) * llmax(1, (int)(H >> i) / 4) * (res.mFormat == EVayuBlockCompressionFormat::BC1 ? 8 : 16);
+        };
+        const auto distinct = [&](S32 i)
+        {
+            // Smallest-first, so level i (i = 0 largest) ends at the buffer's
+            // end and starts level_bytes(0..i) before it.
+            size_t before = 0;
+            for (S32 k = 0; k < i; k++)
+            {
+                before += level_bytes(k);
+            }
+            const size_t total = res.mBuffer.size();
+            const size_t start = total - before - level_bytes(i);
+            const size_t end   = total - before;
+            std::set<U8> values;
+            for (size_t k = start; k < end; ++k)
+            {
+                values.insert(res.mBuffer[k]);
+            }
+            return values.size();
+        };
+
+        INFO("levels encoded: " << res.mMipLevels << " format " << (int)res.mFormat);
+        CHECK(res.mMipLevels >= 9);
+
+        S32 prev = 0;
+        for (S32 i = 0; i < res.mMipLevels; i++)
+        {
+            const S32 dim = llmax(1, (int)(W >> i));
+            INFO("mip " << i << " " << dim << "x" << dim << " distinct byte values " << distinct(i));
+            // A level of 64x64 or more is 256 blocks of real image; a constant
+            // there means the encoder lost it, which is the shape of the cache
+            // entries found flat below their midpoint. The last few levels are
+            // a handful of blocks and converge legitimately.
+            if (dim >= 64)
+            {
+                CHECK(distinct(i) > 8);
+            }
+            // And no collapse from a level that still had content: a real chain
+            // thins gradually, it does not stop dead at one level.
+            if (prev > 64)
+            {
+                CHECK(distinct(i) * 4 > prev);
+            }
+            prev = distinct(i);
+        }
+    }
+
     } // anonymous namespace
