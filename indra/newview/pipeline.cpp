@@ -12855,24 +12855,6 @@ LLRenderTarget* LLPipeline::getSpotShadowTarget(U32 i)
     return &mSpotShadow[i];
 }
 
-// helper class for disabling occlusion culling for the current stack frame
-class LLDisableOcclusionCulling
-{
-public:
-    U32 mUseOcclusion;
-
-    LLDisableOcclusionCulling()
-    {
-        mUseOcclusion = LLPipeline::sUseOcclusion;
-        LLPipeline::sUseOcclusion = 0;
-    }
-
-    ~LLDisableOcclusionCulling()
-    {
-        LLPipeline::sUseOcclusion = mUseOcclusion;
-    }
-};
-
 #if defined(HAVE_FRUSTUM_CULL_ISPC)
 struct FrustumCullScratch
 {
