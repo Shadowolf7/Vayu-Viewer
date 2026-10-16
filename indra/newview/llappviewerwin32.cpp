@@ -331,7 +331,10 @@ int APIENTRY WINMAIN(HINSTANCE hInstance,
     // Call Tracy first thing to have it allocate memory
     // https://github.com/wolfpld/tracy/issues/196
     LL_PROFILER_FRAME_END;
-    LL_PROFILER_SET_THREAD_NAME("App");
+    // "App" was the inherited name, but on Linux tracy::SetThreadName writes the OS
+    // thread name and for the thread-group leader that is comm -- so the viewer
+    // showed up as "App" to ps and pgrep. Matches the SDL entry point.
+    LL_PROFILER_SET_THREAD_NAME("Vayu Main");
 
     const S32 MAX_HEAPS = 255;
     DWORD heap_enable_lfh_error[MAX_HEAPS];

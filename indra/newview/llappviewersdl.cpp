@@ -416,7 +416,12 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
     // Call Tracy first thing to have it allocate memory
     // https://github.com/wolfpld/tracy/issues/196
     LL_PROFILER_FRAME_END;
-    LL_PROFILER_SET_THREAD_NAME("App");
+    // Named for the program, not "App": on Linux tracy::SetThreadName writes the OS
+    // thread name, and for the thread-group leader that IS comm -- what ps, pgrep and
+    // every process-level check read. A viewer calling itself "App" is invisible to
+    // pgrep -x vayu-bin, so the guard that asks whether a viewer is running never
+    // matches. Anything checking this process has to resolve /proc/<pid>/exe.
+    LL_PROFILER_SET_THREAD_NAME("Vayu Main");
 
     gSDLMainHandled = true;
 
