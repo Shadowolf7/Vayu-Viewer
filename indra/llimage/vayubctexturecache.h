@@ -61,11 +61,7 @@ public:
     // invalidation knob: bumping it makes initCache() (llappviewer.cpp) clear the
     // entire JPEG2000 + BC texture cache on the next startup, so any on-disk
     // format or encode-config change wipes both dumb caches at once.
-    // 12: a refined texture no longer inherits the coarse entry's tail mips, so
-    // entries written by 11 can hold a flat coarse half that no longer describes
-    // anything encode() produces. They are unreadable rather than wrong-looking,
-    // so the honest response is to spend them.
-    static constexpr U32 kFormatVersion = 12;
+    static constexpr U32 kFormatVersion = 11;
 
     static constexpr U8 kFormatBC1 = 1;
     static constexpr U8 kFormatBC3 = 2;

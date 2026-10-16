@@ -351,6 +351,10 @@ bool ImageRequest::processRequest()
             const bool             has_existing =
                 cacheable && VayuBCTextureCache::instance().readEntryHeader(mID, cache_format, cache_role, existing_header);
 
+            // Whether the on-disk entry is COARSER than this decode, i.e. whether the
+            // refinement has real work to contribute.
+            const bool have_coarser = has_existing && existing_header.mDiscardLevel > discard;
+
             // The entry already holds this level and every finer one. The read path above
             // normally serves that from cache before we get here; reaching it means the
             // probe disagreed with the real reader, so the GL upload still needs a result.
@@ -358,35 +362,60 @@ bool ImageRequest::processRequest()
             // max_mips below.
             const bool already_covered = has_existing && existing_header.mDiscardLevel <= discard;
 
-            // The whole chain, always, and no splice. A coarser entry's tail was
-            // built by downsampling a decode of w>>D_e -- for a texture first seen
-            // on a small distant object that is 64x64 for a 2048x2048 texture --
-            // so handing its levels to a refined pyramid spreads 64x64's worth of
-            // detail across the levels that should hold 256x256 and 128x128.
-            // Sizes and order stay correct, so nothing complains: the fine levels
-            // are real and the coarse ones are flat, which renders as correct up
-            // close and grey at distance. The decode in hand is finer than the
-            // donor at every level below this one, so regenerating them is both
-            // correct and cheaper than re-fetching ever was.
+            // max_mips > 0 is set only when a coarser entry exists AND the cached tail is
+            // re-merged below, so the GL upload still receives a COMPLETE pyramid.
             //
-            // LLImageGL::createGLTexture hands GL mBuffer.data() +
-            // getLargestMipOffset() with data_hasmips=true, and setImage() derives
-            // its level count from the DIMENSIONS via calcMipLevelCount() (always
-            // down to 1x1) and walks the buffer backwards by that many levels. It
-            // never consults mMipLevels, so a truncated buffer makes GL read past
-            // the front of the allocation -- which is why this encodes whole.
-            S32 max_mips = 0;
+            // This invariant is load-bearing. LLImageGL::createGLTexture hands GL
+            // mBuffer.data() + getLargestMipOffset() with data_hasmips=true, and setImage()
+            // derives its level count from the DIMENSIONS via calcMipLevelCount() (always
+            // down to 1x1) and walks the buffer backwards by that many levels. It never
+            // consults mMipLevels. A truncated buffer therefore makes GL read past the front
+            // of the allocation -- an out-of-bounds read, once per refinement step.
+            S32 max_mips = have_coarser ? (existing_header.mDiscardLevel - discard) : 0;
 
             auto gap_res = std::make_shared<VayuBlockCompressionResult>();
             if (VayuImageBlockCompressor::encode(mDecodedImageRaw, *gap_res, EVayuBlockCompressionFormat::Auto, mTextureJob, max_mips))
             {
-                auto comp_res = gap_res;
+                auto comp_res  = gap_res;
+                bool merged_ok = false;
 
-                // If encode() failed there is nothing to upload; the image stays raw and
-                // createGLTexture's uncompressed path handles it.
+                if (have_coarser)
+                {
+                    // Merge the newly encoded finer mips with the cached coarser remainder so
+                    // the GL upload gets the complete pyramid. gap_res holds only the new mips;
+                    // the cached buffer holds the coarser tail, and the largest-mip-last layout
+                    // means the cached bytes go first.
+                    std::vector<U8>        cached_buffer;
+                    VayuBCCacheEntryHeader merged_header;
+                    if (VayuBCTextureCache::instance().readEntryRaw(mID, cache_format, cache_role, merged_header, cached_buffer))
+                    {
+                        comp_res = std::make_shared<VayuBlockCompressionResult>(*gap_res);
+                        // Splice the cached coarser mips onto the FRONT. mBuffer is smallest-
+                        // mip-first; gap_res holds the new FINEST mips, so they stay at the
+                        // back and the cached tail goes in front. Shared helper so the unit
+                        // test exercises the same ordering the viewer depends on.
+                        comp_res->prependSmallerMips(cached_buffer, merged_header.mMipLevels);
+                        merged_ok = true;
+                    }
+                }
+
+                // The merge failed (the entry vanished between the two probes), so comp_res is
+                // still a truncated gap. Re-encode the full chain: GL must never be handed a
+                // partial pyramid, and a correct-but-slower upload beats an out-of-bounds one.
+                if (have_coarser && !merged_ok)
+                {
+                    auto full_res = std::make_shared<VayuBlockCompressionResult>();
+                    if (VayuImageBlockCompressor::encode(mDecodedImageRaw, *full_res, EVayuBlockCompressionFormat::Auto, mTextureJob, 0))
+                    {
+                        gap_res  = full_res;
+                        comp_res = full_res;
+                    }
+                    // If even this fails there is nothing to upload; the image stays raw and
+                    // createGLTexture's uncompressed path handles it.
+                }
 
                 mDecodedImageRaw->setBlockCompressionResult(comp_res);
-                if (cacheable && !already_covered)
+                if (cacheable && !already_covered && (merged_ok || !have_coarser))
                 {
                     VayuBCCacheEntryHeader cache_header;
                     cache_header.mFormat           = (U8)gap_res->mFormat;
@@ -401,12 +430,40 @@ bool ImageRequest::processRequest()
                     cache_header.mGLInternalFormat = gap_res->mGLInternalFormat;
                     cache_header.mGLPrimaryFormat  = gap_res->mGLPrimaryFormat;
 
-                    // Full chain every time. writeEntrySync's finer-wins guard lets this
-                    // replace a coarser entry, which is exactly the refinement case, so a
-                    // refined texture's own pyramid is what survives rather than a mix of
-                    // its fine levels and the donor's.
-                    VayuBCTextureCache::instance().writeEntry(mID, discard, cache_header,
-                                                              std::shared_ptr<const std::vector<U8>>(gap_res, &gap_res->mBuffer));
+                    if (has_existing && existing_header.mDiscardLevel > discard && merged_ok)
+                    {
+                        // Append only the new mips to the existing cache entry.
+                        if (!VayuBCTextureCache::instance().appendEntry(mID, discard, cache_header,
+                                                                        std::shared_ptr<const std::vector<U8>>(gap_res, &gap_res->mBuffer),
+                                                                        gap_res->mMipLevels))
+                        {
+                            // appendEntry refused (non-contiguous gap, entry replaced under us).
+                            // Do NOT fall back to writing `gap_res` here: it is a truncated
+                            // pyramid, and writeEntrySync accepts a coarser-on-disk entry being
+                            // overwritten by a finer one, so that would silently replace a
+                            // complete pyramid with a few mips. Re-encode the whole chain
+                            // instead -- rare path, so the cost does not matter.
+                            LL_WARNS_ONCE("Texture") << "VayuBCTextureCache: append refused for " << mID << " at discard " << discard
+                                                     << "; rewriting the full chain" << LL_ENDL;
+                            VayuBlockCompressionResult full_res;
+                            if (VayuImageBlockCompressor::encode(mDecodedImageRaw, full_res, EVayuBlockCompressionFormat::Auto, mTextureJob,
+                                                                 0))
+                            {
+                                VayuBCCacheEntryHeader full_header = cache_header;
+                                full_header.mMipLevels             = full_res.mMipLevels;
+                                full_header.mWidth                 = full_res.mWidth;
+                                full_header.mHeight                = full_res.mHeight;
+                                auto full_buf                      = std::make_shared<const std::vector<U8>>(full_res.mBuffer);
+                                VayuBCTextureCache::instance().writeEntry(mID, discard, full_header, full_buf);
+                            }
+                        }
+                    }
+                    else
+                    {
+                        // First sight: write the full chain.
+                        VayuBCTextureCache::instance().writeEntry(mID, discard, cache_header,
+                                                                  std::shared_ptr<const std::vector<U8>>(gap_res, &gap_res->mBuffer));
+                    }
                 }
             }
         }
