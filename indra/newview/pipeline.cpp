@@ -12855,29 +12855,6 @@ LLRenderTarget* LLPipeline::getSpotShadowTarget(U32 i)
     return &mSpotShadow[i];
 }
 
-#if defined(HAVE_FRUSTUM_CULL_ISPC)
-struct FrustumCullScratch
-{
-    std::vector<float> cx, cy, cz, ex, ey, ez;
-    std::vector<LLSpatialGroup*> groups;
-    std::vector<int32_t> results;
-
-    void clear()
-    {
-        cx.clear(); cy.clear(); cz.clear();
-        ex.clear(); ey.clear(); ez.clear();
-        groups.clear();
-        results.clear();
-    }
-    void reserve(size_t n)
-    {
-        cx.reserve(n); cy.reserve(n); cz.reserve(n);
-        ex.reserve(n); ey.reserve(n); ez.reserve(n);
-        groups.reserve(n);
-        results.reserve(n);
-    }
-};
-#endif
 // Re-bucket a shared sun-shadow cull (produced by a single union octree walk) down to one
 // cascade: copy the union's visible/drawable groups whose object bounds intersect this
 // cascade's frustum into `dst` (the same AABBInFrustumObjectBounds test the per-cascade
@@ -12888,83 +12865,6 @@ static void bucketShadowCull(LLCullResult& src, LLCamera& cam, LLCullResult& dst
 {
     dst.clear();
 
-#if defined(HAVE_FRUSTUM_CULL_ISPC)
-    float planes_nx[8], planes_ny[8], planes_nz[8], planes_d[8];
-    int active_plane_count = 0;
-    const U32 max_planes = llmin(cam.getPlaneCount(), (U32)LLCamera::AGENT_PLANE_NO_USER_CLIP_NUM);
-    for (U32 p = 0; p < max_planes; ++p)
-    {
-        if (cam.getPlaneMask(p) < LLCamera::PLANE_MASK_NUM)
-        {
-            const LLPlane& pl = cam.getAgentPlane(p);
-            planes_nx[active_plane_count] = pl[0];
-            planes_ny[active_plane_count] = pl[1];
-            planes_nz[active_plane_count] = pl[2];
-            planes_d[active_plane_count]  = pl[3];
-            active_plane_count++;
-        }
-    }
-
-    thread_local FrustumCullScratch s_scratch;
-
-    auto cull_groups = [&](auto begin, auto end, size_t count, auto push_fn) {
-        if (count == 0) return;
-        if (active_plane_count == 0)
-        {
-            for (auto it = begin; it != end; ++it)
-            {
-                LLSpatialGroup* group = *it;
-                if (!group->isDead()) push_fn(dst, group);
-            }
-            return;
-        }
-
-        s_scratch.clear();
-        s_scratch.reserve(count);
-
-        for (auto it = begin; it != end; ++it)
-        {
-            LLSpatialGroup* group = *it;
-            if (!group->isDead())
-            {
-                const LLVector4a* bounds = group->getObjectBounds();
-                s_scratch.cx.push_back(bounds[0][0]);
-                s_scratch.cy.push_back(bounds[0][1]);
-                s_scratch.cz.push_back(bounds[0][2]);
-                s_scratch.ex.push_back(bounds[1][0]);
-                s_scratch.ey.push_back(bounds[1][1]);
-                s_scratch.ez.push_back(bounds[1][2]);
-                s_scratch.groups.push_back(group);
-            }
-        }
-
-        const size_t num_active = s_scratch.groups.size();
-        if (num_active > 0)
-        {
-            s_scratch.results.resize(num_active);
-            ispc::frustum_cull_aabbs(
-                planes_nx, planes_ny, planes_nz, planes_d, active_plane_count,
-                s_scratch.cx.data(), s_scratch.cy.data(), s_scratch.cz.data(),
-                s_scratch.ex.data(), s_scratch.ey.data(), s_scratch.ez.data(),
-                (int32_t)num_active, s_scratch.results.data());
-
-            for (size_t i = 0; i < num_active; ++i)
-            {
-                if (s_scratch.results[i] > 0)
-                {
-                    push_fn(dst, s_scratch.groups[i]);
-                }
-            }
-        }
-    };
-
-    cull_groups(src.beginVisibleGroups(), src.endVisibleGroups(), src.getVisibleGroupsSize(),
-        [](LLCullResult& target, LLSpatialGroup* g) { target.pushVisibleGroup(g); });
-
-    cull_groups(src.beginDrawableGroups(), src.endDrawableGroups(), src.getDrawableGroupsSize(),
-        [](LLCullResult& target, LLSpatialGroup* g) { target.pushDrawableGroup(g); });
-
-#else
     for (LLCullResult::sg_iterator i = src.beginVisibleGroups(), end = src.endVisibleGroups(); i != end; ++i)
     {
         LLSpatialGroup* group = *i;
@@ -12984,7 +12884,6 @@ static void bucketShadowCull(LLCullResult& src, LLCamera& cam, LLCullResult& dst
             dst.pushDrawableGroup(group);
         }
     }
-#endif
 
     // Individual drawables and spatial bridges (attachments/animesh) are few; pass them
     // through unfiltered -- conservative (they render into every cascade) but correct.
