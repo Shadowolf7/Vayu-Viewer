@@ -652,21 +652,28 @@ S64 LLImageGL::dataFormatBytes(S32 dataformat, S32 width, S32 height)
     {
     case GL_COMPRESSED_RGBA_S3TC_DXT1_EXT:
     case GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT1_EXT:
+    case GL_COMPRESSED_RED_RGTC1:
+    case GL_COMPRESSED_SIGNED_RED_RGTC1:
+    {
+        S64 blocks_w = llmax(1, (width + 3) / 4);
+        S64 blocks_h = llmax(1, (height + 3) / 4);
+        return blocks_w * blocks_h * 8;
+    }
     case GL_COMPRESSED_RGBA_S3TC_DXT3_EXT:
     case GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT3_EXT:
     case GL_COMPRESSED_RGBA_S3TC_DXT5_EXT:
     case GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT:
-    case GL_COMPRESSED_RED_RGTC1:
-    case GL_COMPRESSED_SIGNED_RED_RGTC1:
     case GL_COMPRESSED_RG_RGTC2:
     case GL_COMPRESSED_SIGNED_RG_RGTC2:
     case GL_COMPRESSED_RGBA_BPTC_UNORM:
     case GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM:
     case GL_COMPRESSED_RGB_BPTC_SIGNED_FLOAT:
     case GL_COMPRESSED_RGB_BPTC_UNSIGNED_FLOAT:
-        if (width < 4) width = 4;
-        if (height < 4) height = 4;
-        break;
+    {
+        S64 blocks_w = llmax(1, (width + 3) / 4);
+        S64 blocks_h = llmax(1, (height + 3) / 4);
+        return blocks_w * blocks_h * 16;
+    }
     default:
         break;
     }
@@ -1174,6 +1181,10 @@ bool LLImageGL::setImage(const U8* data_in, bool data_hasmips /* = false */, S32
             // are stored BEFORE the largest image
             const S32 total_gl_levels = calcMipLevelCount(liveWidth(mCurrentDiscardLevel), liveHeight(mCurrentDiscardLevel));
             mMipLevels = total_gl_levels;
+            if (is_compressed)
+            {
+                glTexParameteri(ALTextureSlot::getInternalType(mBindTarget), GL_TEXTURE_MAX_LEVEL, mMipLevels - 1);
+            }
 
             for (S32 gl_level = 0; gl_level < total_gl_levels; gl_level++)
             {
@@ -2138,7 +2149,7 @@ bool LLImageGL::createGLTexture(S32 discard_level, const U8* data_in, bool data_
             gGL.getTextureSlot(0)->bind(this, false, true, new_texname);
             glTexParameteri(ALTextureSlot::getInternalType(mBindTarget), GL_TEXTURE_BASE_LEVEL, 0);
             // As far as levels uploaded by hand go. setImage raises it to the whole
-            // pyramid when it generates the mips instead.
+            // pyramid when it generates the mips or uploads pre-compressed mips.
             glTexParameteri(ALTextureSlot::getInternalType(mBindTarget), GL_TEXTURE_MAX_LEVEL, mMaxDiscardLevel - discard_level);
             // The swizzle that re-expresses a deprecated source format is texture-object
             // state, so every new name needs it -- scaleDown's included.
@@ -3480,6 +3491,9 @@ bool LLImageGL::scaleDown(S32 desired_discard)
         // glCopyImageSubData, or fall back to glGetCompressedTexImage / glCompressedTexSubImage2D.
         const LLGLuint old_texname = mTexName;
         LLGLuint new_texname = 0;
+        // Load-bearing: read the storage format BEFORE resetting mStorageAllocated, because
+        // getStorageInternalFormat() returns mStorage.mFormat only while mStorageAllocated is true.
+        const S32 storage_fmt = getStorageInternalFormat();
         generateTextures(1, &new_texname);
         mStorageAllocated = false;
         if (new_texname == 0)
@@ -3489,7 +3503,8 @@ bool LLImageGL::scaleDown(S32 desired_discard)
         }
 
         gGL.getTextureSlot(0)->bindManual(mBindTarget, new_texname);
-        allocateTextureStorage(desired_width, desired_height, mHasMipMaps, getStorageInternalFormat());
+        allocateTextureStorage(desired_width, desired_height, mHasMipMaps, storage_fmt);
+        glTexParameteri(ALTextureSlot::getInternalType(mBindTarget), GL_TEXTURE_MAX_LEVEL, mMipLevels - 1);
 
         if (glCopyImageSubData != nullptr)
         {
@@ -3513,7 +3528,7 @@ bool LLImageGL::scaleDown(S32 desired_discard)
                 S32 src_level = mip + dst_level;
                 S32 w = getWidth(desired_discard + dst_level);
                 S32 h = getHeight(desired_discard + dst_level);
-                GLsizei level_bytes = (GLsizei)dataFormatBytes(mFormatPrimary, w, h);
+                GLsizei level_bytes = (GLsizei)dataFormatBytes(storage_fmt, w, h);
                 if (mip_buf.size() < (size_t)level_bytes)
                 {
                     mip_buf.resize(level_bytes);
@@ -3521,7 +3536,7 @@ bool LLImageGL::scaleDown(S32 desired_discard)
                 gGL.getTextureSlot(0)->bindManual(mBindTarget, old_texname);
                 glGetCompressedTexImage(mTarget, src_level, mip_buf.data());
                 gGL.getTextureSlot(0)->bindManual(mBindTarget, new_texname);
-                glCompressedTexSubImage2D(mTarget, dst_level, 0, 0, w, h, mFormatPrimary, level_bytes, mip_buf.data());
+                glCompressedTexSubImage2D(mTarget, dst_level, 0, 0, w, h, storage_fmt, level_bytes, mip_buf.data());
             }
             stop_glerror();
         }

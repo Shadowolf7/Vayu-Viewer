@@ -85,6 +85,13 @@ namespace
             glGetTexImage(GL_TEXTURE_2D, level, format, type, out);
         }
 
+        // Read one compressed level of img's texture straight from GL.
+        static void readCompressedTexture(const LLImageGL* img, S32 level, void* out)
+        {
+            bindForRead(img);
+            glGetCompressedTexImage(img->getTexTarget(), level, out);
+        }
+
         // The texel at (x, y) of level 0 of an RGBA8 texture, which must lie in the level. The level is read at the
         // size GL holds it at, which need not be the size the image reports. Called inside a check, so it asserts
         // only on failure: an assertion that passed would take the check's UNSCOPED_INFO.
@@ -637,6 +644,81 @@ namespace
         // And it is really raw: the fill reads back as the fill.
         const U32 texel = readTexelRGBA(img.get(), 4, 4);
         CHECK(((texel >> 24) & 0xff) == 0x40);
+    }
+
+    TEST_CASE_METHOD(llimagegl_data, "LLImageGL: scaleDown works on block-compressed textures", "[LLImageGL]")
+    {
+        constexpr U16 W = 150, H = 150;
+
+        LLPointer<LLImageRaw> compressed = makeRaw(W, H, 4, 0x80);
+        auto                  comp       = std::make_shared<VayuBlockCompressionResult>();
+        REQUIRE(VayuImageBlockCompressor::encode(compressed.get(), *comp, EVayuBlockCompressionFormat::Auto, EVayuTextureJob::Albedo));
+        compressed->setBlockCompressionResult(comp);
+
+        LLPointer<LLImageGL> img = new LLImageGL(/*usemipmaps=*/true);
+        REQUIRE(img->createGLTexture(0, compressed.get()));
+        REQUIRE(img->getHasGLTexture());
+        REQUIRE(img->isStorageCompressed());
+        CHECK(img->getWidth() == 150);
+        CHECK(img->getHeight() == 150);
+
+        // Read level 1 of the original texture (75x75) before downscaling
+        const GLsizei   level1_bytes = (GLsizei)LLImageGL::dataFormatBytes(comp->mGLPrimaryFormat, 75, 75);
+        std::vector<U8> orig_level1(level1_bytes, 0);
+        readCompressedTexture(img.get(), 1, orig_level1.data());
+        REQUIRE(glGetError() == GL_NO_ERROR);
+
+        // Scale down to discard level 1 (75x75)
+        REQUIRE(img->scaleDown(1));
+        REQUIRE(img->getHasGLTexture());
+        REQUIRE(img->isStorageCompressed());
+        CHECK(glGetError() == GL_NO_ERROR);
+        CHECK(img->getWidth() == 75);
+        CHECK(img->getHeight() == 75);
+        CHECK(img->getStorageInternalFormat() == (S32)comp->mGLPrimaryFormat);
+
+        // Verify GL_TEXTURE_MAX_LEVEL matches the new pyramid depth
+        const S32 expected_mips = LLImageGL::calcMipLevelCount(75, 75);
+        bindForRead(img.get());
+        GLint max_level = -1;
+        glGetTexParameteriv(img->getTexTarget(), GL_TEXTURE_MAX_LEVEL, &max_level);
+        CHECK(max_level == expected_mips - 1);
+
+        // Verify pixel payload: level 0 of downscaled texture must match level 1 of the original
+        std::vector<U8> scaled_level0(level1_bytes, 0);
+        readCompressedTexture(img.get(), 0, scaled_level0.data());
+        REQUIRE(glGetError() == GL_NO_ERROR);
+        CHECK(scaled_level0 == orig_level1);
+
+        // Verify the glGetCompressedTexImage fallback path
+        {
+            struct ScopedDisableCopyImage
+            {
+                PFNGLCOPYIMAGESUBDATAPROC saved;
+                ScopedDisableCopyImage() : saved(glCopyImageSubData) { glCopyImageSubData = nullptr; }
+                ~ScopedDisableCopyImage() { glCopyImageSubData = saved; }
+            } disable_copy;
+
+            LLPointer<LLImageGL> img_fallback = new LLImageGL(/*usemipmaps=*/true);
+            REQUIRE(img_fallback->createGLTexture(0, compressed.get()));
+            REQUIRE(img_fallback->scaleDown(1));
+            CHECK(glGetError() == GL_NO_ERROR);
+            CHECK(img_fallback->getWidth() == 75);
+            CHECK(img_fallback->getHeight() == 75);
+            CHECK(img_fallback->getStorageInternalFormat() == (S32)comp->mGLPrimaryFormat);
+
+            bindForRead(img_fallback.get());
+            GLint fb_max_level = -1;
+            glGetTexParameteriv(img_fallback->getTexTarget(), GL_TEXTURE_MAX_LEVEL, &fb_max_level);
+            CHECK(fb_max_level == expected_mips - 1);
+
+            std::vector<U8> fallback_level0(level1_bytes, 0);
+            readCompressedTexture(img_fallback.get(), 0, fallback_level0.data());
+            REQUIRE(glGetError() == GL_NO_ERROR);
+            CHECK(fallback_level0 == orig_level1);
+        }
+
+        gGL.getTextureSlot(0)->unbind();
     }
 
     // The alpha analysis reports the highest alpha of the level it read, which the selection outline asks to tell a
