@@ -244,15 +244,37 @@ public:
     // two stay in lockstep instead of drifting into two different lists.
     static bool categoryAllowsCompression(S32 category);
 
+    // The format one upload's data is in, when that is not the source format its component
+    // count resolved (which the members hold, and which a raw upload uses). A
+    // block-compressed pyramid carries its format here, on the call, rather than installing
+    // it into the members: the upload runs on a worker while the main thread goes on
+    // reading them, so a format in the members is one the main thread can read half-written
+    // -- and one that outlives the upload it belonged to.
+    struct UploadFormat
+    {
+        UploadFormat() : mPrimary(0), mInternal(0) {}
+        explicit UploadFormat(LLGLenum primary, LLGLenum internal) : mPrimary(primary), mInternal(internal) {}
+
+        LLGLenum mPrimary; // compressed format of the data, or 0 for a raw upload
+        LLGLenum mInternal;
+
+        bool compressed() const { return mPrimary != 0; }
+        // glTexStorage2D wants a sized format, and for a compressed upload the sized one is
+        // the primary the encoder hands over; a raw upload allocates what the members hold.
+        LLGLint  storageFormat(LLGLint source_internal) const { return mPrimary ? (LLGLint)mPrimary : source_internal; }
+        LLGLenum primaryFormat(LLGLenum source_primary) const { return mPrimary ? mPrimary : source_primary; }
+    };
+
     bool createGLTexture() ;
     bool createGLTexture(S32 discard_level, const LLImageRaw* imageraw, S32 usename = 0, bool to_create = true,
         S32 category = sMaxCategories-1, bool defer_copy = false, LLGLuint* tex_name = nullptr);
-    bool createGLTexture(S32 discard_level, const U8* data, bool data_hasmips = false, S32 usename = 0, bool defer_copy = false, LLGLuint* tex_name = nullptr);
+    bool createGLTexture(S32 discard_level, const U8* data, bool data_hasmips = false, S32 usename = 0, bool defer_copy = false,
+                         LLGLuint* tex_name = nullptr, const UploadFormat& upload = {});
     void setImage(const LLImageRaw* imageraw);
-    bool setImage(const U8* data_in, bool data_hasmips = false, S32 usename = 0);
+    bool setImage(const U8* data_in, bool data_hasmips = false, S32 usename = 0, const UploadFormat& upload = {});
     // *TODO: This function may not work on block-compressed textures (i.e. those
-    // uploaded already compressed, where isCompressed() is true). Partial image
-    // updates do not work on compressed textures.
+    // uploaded already compressed, whose storage is a compressed format -- see
+    // isStorageCompressed). Partial image updates do not work on compressed textures.
     bool setSubImage(const LLImageRaw* imageraw, S32 x_pos, S32 y_pos, S32 width, S32 height, bool force_fast_update = false, LLGLuint use_name = 0, bool skip_unbind = false);
     bool setSubImage(const U8* datap, S32 data_width, S32 data_height, S32 x_pos, S32 y_pos, S32 width, S32 height, bool force_fast_update = false, LLGLuint use_name = 0, bool skip_unbind = false);
     bool setSubImageFromFrameBuffer(S32 fb_x, S32 fb_y, S32 x_pos, S32 y_pos, S32 width, S32 height);
@@ -307,9 +329,13 @@ public:
     bool isAlphaOnly() const { return (mUploadInFlight ? mPublished.mDeprecatedSourceFormat : mDeprecatedSourceFormat) == GL_ALPHA; }
     LLGLenum getFormatType() const { return mFormatType; }
 
-    // Internal format to hand glTexStorage*. Block-compressed textures keep their sized
-    // compressed format in mFormatPrimary rather than mFormatInternal.
+    // Internal format the live GL texture's storage is, or -- before anything is allocated --
+    // the source format the members resolved. A block-compressed texture's storage holds the
+    // sized compressed format the encoder chose, which is not any longer in the members.
     S32 getStorageInternalFormat() const;
+    // Whether the texture as it now stands is block-compressed -- which is a fact about its
+    // storage, not about the format the members resolved, and is not to be had from them.
+    bool isStorageCompressed() const { return isCompressedFormat(getStorageInternalFormat()); }
 
     bool getHasGLTexture() const { return mTexName != 0; }
     LLGLuint getTexName() const { return mTexName; }
@@ -387,16 +413,19 @@ private:
                                     const void*& pixels, S32 width, S32 height);
 
     // Allocate backing storage for the currently-bound texture at the given level-0
-    // size, and record its VRAM accounting. Sets mMipLevels. Callers replacing an
-    // existing texture must release the old accounting themselves.
-    void allocateTextureStorage(S32 width, S32 height, bool has_mips);
+    // size in the given internal format, and record its VRAM accounting. Sets mMipLevels.
+    // Callers replacing an existing texture must release the old accounting themselves.
+    void allocateTextureStorage(S32 width, S32 height, bool has_mips, S32 intformat);
 
-    // Whether an upload of this level-0 size, in the current format, can be written into
-    // the storage the current texture object already has rather than needing a new one.
-    bool storageFits(S32 width, S32 height) const;
+    // Whether an upload of this level-0 size, in the given internal format, can be written
+    // into the storage the current texture object already has rather than needing a new one.
+    bool storageFits(S32 width, S32 height, S32 intformat) const;
 
     void freePickMask();
-    bool isCompressed() const;
+    // Whether a primary format is a block-compressed one. Said of a format, not of this
+    // image: the source format the members resolved never is one, and a compressed upload
+    // says so in its UploadFormat.
+    static bool isCompressedFormat(LLGLenum primary);
 
     // Bytes of one level at this size, as getBytes and getMipBytes count it: an integer level by its pixel format AND
     // type -- an R32UI texel is four bytes, which GL_RED_INTEGER alone cannot say -- and any other by dataFormatBytes
@@ -408,6 +437,10 @@ private:
     bool stagesAlpha() const;
     void setPickMask(U8* mask, U16 width, U16 height);
     void setAlphaAnalysis(const AlphaAnalysis& analysis);
+    // The mask verdict alone, for an upload that has no alpha measurement to publish with
+    // it. Not setAlphaAnalysis: that publishes a highest alpha too, and 255 there would
+    // say "opaque" of an image nothing has read.
+    void setStagedIsMask(bool is_mask);
 
     // Sets the published analysis to what a texture without a readable alpha holds: no mask, and opaque.
     void clearAlphaAnalysis();
@@ -449,6 +482,10 @@ private:
         bool mHasPickMask    = false; // a result is waiting, possibly "no pick mask"
         AlphaAnalysis mAnalysis;
         bool mHasAnalysis    = false;
+        // The mask verdict on its own, from an upload that measured no alpha to go with it:
+        // a block-compressed image's alpha was read once at encode time, by the encoder.
+        bool mIsMask    = false;
+        bool mHasIsMask = false;
     };
     PendingAlpha mPendingAlpha;
 

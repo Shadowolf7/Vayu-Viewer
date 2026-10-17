@@ -39,6 +39,7 @@
 #include "llheadlessgl_fixture.h"
 
 #include "llimage.h"
+#include "vayuimageblockcompressor.h"
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -601,6 +602,41 @@ namespace
         img->syncTexName(img->getTexName());
         UNSCOPED_INFO("the new mask publishes with its texture");
         CHECK_FALSE(img->getMask(centre));
+    }
+
+    // A block-compressed upload is uploaded, and stored, as the format it was compressed to,
+    // which travels with the upload rather than being installed over the members -- so the
+    // members still answer for the source, and the image after it is stored as itself. Latched
+    // instead, that upload reached setImage with no mips to hand a format that read
+    // compressed: the fatal "Compressed Image has mipmaps but data does not".
+    TEST_CASE_METHOD(llimagegl_data, "LLImageGL: a compressed upload's format does not outlive it", "[LLImageGL]")
+    {
+        constexpr U16 W = 16, H = 16;
+
+        // What the fetch hands over with an image it compressed: the format it was encoded
+        // to, and the pyramid. Encoded here rather than mocked, so the upload below is real.
+        LLPointer<LLImageRaw> compressed = makeRaw(W, H, 4, 0x80);
+        auto                  comp       = std::make_shared<VayuBlockCompressionResult>();
+        REQUIRE(VayuImageBlockCompressor::encode(compressed.get(), *comp, EVayuBlockCompressionFormat::Auto, EVayuTextureJob::Albedo));
+        compressed->setBlockCompressionResult(comp);
+
+        LLPointer<LLImageGL> img = new LLImageGL(/*usemipmaps=*/true);
+        REQUIRE(img->createGLTexture(0, compressed.get()));
+        REQUIRE(img->getHasGLTexture());
+        UNSCOPED_INFO("the storage holds the compressed format the pyramid brought");
+        CHECK(img->getStorageInternalFormat() == (S32)comp->mGLPrimaryFormat);
+        UNSCOPED_INFO("the members still describe the source it was compressed from");
+        CHECK(img->getPrimaryFormat() == (LLGLenum)GL_RGBA);
+
+        UNSCOPED_INFO("an ordinary image after it, stored as itself");
+        REQUIRE(img->createGLTexture(0, makeRaw(W, H, 4, 0x40).get()));
+        REQUIRE(img->getHasGLTexture());
+        CHECK(img->getStorageInternalFormat() != (S32)comp->mGLPrimaryFormat);
+        CHECK(img->getPrimaryFormat() == (LLGLenum)GL_RGBA);
+        CHECK(img->isStorageCompressed() == false);
+        // And it is really raw: the fill reads back as the fill.
+        const U32 texel = readTexelRGBA(img.get(), 4, 4);
+        CHECK(((texel >> 24) & 0xff) == 0x40);
     }
 
     // The alpha analysis reports the highest alpha of the level it read, which the selection outline asks to tell a

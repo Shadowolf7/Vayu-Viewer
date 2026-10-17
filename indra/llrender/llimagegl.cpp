@@ -1129,11 +1129,14 @@ void LLImageGL::setImage(const LLImageRaw* imageraw)
     setImage(rawdata, false);
 }
 
-bool LLImageGL::setImage(const U8* data_in, bool data_hasmips /* = false */, S32 usename /* = 0 */)
+bool LLImageGL::setImage(const U8* data_in, bool data_hasmips /* = false */, S32 usename /* = 0 */, const UploadFormat& upload /* = {} */)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
 
-    const bool is_compressed = isCompressed();
+    // What this upload's data is in: the compressed format it brought, or the source format
+    // the members hold. Only a compressed upload differs, and it says so on the call.
+    const bool     is_compressed = upload.compressed();
+    const LLGLenum primary       = upload.primaryFormat(mFormatPrimary);
 
     mHasMipMaps = mUseMipMaps;
 
@@ -1155,7 +1158,8 @@ bool LLImageGL::setImage(const U8* data_in, bool data_hasmips /* = false */, S32
     if (!mStorageAllocated)
     {
         free_cur_tex_image();
-        allocateTextureStorage(liveWidth(mCurrentDiscardLevel), liveHeight(mCurrentDiscardLevel), mUseMipMaps);
+        allocateTextureStorage(liveWidth(mCurrentDiscardLevel), liveHeight(mCurrentDiscardLevel), mUseMipMaps,
+                               upload.storageFormat(mFormatInternal));
     }
 
     if (data_in == nullptr)
@@ -1179,12 +1183,12 @@ bool LLImageGL::setImage(const U8* data_in, bool data_hasmips /* = false */, S32
 
                 if (gl_level > 0)
                 {
-                    data_in -= dataFormatBytes(mFormatPrimary, w, h); // see above comment
+                    data_in -= dataFormatBytes(primary, w, h); // see above comment
                 }
                 if (is_compressed)
                 {
-                    GLsizei tex_size = (GLsizei)dataFormatBytes(mFormatPrimary, w, h);
-                    glCompressedTexSubImage2D(mTarget, gl_level, 0, 0, w, h, mFormatPrimary, tex_size, (GLvoid *)data_in);
+                    GLsizei tex_size = (GLsizei)dataFormatBytes(primary, w, h);
+                    glCompressedTexSubImage2D(mTarget, gl_level, 0, 0, w, h, primary, tex_size, (GLvoid*)data_in);
                     stop_glerror();
                 }
                 else
@@ -1395,8 +1399,8 @@ bool LLImageGL::setImage(const U8* data_in, bool data_hasmips /* = false */, S32
         S32 h = liveHeight(mCurrentDiscardLevel);
         if (is_compressed)
         {
-            GLsizei tex_size = (GLsizei)dataFormatBytes(mFormatPrimary, w, h);
-            glCompressedTexSubImage2D(mTarget, 0, 0, 0, w, h, mFormatPrimary, tex_size, (GLvoid *)data_in);
+            GLsizei tex_size = (GLsizei)dataFormatBytes(primary, w, h);
+            glCompressedTexSubImage2D(mTarget, 0, 0, 0, w, h, primary, tex_size, (GLvoid*)data_in);
             stop_glerror();
         }
         else
@@ -1641,7 +1645,7 @@ bool LLImageGL::setSubImage(const U8* datap, S32 data_width, S32 data_height, S3
         if (!res) LL_ERRS() << "LLImageGL::setSubImage(): bindTexture failed" << LL_ENDL;
         stop_glerror();
 
-        const bool use_sub_image = should_stagger_image_set(isCompressed());
+        const bool use_sub_image = should_stagger_image_set(isStorageCompressed());
         if (!use_sub_image)
         {
             glTexSubImage2D(mTarget, 0, x_pos, y_pos, width, height, mFormatPrimary, mFormatType, sub_datap);
@@ -2037,53 +2041,40 @@ bool LLImageGL::createGLTexture(S32 discard_level, const LLImageRaw* imageraw, S
     setCategory(category);
     const U8* rawdata = imageraw->getData();
 
-    // The raw image's own job wins: it is the role the fetch encoded under, so it matches the
-    // cache entry. LLImageGL::mTextureJob is the fallback for images built outside the fetch
-    // pipeline. Resolving it here, next to every other "should we do BC work" term, is what
-    // lets the encode below call through without re-checking for an unresolved role.
-    const EVayuTextureJob job      = (imageraw->getTextureJob() != EVayuTextureJob::Unknown) ? imageraw->getTextureJob() : mTextureJob;
-    const bool            compress = sCompressTextures && mAllowCompression && categoryAllowsCompression(category) &&
-                                     job != EVayuTextureJob::Unknown && !had_explicit_format && mUseMipMaps && !defer_copy &&
-                                     VayuImageBlockCompressor::isEligible(raw_w, raw_h, imageraw->getComponents());
-    if (compress)
+    // What the image brought: a block-compressed pyramid, or raw pixels. Which one is not
+    // this function's decision -- compression is decided per request (llviewertexture.cpp,
+    // where allow_compression is worked out) and performed in the fetch or decode stage, so
+    // an image that carries a result is uploaded as that result and an image without one is
+    // uploaded raw. Re-deciding it here was a second answer to that question, from different
+    // terms, and the two answers disagreeing is how a compressed pyramid reached the raw
+    // path with the format still latched compressed.
+    //
+    // The pyramid's format travels with it, as the upload's own, and is never installed into
+    // the members: this runs on the upload worker while the main thread goes on reading them
+    // (isCompressed, scaleDown, isAlphaOnly, the batching test), so a compressed format in
+    // the members is one the main thread can read half-written -- and one that outlives the
+    // upload that brought it, which is how a later raw upload found a compressed format
+    // waiting for it with no mips to give.
+    const std::shared_ptr<VayuBlockCompressionResult> comp = imageraw->getBlockCompressionResult();
+    if (!had_explicit_format && comp && !comp->mBuffer.empty())
     {
-        // 1. Fast path: check if the texture was already compressed on a background thread pool worker
-        auto pre_comp = imageraw->getBlockCompressionResult();
-        if (pre_comp && !pre_comp->mBuffer.empty())
+        // Staged like every other alpha fact: off the main thread getMask and
+        // getIsAlphaMask may be reading the published verdict as this runs.
+        setStagedIsMask(comp->mIsMask);
+        if (mNeedsAlphaAndPickMask && imageraw->getComponents() == 4)
         {
-            mIsMask = pre_comp->mIsMask;
-            mFormatInternal = pre_comp->mGLInternalFormat;
-            mFormatPrimary = pre_comp->mGLPrimaryFormat;
-            mFormatType = GL_UNSIGNED_BYTE;
-            if (mNeedsAlphaAndPickMask && imageraw->getComponents() == 4)
-            {
-                updatePickMask(raw_w, raw_h, rawdata);
-            }
-            const U8* comp_data = pre_comp->mBuffer.data() + pre_comp->getLargestMipOffset();
-            return createGLTexture(discard_level, comp_data, true /* data_hasmips */, usename, defer_copy, tex_name);
+            updatePickMask(raw_w, raw_h, rawdata);
         }
-
-        // 2. Fallback path: encode synchronously if not pre-compressed in background.
-        VayuBlockCompressionResult comp_res;
-        if (VayuImageBlockCompressor::encode(imageraw, comp_res, EVayuBlockCompressionFormat::Auto, job))
-        {
-            mIsMask = comp_res.mIsMask;
-            mFormatInternal = comp_res.mGLInternalFormat;
-            mFormatPrimary = comp_res.mGLPrimaryFormat;
-            mFormatType = GL_UNSIGNED_BYTE;
-            if (mNeedsAlphaAndPickMask && imageraw->getComponents() == 4)
-            {
-                updatePickMask(raw_w, raw_h, rawdata);
-            }
-            const U8* comp_data = comp_res.mBuffer.data() + comp_res.getLargestMipOffset();
-            return createGLTexture(discard_level, comp_data, true /* data_hasmips */, usename, defer_copy, tex_name);
-        }
+        const LLImageGL::UploadFormat upload(comp->mGLPrimaryFormat, comp->mGLInternalFormat);
+        const U8*                     comp_data = comp->mBuffer.data() + comp->getLargestMipOffset();
+        return createGLTexture(discard_level, comp_data, true /* data_hasmips */, usename, defer_copy, tex_name, upload);
     }
 
     return createGLTexture(discard_level, rawdata, false, usename, defer_copy, tex_name);
 }
 
-bool LLImageGL::createGLTexture(S32 discard_level, const U8* data_in, bool data_hasmips, S32 usename, bool defer_copy, LLGLuint* tex_name)
+bool LLImageGL::createGLTexture(S32 discard_level, const U8* data_in, bool data_hasmips, S32 usename, bool defer_copy, LLGLuint* tex_name,
+                                const UploadFormat& upload)
 // Call with void data, vmem is allocated but unitialized
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
@@ -2117,17 +2108,17 @@ bool LLImageGL::createGLTexture(S32 discard_level, const U8* data_in, bool data_
     // storage it already has. The discard level matching does not say so: setSize has
     // just taken the new dimensions, and immutable storage cannot follow them, so a
     // size or format change here has to build a new texture like any other.
-    if (main_thread // <--- always force creation of new_texname when not on main thread ...
+    if (main_thread    // <--- always force creation of new_texname when not on main thread ...
         && !defer_copy // <--- ... or defer copy is set
-        && mTexName != 0 && discard_level == mCurrentDiscardLevel
-        && storageFits(liveWidth(discard_level), liveHeight(discard_level)))
+        && mTexName != 0 && discard_level == mCurrentDiscardLevel &&
+        storageFits(liveWidth(discard_level), liveHeight(discard_level), upload.storageFormat(mFormatInternal)))
     {
         LL_PROFILE_ZONE_NAMED("cglt - early setImage");
         if (tex_name != nullptr)
         {
             *tex_name = mTexName;
         }
-        return setImage(data_in, data_hasmips);
+        return setImage(data_in, data_hasmips, 0, upload);
     }
 
     GLuint old_texname = mTexName;
@@ -2173,7 +2164,7 @@ bool LLImageGL::createGLTexture(S32 discard_level, const U8* data_in, bool data_
 
     {
         LL_PROFILE_ZONE_NAMED("cglt - late setImage");
-        if (!setImage(data_in, data_hasmips, new_texname))
+        if (!setImage(data_in, data_hasmips, new_texname, upload))
         {
             return false;
         }
@@ -2484,6 +2475,18 @@ void LLImageGL::setAlphaAnalysis(const AlphaAnalysis& analysis)
     mMaxAlpha = analysis.mMaxAlpha;
 }
 
+void LLImageGL::setStagedIsMask(bool is_mask)
+{
+    if (stagesAlpha())
+    {
+        mPendingAlpha.mIsMask    = is_mask;
+        mPendingAlpha.mHasIsMask = true;
+        return;
+    }
+
+    mIsMask = is_mask;
+}
+
 void LLImageGL::clearAlphaAnalysis()
 {
     mIsMask   = false;
@@ -2504,6 +2507,10 @@ void LLImageGL::publishPendingAlpha()
     {
         mIsMask   = mPendingAlpha.mAnalysis.mIsMask;
         mMaxAlpha = mPendingAlpha.mAnalysis.mMaxAlpha;
+    }
+    if (mPendingAlpha.mHasIsMask)
+    {
+        mIsMask = mPendingAlpha.mIsMask;
     }
     mPendingAlpha = PendingAlpha();
 }
@@ -2622,7 +2629,7 @@ bool LLImageGL::readBackRaw(S32 discard_level, LLImageRaw* imageraw, bool compre
     {
         // An LLImageRaw holds a byte a component. A wider texel -- R32UI's, a float format's -- would not fit, and GL
         // would write past the end of it.
-        if (!isCompressed() && pixel_bytes(mFormatPrimary, mFormatType) != (U32)ncomponents)
+        if (!isStorageCompressed() && pixel_bytes(mFormatPrimary, mFormatType) != (U32)ncomponents)
         {
             LL_WARNS() << "readBackRaw: a texel of format 0x" << std::hex << mFormatPrimary << " type 0x" << mFormatType
                        << std::dec << " is wider than an image's " << ncomponents << " bytes" << LL_ENDL;
@@ -3200,12 +3207,12 @@ void LLImageGL::freePickMask()
     mPickMaskWidth = mPickMaskHeight = 0;
 }
 
-bool LLImageGL::isCompressed() const
+// static
+bool LLImageGL::isCompressedFormat(LLGLenum primary)
 {
-    llassert(mFormatPrimary != 0);
     // *NOTE: Not all compressed formats are included here.
     bool is_compressed = false;
-    switch (mFormatPrimary)
+    switch (primary)
     {
     case GL_COMPRESSED_RGBA_S3TC_DXT1_EXT:
     case GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT1_EXT:
@@ -3237,10 +3244,10 @@ void LLImageGL::updatePickMask(S32 width, S32 height, const U8* data_in)
         return ;
     }
 
-    if (mFormatType != GL_UNSIGNED_BYTE ||
-        ((mFormatPrimary != GL_RGBA)
-      && (mFormatPrimary != GL_SRGB_ALPHA)
-      && !isCompressed()))
+    // The data is raw whatever it is uploaded as, so this is about the source format: a
+    // compressed upload passes here on the strength of its component count alone, and an
+    // explicit one only if it names an RGBA source.
+    if (mFormatType != GL_UNSIGNED_BYTE || ((mFormatPrimary != GL_RGBA) && (mFormatPrimary != GL_SRGB_ALPHA)))
     {
         //cannot generate a pick mask for this texture
         setPickMask(nullptr, 0, 0);
@@ -3363,43 +3370,49 @@ void LLImageGL::resetCurTexSizebar()
     sCurTexPickSize = -1 ;
 }
 
-// The internal format glTexStorage* should be handed. Block-compressed textures carry
-// their (sized) compressed format in mFormatPrimary rather than mFormatInternal, which is
-// the convention the glCompressedTexImage2D calls already follow.
+// The internal format the live GL texture's storage is, which is what glTexStorage* was
+// handed and what every question about the texture as it now stands has to be asked of --
+// a compressed texture's sized compressed format is not in the members any more, which is
+// the point of it travelling with its upload. Before anything is allocated there is no
+// storage, and the source format is all that has been decided.
 S32 LLImageGL::getStorageInternalFormat() const
 {
-    return isCompressed() ? mFormatPrimary : mFormatInternal;
+    if (mStorageAllocated && mStorage.mFormat != 0)
+    {
+        return mStorage.mFormat;
+    }
+    return mFormatInternal;
 }
 
 // Allocate backing storage for the currently-bound texture at the given level-0 size,
 // and record the VRAM accounting for it. Callers replacing an existing texture are
 // responsible for releasing the old accounting (free_tex_image) themselves.
-void LLImageGL::allocateTextureStorage(S32 width, S32 height, bool has_mips)
+void LLImageGL::allocateTextureStorage(S32 width, S32 height, bool has_mips, S32 intformat)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
 
     mMipLevels = has_mips ? calcMipLevelCount(width, height) : 1;
 
-    assertStorageAllocatable(mTarget, getStorageInternalFormat());
+    assertStorageAllocatable(mTarget, intformat);
 
     {
         LL_PROFILE_ZONE_NAMED("glTexStorage2D");
         // Dimensions, format and level count are fixed for the lifetime of this texture
         // object. Every later write must be a sub-image, and any change of size or format
         // must create a new texture -- see scaleDown and createGLTexture.
-        glTexStorage2D(mTarget, mMipLevels, getStorageInternalFormat(), width, height);
+        glTexStorage2D(mTarget, mMipLevels, intformat, width, height);
         skipSRGBDecode(mTarget);
         mStorageAllocated = true;
         mStorage.mWidth  = width;
         mStorage.mHeight = height;
         mStorage.mLevels = mMipLevels;
-        mStorage.mFormat = getStorageInternalFormat();
+        mStorage.mFormat  = intformat;
     }
 
-    alloc_tex_image(width, height, mFormatInternal, 1, has_mips);
+    alloc_tex_image(width, height, intformat, 1, has_mips);
 }
 
-bool LLImageGL::storageFits(S32 width, S32 height) const
+bool LLImageGL::storageFits(S32 width, S32 height, S32 intformat) const
 {
     // Nothing allocated yet: setImage allocates it at this size. Allocated by the owner of
     // a shared texture object (markStorageAllocated, no description): sized by that owner.
@@ -3408,10 +3421,8 @@ bool LLImageGL::storageFits(S32 width, S32 height) const
         return true;
     }
 
-    return mStorage.mWidth == width
-        && mStorage.mHeight == height
-        && mStorage.mFormat == getStorageInternalFormat()
-        && mStorage.mLevels == (mUseMipMaps ? calcMipLevelCount(width, height) : 1);
+    return mStorage.mWidth == width && mStorage.mHeight == height && mStorage.mFormat == intformat &&
+           mStorage.mLevels == (mUseMipMaps ? calcMipLevelCount(width, height) : 1);
 }
 
 // static
@@ -3460,7 +3471,7 @@ bool LLImageGL::scaleDown(S32 desired_discard)
     S32 desired_width = getWidth(desired_discard);
     S32 desired_height = getHeight(desired_discard);
 
-    if (isCompressed())
+    if (isStorageCompressed())
     {
         // Block-compressed textures cannot use the FBO path (cannot render into BC formats)
         // or the uncompressed PBO path. However, all lower mips are already compressed
@@ -3478,7 +3489,7 @@ bool LLImageGL::scaleDown(S32 desired_discard)
         }
 
         gGL.getTextureSlot(0)->bindManual(mBindTarget, new_texname);
-        allocateTextureStorage(desired_width, desired_height, mHasMipMaps);
+        allocateTextureStorage(desired_width, desired_height, mHasMipMaps, getStorageInternalFormat());
 
         if (glCopyImageSubData != nullptr)
         {
@@ -3582,7 +3593,7 @@ bool LLImageGL::scaleDown(S32 desired_discard)
             // parameter selects a sampler object now, and glGenerateMipmap below must run
             // under the texture's own SKIP_DECODE state, not a leftover sampler's.
             gGL.getTextureSlot(0)->bindManual(mBindTarget, new_texname);
-            allocateTextureStorage(desired_width, desired_height, mHasMipMaps);
+            allocateTextureStorage(desired_width, desired_height, mHasMipMaps, getStorageInternalFormat());
             glCopyTexSubImage2D(mTarget, 0, 0, 0, 0, 0, desired_width, desired_height);
 
             if (mHasMipMaps)
@@ -3633,7 +3644,7 @@ bool LLImageGL::scaleDown(S32 desired_discard)
         // run under the texture's own SKIP_DECODE state, not a leftover sampler's.
         gGL.getTextureSlot(0)->bindManual(mBindTarget, new_texname);
         glBindBuffer(GL_PIXEL_UNPACK_BUFFER, sScratchPBO);
-        allocateTextureStorage(desired_width, desired_height, mHasMipMaps);
+        allocateTextureStorage(desired_width, desired_height, mHasMipMaps, getStorageInternalFormat());
         // Texture-object state, so the new name starts without it.
         applySwizzleForDeprecatedFormat(mBindTarget, mDeprecatedSourceFormat);
         glTexSubImage2D(mTarget, 0, 0, 0, desired_width, desired_height, mFormatPrimary, mFormatType, nullptr);
