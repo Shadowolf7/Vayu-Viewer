@@ -56,7 +56,8 @@ public:
     bool handleMouseDown(S32 x, S32 y, MASK mask) override;
     bool handleMouseUp(S32 x, S32 y, MASK mask) override;
     bool handleScrollWheel(S32 x, S32 y, LLScrollDelta delta) override;
-    bool handleKey(KEY key, MASK mask, bool called_from_parent) override;
+    bool handleKeyHere(KEY key, MASK mask) override;
+    bool handleUnicodeCharHere(llwchar uni_char) override;
 
     static void addDebugImage(LLViewerFetchedTexture* image) { sDebugImages.insert(image); }
     static void removeDebugImage(LLViewerFetchedTexture* image) { sDebugImages.insert(image); }

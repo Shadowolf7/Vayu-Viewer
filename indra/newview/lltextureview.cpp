@@ -569,7 +569,8 @@ bool LLTextureBar::handleMouseDown(S32 x, S32 y, MASK mask)
         }
         return true;
     }
-    return LLView::handleMouseDown(x,y,mask);
+    LLView::handleMouseDown(x, y, mask);
+    return true;
 }
 
 bool LLTextureBar::handleScrollWheel(S32 x, S32 y, LLScrollDelta delta)
@@ -1016,7 +1017,8 @@ void LLTextureStatusBar::draw()
     // "!" beside the col-1 header for exactly those two states.
     const bool        focused   = mTextureView->hasFocus();
     const char*       focus_tag = focused ? "[FOCUSED - Esc to walk]" : "(click to type)";
-    const std::string line = llformat("filter: %-36s  %d-%d of %d   sort: %s   %s", mTextureView->mFilter.c_str(), first, last,
+    const std::string filter_str = mTextureView->mFilter.empty() ? "(all)" : (mTextureView->mFilter + (focused ? "_" : ""));
+    const std::string line = llformat("[Filter: %s]  [Rows %d-%d of %d]  [Sort: %s]  %s", filter_str.c_str(), first, last,
                                       mTextureView->mRowCount, mTextureView->mOrderFetch ? "fetch priority" : "virtual area", focus_tag);
     LLFontGL::getFontMonospace()->renderUTF8(line, 0, 0, getRect().getHeight(), focused ? LLColor4::cyan : LLColor4::white, LLFontGL::LEFT,
                                              LLFontGL::TOP);
@@ -1392,12 +1394,8 @@ void LLTextureView::scrollBy(S32 rows)
     mFreezeView = false;
 }
 
-bool LLTextureView::handleKey(KEY key, MASK mask, bool called_from_parent)
+bool LLTextureView::handleKeyHere(KEY key, MASK mask)
 {
-    // Typing filters. There is no focus to manage because the view itself takes
-    // the keystrokes -- it has no text box, and adding one to a container that
-    // is also a mouse target turns click-to-focus into another thing to get
-    // wrong.
     switch (key)
     {
         case KEY_ESCAPE:
@@ -1456,28 +1454,36 @@ bool LLTextureView::handleKey(KEY key, MASK mask, bool called_from_parent)
             mFreezeView = false;
             return true;
 
-        case ' ':
-            mFreezeView = !mFreezeView;
-            return true;
-
-        case 'i':
-        case 'I':
-            mPrintList = true;
-            return true;
-
         default:
             break;
+    }
+
+    return false;
+}
+
+bool LLTextureView::handleUnicodeCharHere(llwchar uni_char)
+{
+    if (uni_char == ' ')
+    {
+        mFreezeView = !mFreezeView;
+        return true;
+    }
+
+    if (uni_char == 'i' || uni_char == 'I')
+    {
+        mPrintList = true;
+        return true;
     }
 
     // A bare printable character extends the filter. UUIDs are hex, so nothing
     // else is accepted -- silently swallowing other keys would leave the view
     // looking frozen when it is merely ignoring you.
-    if ((key >= '0' && key <= '9') || (key >= 'a' && key <= 'f') || (key >= 'A' && key <= 'F'))
+    if ((uni_char >= '0' && uni_char <= '9') || (uni_char >= 'a' && uni_char <= 'f') || (uni_char >= 'A' && uni_char <= 'F'))
     {
         // LLUUID::toString() emits lowercase hex and matchesFilter compares
         // case-sensitively against it, so the keystroke has to be folded or
         // every filter containing a-f matches nothing at all.
-        mFilter += (char)::tolower((int)key);
+        mFilter += (char)::tolower((int)uni_char);
         setFirstRow(0);
         mFreezeView = false;
         return true;
@@ -1532,7 +1538,8 @@ bool LLTextureView::handleMouseDown(S32 x, S32 y, MASK mask)
         mOrderFetch = !mOrderFetch;
         return true;
     }
-    return LLView::handleMouseDown(x,y,mask);
+    LLView::handleMouseDown(x, y, mask);
+    return true;
 }
 
 bool LLTextureView::handleMouseUp(S32 x, S32 y, MASK mask)
