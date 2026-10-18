@@ -26,7 +26,9 @@
 
 #include "llviewerprecompiledheaders.h"
 
+#include <initializer_list>
 #include <set>
+#include <utility>
 
 #include "lltextureview.h"
 #include "pipeline.h"
@@ -35,6 +37,7 @@
 #include "llerror.h"
 #include "lllfsthread.h"
 #include "llui.h"
+#include "llfocusmgr.h"
 #include "llimageworker.h"
 #include "algpubuffer.h"
 #include "llrender.h"
@@ -71,12 +74,143 @@ std::set<LLViewerFetchedTexture*> LLTextureView::sDebugImages;
 
 ////////////////////////////////////////////////////////////////////////////
 
-// "DecodePri(Fetch)" and "pk/max" used to label columns that the data row no
-// longer renders; trimmed out so the header matches what's actually shown.
-static std::string title_string1("Tex UUID Area  DDis(Req)  [download]");
+// Column layout — recomputed each frame in LLTextureView::draw() based on the
+// current monospace font's metrics so widening the font doesn't make headers
+// overlap each other or the per-row pip / progress-bar columns.
+//
+// The headers and the data rows are both generated from these widths, because
+// hand-spacing a header to line up with a llformat() call is exactly the drift
+// this view had: a comment once described columns the row no longer rendered,
+// and nothing but a human reading both strings side by side could catch it.
+// left_w is the bar/progress-bar block between col-1 and the state column.
+static constexpr S32 UUID_W  = 7;
+static constexpr S32 SIZE_W  = 9;  // "%4dx%-4d"
+static constexpr S32 DISC_W  = 11; // "dis/des/req"
+static constexpr S32 FMT_W   = 4;
+static constexpr S32 JOB_W   = 4;
+static constexpr S32 MEM_W   = 9;
+static constexpr S32 VAREA_W = 9;
+
+// Row format, and the header that lines up with it. Header labels are
+// left-aligned in their column and the columns are space-separated, so the two
+// strings stay the same length for any data.
+// A header built from the same field widths as the row it labels, so the labels
+// land on their columns by construction. Both are left-aligned within a field and
+// the fields are separated by single spaces, which is what makes a label and its
+// numbers share a starting column. Writing the header out as a literal is what
+// let it drift: "fmt job" + 12 spaces put mem over varea, and the col-1 labels
+// sat in the gaps between fields.
+static std::string header_row(std::initializer_list<std::pair<const char*, S32>> fields)
+{
+    std::string out;
+    for (const auto& [label, width] : fields)
+    {
+        if (!out.empty())
+        {
+            out += ' ';
+        }
+        out += llformat("%-*s", width, label);
+    }
+    // Trailing pad on the last field buys nothing and widens required_view_width.
+    while (!out.empty() && out.back() == ' ')
+    {
+        out.pop_back();
+    }
+    return out;
+}
+
+static std::string col1_header()
+{ return header_row({ { "UUID", UUID_W }, { "src", SIZE_W }, { "live", SIZE_W }, { "dis/des/req", DISC_W } }); }
+
+static std::string col1_row(const std::string& uuid, S32 sw, S32 sh, S32 lw, S32 lh, S32 dis, S32 des, S32 req)
+{
+    return llformat("%-*s %*s %*s %*s", UUID_W, uuid.c_str(), SIZE_W, llformat("%4dx%-4d", sw, sh).c_str(), SIZE_W,
+                    llformat("%4dx%-4d", lw, lh).c_str(), DISC_W, llformat("%2d/%d/%d", dis, des, req).c_str());
+}
+
 static std::string title_string2("State");
 static std::string title_string3("Pkt Bnd");
-static std::string title_string4("  W x H (Dis) Mem");
+
+// Col-4 data, and the header aligned to it.
+static std::string col4_row(const std::string& fmt, const std::string& job, S64 mem, F32 varea)
+{ return llformat("%-*s %-*s %*lld %*d", FMT_W, fmt.c_str(), JOB_W, job.c_str(), MEM_W, (long long)mem, VAREA_W, (S32)varea); }
+
+static std::string col4_header()
+{ return header_row({ { "fmt", FMT_W }, { "job", JOB_W }, { "mem", MEM_W }, { "varea", VAREA_W } }); }
+
+// Cached because update_layout() and required_view_width() ask for these every
+// frame. "[download]" is the label the progress-bar block lines up under, so it
+// belongs on the col-1 header.
+static const std::string& title_string1()
+{
+    static const std::string header = col1_header() + "  [download]";
+    return header;
+}
+
+static const std::string& title_string4()
+{
+    static const std::string header = col4_header();
+    return header;
+}
+
+// Short names for the block format the texture's storage actually holds, and for
+// the role claim that decided it. A texture absent from here is either not
+// compressed or has no role -- both worth being able to see at a glance, which
+// is why the job column is here rather than only in the log.
+static std::string storage_format_string(const LLViewerFetchedTexture* imagep)
+{
+    if (!imagep->hasGLTexture())
+    {
+        return "-";
+    }
+    switch (imagep->getGLTexture()->getStorageInternalFormat())
+    {
+        case GL_COMPRESSED_RGBA_S3TC_DXT1_EXT:
+        case GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT1_EXT:
+            return "BC1";
+        case GL_COMPRESSED_RGBA_S3TC_DXT3_EXT:
+        case GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT3_EXT:
+        case GL_COMPRESSED_RGBA_S3TC_DXT5_EXT:
+        case GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT:
+            return "BC3";
+        case GL_COMPRESSED_RED_RGTC1:
+        case GL_COMPRESSED_SIGNED_RED_RGTC1:
+            return "BC4";
+        case GL_COMPRESSED_RG_RGTC2:
+        case GL_COMPRESSED_SIGNED_RG_RGTC2:
+            return "BC5";
+        case GL_COMPRESSED_RGBA_BPTC_UNORM:
+        case GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM:
+            return "BC7";
+        default:
+            return "raw";
+    }
+}
+
+static std::string job_string(EVayuTextureJob job)
+{
+    switch (job)
+    {
+        case EVayuTextureJob::Albedo:
+            return "alb";
+        case EVayuTextureJob::RGBA:
+            return "rgb";
+        case EVayuTextureJob::LegacyMaterialNormal:
+            return "nrm";
+        case EVayuTextureJob::LegacySpecular:
+            return "spc";
+        case EVayuTextureJob::PBRNormal:
+            return "pnrm";
+        case EVayuTextureJob::MetallicRoughness:
+            return "orm";
+        case EVayuTextureJob::Emissive:
+            return "emi";
+        case EVayuTextureJob::Unknown:
+            return "none";
+        default:
+            return "?";
+    }
+}
 
 // Column layout — recomputed each frame in LLTextureView::draw() based on the
 // current monospace font's metrics so widening the font doesn't make headers
@@ -100,11 +234,11 @@ static void update_layout()
 
     // Align the progress bar with "[download]" in the column-1 header so the
     // bar sits where its label says.
-    const size_t dl_pos = title_string1.find("[download]");
+    const size_t dl_pos = title_string1().find("[download]");
     if (dl_pos != std::string::npos)
     {
-        bar_left = font->getWidth(title_string1.substr(0, dl_pos));
-        bar_width = font->getWidth(title_string1.substr(dl_pos));
+        bar_left  = font->getWidth(title_string1().substr(0, dl_pos));
+        bar_width = font->getWidth(title_string1().substr(dl_pos));
     }
     else
     {
@@ -112,7 +246,7 @@ static void update_layout()
         bar_width = char_w * 10;
     }
 
-    const S32 title1_w = font->getWidth(title_string1);
+    const S32 title1_w = font->getWidth(title_string1());
     // Two 6px pips with 14px spacing need ~50px regardless of font.
     const S32 pip_column_w = 50;
 
@@ -125,13 +259,16 @@ static void update_layout()
 static S32 required_view_width()
 {
     const LLFontGL* font = LLFontGL::getFontMonospace();
-    // Col-4 data row is "%3dx%3d (%2d) %7d" — up to 21 chars; pick the wider of
-    // the header text and that data extent.
-    const S32 col4_w = llmax(font->getWidth(title_string4), char_w * 21);
+    // Col-1 needs no explicit term: update_layout() already places title_x2 past
+    // title_string1, so title_x4 is wider than any col-1 row. Col-4's data row is
+    // "%-4s %-4s %9d %9d"; pick the wider of it and the header.
+    const S32 col4_w    = llmax(font->getWidth(title_string4()), char_w * (FMT_W + 1 + JOB_W + 1 + MEM_W + 1 + VAREA_W));
     const S32 columns_w = title_x4 + col4_w;
     // The non-header status lines drawn by LLGLTexMemBar (e.g. the "Est. Free…
-    // Cache:" line and "Net Tot Tex…") run wider than the column row.
-    const S32 content_w = llmax(columns_w, max_status_w);
+    // Cache:" line and "Net Tot Tex…") run wider than the column row. The filter
+    // and page line has to fit too, or it is clipped at the right edge.
+    const S32 status_w  = font->getWidth("filter: ffffffff-ffff-ffff-ffff-ffffffffffff  15392-15437 of 15392   sort: fetch priority");
+    const S32 content_w = llmax(columns_w, llmax(max_status_w, llmax(status_w, char_w * 12)));
     // arrange() pads with left=10 / right=2 around each child (12 total).
     return content_w + char_w + 12;
 }
@@ -163,6 +300,7 @@ public:
 
     virtual void draw() override;
     virtual bool handleMouseDown(S32 x, S32 y, MASK mask) override;
+    virtual bool   handleScrollWheel(S32 x, S32 y, LLScrollDelta delta) override;
     virtual LLRect getRequiredRect() override;   // Return the height of this object, given the set options.
 
 // Used for sorting
@@ -251,17 +389,24 @@ void LLTextureBar::draw()
 
     LLGLSUIDefault gls_ui;
 
-    // Name, pixel_area, requested pixel area, decode priority
+    // UUID, source size, resident size, discard (desired)
+    //
+    // mFullWidth/mFullHeight rather than getWidth()/getHeight(): those report
+    // the size resident AFTER the discard shift, so a texture held at discard 2
+    // reads 512x256 whether it arrived as 2048x1024 or as 512x256, and the two
+    // need telling apart to answer "why is this soft". Zero source dimensions
+    // mean nothing has arrived yet, which the mem column already reports.
     std::string uuid_str;
-    mImagep->mID.toString(uuid_str);
-    uuid_str = uuid_str.substr(0,7);
+    mImagep->getID().toString(uuid_str);
+    uuid_str = uuid_str.substr(0, 7);
 
-    tex_str = llformat("%s %7.0f %d(%d)",
-        uuid_str.c_str(),
-        mImagep->mMaxVirtualSize,
-        mImagep->mDesiredDiscardLevel,
-        mImagep->mRequestedDiscardLevel);
+    const S32 src_w  = mImagep->getFullWidth();
+    const S32 src_h  = mImagep->getFullHeight();
+    const S32 live_w = mImagep->getWidth();
+    const S32 live_h = mImagep->getHeight();
 
+    tex_str = col1_row(uuid_str, src_w, src_h, live_w, live_h, mImagep->getDiscardLevel(), mImagep->mDesiredDiscardLevel,
+                       mImagep->mRequestedDiscardLevel);
 
     LLFontGL::getFontMonospace()->renderUTF8(tex_str, 0, title_x1, getRect().getHeight(),
                                      color, LLFontGL::LEFT, LLFontGL::TOP);
@@ -382,8 +527,16 @@ void LLTextureBar::draw()
         LLGLSUIDefault gls_ui;
         // draw the image size at the end
         {
-            std::string num_str = llformat("%3dx%3d (%2d) %7d", mImagep->getWidth(), mImagep->getHeight(),
-                mImagep->getDiscardLevel(), mImagep->hasGLTexture() ? mImagep->getTextureMemory().value() : 0);
+            // mem is what the live texture costs; varea is the on-screen area the
+            // LOD system believes the texture is worth, which is the number the
+            // discard level is computed from (llviewertexture.cpp: the
+            // log(mTexelsPerImage / mMaxVirtualSize) branch). Seeing them apart is
+            // how a wrong estimate becomes visible: varea far below the src area
+            // of something filling the screen.
+            std::string num_str = col4_row(storage_format_string(mImagep),
+                                           job_string(mImagep->getTextureJob()),
+                                           mImagep->hasGLTexture() ? mImagep->getTextureMemory().value() : (S64)0,
+                                           mImagep->getMaxVirtualSize());
             LLFontGL::getFontMonospace()->renderUTF8(num_str, 0, title_x4, getRect().getHeight(), color,
                                             LLFontGL::LEFT, LLFontGL::TOP);
         }
@@ -393,13 +546,35 @@ void LLTextureBar::draw()
 
 bool LLTextureBar::handleMouseDown(S32 x, S32 y, MASK mask)
 {
-    if ((mask & (MASK_CONTROL|MASK_SHIFT|MASK_ALT)) == MASK_ALT)
+    if (mTextureView)
     {
-        LLAppViewer::getTextureFetch()->mDebugID = mImagep->getID();
+        gFocusMgr.setKeyboardFocus(mTextureView);
+    }
+
+    // Plain ALT on a row, not ALT+SHIFT: the view uses ALT+SHIFT for the log
+    // dump, and children see the event before their parent, so the bar was
+    // swallowing it and the dump only worked on empty space below the last row.
+    if ((mask & (MASK_CONTROL | MASK_SHIFT | MASK_ALT)) == (MASK_ALT))
+    {
+        // Feed the parent view's filter rather than mDebugID: the two things
+        // mDebugID is read for are `mDebugCount++` "for setting breakpoints", so
+        // clicking a row used to do nothing at all. Filtering to the clicked
+        // texture is the thing a click on a row should have done.
+        if (mTextureView && mImagep)
+        {
+            std::string id;
+            mImagep->getID().toString(id);
+            mTextureView->mFilter = id;
+            mTextureView->setFirstRow(0);
+            mTextureView->mFreezeView = false;
+        }
         return true;
     }
     return LLView::handleMouseDown(x,y,mask);
 }
+
+bool LLTextureBar::handleScrollWheel(S32 x, S32 y, LLScrollDelta delta)
+{ return mTextureView ? mTextureView->handleScrollWheel(x, y, delta) : false; }
 
 LLRect LLTextureBar::getRequiredRect()
 {
@@ -434,6 +609,7 @@ public:
 
     virtual void draw() override;
     virtual bool handleMouseDown(S32 x, S32 y, MASK mask) override;
+    virtual bool   handleScrollWheel(S32 x, S32 y, LLScrollDelta delta) override;
     virtual LLRect getRequiredRect() override;   // Return the height of this object, given the set options.
 
 private:
@@ -491,8 +667,15 @@ void LLAvatarTexBar::draw()
 
 bool LLAvatarTexBar::handleMouseDown(S32 x, S32 y, MASK mask)
 {
-    return false;
+    if (mTextureView)
+    {
+        gFocusMgr.setKeyboardFocus(mTextureView);
+    }
+    return true;
 }
+
+bool LLAvatarTexBar::handleScrollWheel(S32 x, S32 y, LLScrollDelta delta)
+{ return mTextureView ? mTextureView->handleScrollWheel(x, y, delta) : false; }
 
 LLRect LLAvatarTexBar::getRequiredRect()
 {
@@ -544,6 +727,7 @@ public:
 
     virtual void draw() override;
     virtual bool handleMouseDown(S32 x, S32 y, MASK mask) override;
+    virtual bool   handleScrollWheel(S32 x, S32 y, LLScrollDelta delta) override;
     virtual LLRect getRequiredRect() override;   // Return the height of this object, given the set options.
 
 private:
@@ -753,8 +937,8 @@ void LLGLTexMemBar::draw()
                                          text_color, LLFontGL::LEFT, LLFontGL::TOP);
         dx1 += char_w;
     }
-    LLFontGL::getFontMonospace()->renderUTF8(title_string1, 0, title_x1+dx1, v_offset + line_height,
-                                     text_color, LLFontGL::LEFT, LLFontGL::TOP);
+    LLFontGL::getFontMonospace()->renderUTF8(title_string1(), 0, title_x1 + dx1, v_offset + line_height, text_color, LLFontGL::LEFT,
+                                             LLFontGL::TOP);
 
     LLFontGL::getFontMonospace()->renderUTF8(title_string2, 0, title_x2, v_offset + line_height,
                                      text_color, LLFontGL::LEFT, LLFontGL::TOP);
@@ -762,8 +946,8 @@ void LLGLTexMemBar::draw()
     LLFontGL::getFontMonospace()->renderUTF8(title_string3, 0, title_x3, v_offset + line_height,
                                      text_color, LLFontGL::LEFT, LLFontGL::TOP);
 
-    LLFontGL::getFontMonospace()->renderUTF8(title_string4, 0, title_x4, v_offset + line_height,
-                                     text_color, LLFontGL::LEFT, LLFontGL::TOP);
+    LLFontGL::getFontMonospace()->renderUTF8(title_string4(), 0, title_x4, v_offset + line_height, text_color, LLFontGL::LEFT,
+                                             LLFontGL::TOP);
 
     // Publish for next frame's required_view_width(). Column-header widths are
     // captured separately via title_x4 in update_layout(), so we only track the
@@ -773,8 +957,15 @@ void LLGLTexMemBar::draw()
 
 bool LLGLTexMemBar::handleMouseDown(S32 x, S32 y, MASK mask)
 {
-    return false;
+    if (mTextureView)
+    {
+        gFocusMgr.setKeyboardFocus(mTextureView);
+    }
+    return true;
 }
+
+bool LLGLTexMemBar::handleScrollWheel(S32 x, S32 y, LLScrollDelta delta)
+{ return mTextureView ? mTextureView->handleScrollWheel(x, y, delta) : false; }
 
 LLRect LLGLTexMemBar::getRequiredRect()
 {
@@ -783,84 +974,92 @@ LLRect LLGLTexMemBar::getRequiredRect()
     rect.mTop = LLFontGL::getFontMonospace()->getLineHeight() * 8;
     return rect;
 }
-
 ////////////////////////////////////////////////////////////////////////////
-class LLGLTexSizeBar
+
+// The filter and page indicator. A child view rather than text drawn by the
+// parent, for two reasons: LLContainerView::arrange() lays children out from the
+// top down and hides any whose mBottom falls below zero, so anything drawn
+// straight onto the parent's surface at a negative y is off the view entirely;
+// and the header line is already full width with the column headers and the
+// memory bar's own status block, which is what the mem bar's 124-character
+// "Est. Free: ... Cache: ..." line is. So this takes one row of its own, directly
+// under the headers.
+class LLTextureStatusBar final : public LLView
 {
 public:
-    LLGLTexSizeBar(S32 index, S32 left, S32 bottom, S32 right, S32 line_height)
+    AL_VIEW_TYPE(LLTextureStatusBar, LLView);
+    struct Params : public LLInitParam::Block<Params, LLView::Params>
     {
-        mIndex = index ;
-        mLeft = left ;
-        mBottom = bottom ;
-        mRight = right ;
-        mLineHeight = line_height ;
-        mTopLoaded = 0 ;
-        mTopBound = 0 ;
-        mScale = 1.0f ;
-    }
+        Mandatory<LLTextureView*> texture_view;
+        Params() : texture_view("texture_view") { changeDefault(mouse_opaque, true); }
+    };
 
-    void setTop(S32 loaded, S32 bound, F32 scale) {mTopLoaded = loaded ; mTopBound = bound; mScale = scale ;}
+    LLTextureStatusBar(const Params& p) : LLView(p), mTextureView(p.texture_view) {}
 
-    void draw();
-    bool handleHover(S32 x, S32 y, MASK mask, bool set_pick_size) ;
+    void   draw() override;
+    bool   handleMouseDown(S32 x, S32 y, MASK mask) override;
+    bool   handleScrollWheel(S32 x, S32 y, LLScrollDelta delta) override;
+    LLRect getRequiredRect() override;
 
 private:
-    S32 mIndex ;
-    S32 mLeft ;
-    S32 mBottom ;
-    S32 mRight ;
-    S32 mTopLoaded ;
-    S32 mTopBound ;
-    S32 mLineHeight ;
-    F32 mScale ;
+    LLTextureView* mTextureView;
 };
 
-bool LLGLTexSizeBar::handleHover(S32 x, S32 y, MASK mask, bool set_pick_size)
+void LLTextureStatusBar::draw()
 {
-    if(y > mBottom && (y < mBottom + (S32)(mTopLoaded * mScale) || y < mBottom + (S32)(mTopBound * mScale)))
+    if (!mTextureView)
     {
-        LLImageGL::setCurTexSizebar(mIndex, set_pick_size);
+        return;
     }
-    return true ;
+    const S32 first = mTextureView->mRowCount ? mTextureView->mFirstRow + 1 : 0;
+    const S32 last  = llmin(mTextureView->mFirstRow + mTextureView->rowsPerPage(), mTextureView->mRowCount);
+    // No FROZEN / FETCH-PAUSED flags here: LLGLTexMemBar already draws "*" and
+    // "!" beside the col-1 header for exactly those two states.
+    const bool        focused   = mTextureView->hasFocus();
+    const char*       focus_tag = focused ? "[FOCUSED - Esc to walk]" : "(click to type)";
+    const std::string line = llformat("filter: %-36s  %d-%d of %d   sort: %s   %s", mTextureView->mFilter.c_str(), first, last,
+                                      mTextureView->mRowCount, mTextureView->mOrderFetch ? "fetch priority" : "virtual area", focus_tag);
+    LLFontGL::getFontMonospace()->renderUTF8(line, 0, 0, getRect().getHeight(), focused ? LLColor4::cyan : LLColor4::white, LLFontGL::LEFT,
+                                             LLFontGL::TOP);
 }
-void LLGLTexSizeBar::draw()
+
+bool LLTextureStatusBar::handleMouseDown(S32 x, S32 y, MASK mask)
 {
-    LLGLSUIDefault gls_ui;
-
-    if(LLImageGL::sCurTexSizeBar == mIndex)
+    if (mTextureView)
     {
-        LLColor4 text_color(1.f, 1.f, 1.f, 0.75f);
-        std::string text;
-
-        text = llformat("%d", mTopLoaded) ;
-        LLFontGL::getFontMonospace()->renderUTF8(text, 0, mLeft, mBottom + (S32)(mTopLoaded * mScale) + mLineHeight,
-                                     text_color, LLFontGL::LEFT, LLFontGL::TOP);
-
-        text = llformat("%d", mTopBound) ;
-        LLFontGL::getFontMonospace()->renderUTF8(text, 0, (mLeft + mRight) / 2, mBottom + (S32)(mTopBound * mScale) + mLineHeight,
-                                     text_color, LLFontGL::LEFT, LLFontGL::TOP);
+        gFocusMgr.setKeyboardFocus(mTextureView);
     }
-
-    LLColor4 loaded_color(1.0f, 0.0f, 0.0f, 0.75f);
-    LLColor4 bound_color(1.0f, 1.0f, 0.0f, 0.75f);
-    gl_rect_2d(mLeft, mBottom + (S32)(mTopLoaded * mScale), (mLeft + mRight) / 2, mBottom, loaded_color) ;
-    gl_rect_2d((mLeft + mRight) / 2, mBottom + (S32)(mTopBound * mScale), mRight, mBottom, bound_color) ;
+    return true;
 }
+
+bool LLTextureStatusBar::handleScrollWheel(S32 x, S32 y, LLScrollDelta delta)
+{ return mTextureView ? mTextureView->handleScrollWheel(x, y, delta) : false; }
+
+LLRect LLTextureStatusBar::getRequiredRect()
+{
+    LLRect rect;
+    rect.mTop = LLFontGL::getFontMonospace()->getLineHeight();
+    return rect;
+}
+
 ////////////////////////////////////////////////////////////////////////////
 
-LLTextureView::LLTextureView(const LLTextureView::Params& p)
-    :   LLContainerView(p),
-        mFreezeView(false),
-        mOrderFetch(false),
-        mPrintList(false),
-        mNumTextureBars(0)
+LLTextureView::LLTextureView(const LLTextureView::Params& p) :
+    LLContainerView(p),
+    mFreezeView(false),
+    mOrderFetch(false),
+    mPrintList(false),
+    mFilter(),
+    mFirstRow(0),
+    mRowCount(0),
+    mNumTextureBars(0)
 {
     setVisible(false);
 
     setDisplayChildren(true);
     mGLTexMemBar = 0;
     mAvatarTexBar = 0;
+    mStatusBar    = 0;
 }
 
 LLTextureView::~LLTextureView()
@@ -921,6 +1120,13 @@ void LLTextureView::draw()
             removeChild(mAvatarTexBar);
             mAvatarTexBar->die();
             mAvatarTexBar = 0;
+        }
+
+        if (mStatusBar)
+        {
+            removeChild(mStatusBar);
+            mStatusBar->die();
+            mStatusBar = 0;
         }
 
         typedef std::multiset<decode_pair_t, compare_decode_pair > display_list_t;
@@ -1041,20 +1247,42 @@ void LLTextureView::draw()
             mPrintList = false;
         }
 
-        static S32 max_count = 50;
-        S32 count = 0;
-        mNumTextureBars = 0 ;
+        // Page the list instead of taking the first 50 and letting arrange() push
+        // everything past the bottom of the floater out of sight: the view is
+        // 110px tall, so about six rows were ever visible and there was no way to
+        // reach any others. mFirstRow walks the filtered list in rowsPerPage()
+        // steps, and only that window becomes bars.
+        //
+        // Highlighted rows (hovered or selected object) are always kept, so the
+        // texture you are pointing at cannot scroll out from under you.
+        const S32 page = rowsPerPage();
+        setFirstRow(mFirstRow);
+        mRowCount = 0;
+
+        S32 index       = 0; // position among rows that passed the filter
+        S32 count       = 0; // bars actually created
+        mNumTextureBars = 0;
         for (display_list_t::iterator iter = display_image_list.begin();
              iter != display_image_list.end(); iter++)
         {
             LLViewerFetchedTexture* imagep = iter->second;
+            if (!matchesFilter(imagep))
+            {
+                continue;
+            }
+
             S32 hilite = 0;
             F32 pri = iter->first;
             if (pri >= 1 * HIGH_PRIORITY)
             {
                 hilite = (S32)((pri+1) / HIGH_PRIORITY) - 1;
             }
-            if ((hilite || count < max_count-10) && (count < max_count))
+
+            const bool in_page = index >= mFirstRow && count < page;
+            index++;
+            mRowCount++;
+
+            if (in_page || hilite)
             {
                 if (addBar(imagep, hilite))
                 {
@@ -1076,6 +1304,20 @@ void LLTextureView::draw()
         tmbp.texture_view(this);
         mGLTexMemBar = LLUICtrlFactory::create<LLGLTexMemBar>(tmbp);
         addChild(mGLTexMemBar);
+
+        LLTextureStatusBar::Params sbp;
+        LLRect                     sbr;
+        sbp.name("texture status bar");
+        sbp.rect(sbr);
+        sbp.texture_view(this);
+        mStatusBar = LLUICtrlFactory::create<LLTextureStatusBar>(sbp);
+        addChild(mStatusBar);
+
+        // Front of the child list is the TOP of the view: arrange() places the
+        // first child highest. Rows were added before these two, so putting the
+        // mem bar last here yields [mem bar, status bar, rows...] -- headers,
+        // then the filter line, then the rows.
+        sendChildToFront(mStatusBar);
         sendChildToFront(mGLTexMemBar);
 
         LLAvatarTexBar::Params atbp;
@@ -1108,6 +1350,143 @@ void LLTextureView::draw()
 
 }
 
+bool LLTextureView::matchesFilter(const LLViewerFetchedTexture* imagep) const
+{
+    if (mFilter.empty())
+    {
+        return true;
+    }
+    std::string id;
+    imagep->getID().toString(id);
+    return id.find(mFilter) != std::string::npos;
+}
+
+S32 LLTextureView::rowsPerPage() const
+{
+    const S32 line     = LLFontGL::getFontMonospace()->getLineHeight();
+    const S32 row_cost = line + CHILD_GAP;
+    // LLContainerView::arrange() shrink-wraps this view's rect around its current
+    // children, so getRect().getHeight() collapses to whatever rows were added on
+    // the previous frame. To avoid a feedback loop that collapses page capacity
+    // to 1, derive available height from the parent window's bounds: LLDebugView
+    // anchors this view at (height - 60) down to 110px above the bottom bar.
+    const S32 max_view_h = getParent() ? llmax(200, getParent()->getRect().getHeight() - 170) : llmax(200, getRect().mTop - 110);
+    const S32 usable     = max_view_h - row_cost * (MEM_BAR_LINES + STATUS_LINES);
+    return llmax(1, usable / llmax(1, row_cost));
+}
+
+void LLTextureView::setFirstRow(S32 row)
+{
+    // Clamped at both ends. Without the upper clamp, paging past the end scrolls
+    // into an empty region -- no rows are in the page, and the status line
+    // reports a range like "101-50 of 50". mRowCount is last frame's count,
+    // which is the best available before the list is walked again.
+    const S32 last = llmax(0, mRowCount - rowsPerPage());
+    mFirstRow      = llclamp(row, 0, last);
+}
+
+void LLTextureView::scrollBy(S32 rows)
+{
+    setFirstRow(mFirstRow + rows);
+    // The page is a different set of bars, so the frozen row set has to be
+    // rebuilt -- freezing keeps the list still, it does not pin it to one page.
+    mFreezeView = false;
+}
+
+bool LLTextureView::handleKey(KEY key, MASK mask, bool called_from_parent)
+{
+    // Typing filters. There is no focus to manage because the view itself takes
+    // the keystrokes -- it has no text box, and adding one to a container that
+    // is also a mouse target turns click-to-focus into another thing to get
+    // wrong.
+    switch (key)
+    {
+        case KEY_ESCAPE:
+            if (!mFilter.empty())
+            {
+                mFilter.clear();
+                setFirstRow(0);
+                mFreezeView = false;
+            }
+            else
+            {
+                gFocusMgr.setKeyboardFocus(nullptr);
+            }
+            return true;
+
+        case KEY_BACKSPACE:
+            if (!mFilter.empty())
+            {
+                mFilter.resize(mFilter.size() - 1);
+                setFirstRow(0);
+                mFreezeView = false;
+            }
+            return true;
+
+        case KEY_UP:
+            scrollBy(-1);
+            return true;
+
+        case KEY_DOWN:
+            scrollBy(1);
+            return true;
+
+        case KEY_PAGE_UP:
+            scrollBy(-rowsPerPage());
+            return true;
+
+        case KEY_PAGE_DOWN:
+            scrollBy(rowsPerPage());
+            return true;
+
+        case KEY_HOME:
+            setFirstRow(0);
+            mFreezeView = false;
+            return true;
+
+        case KEY_END:
+            // setFirstRow clamps to the last full page, so END parks the final row at
+            // the bottom of the view rather than alone at the top of an empty one.
+            setFirstRow(llmax(0, mRowCount - rowsPerPage()));
+            mFreezeView = false;
+            return true;
+
+        case KEY_TAB:
+            mOrderFetch = !mOrderFetch;
+            setFirstRow(0);
+            mFreezeView = false;
+            return true;
+
+        case ' ':
+            mFreezeView = !mFreezeView;
+            return true;
+
+        case 'i':
+        case 'I':
+            mPrintList = true;
+            return true;
+
+        default:
+            break;
+    }
+
+    // A bare printable character extends the filter. UUIDs are hex, so nothing
+    // else is accepted -- silently swallowing other keys would leave the view
+    // looking frozen when it is merely ignoring you.
+    if ((key >= '0' && key <= '9') || (key >= 'a' && key <= 'f') || (key >= 'A' && key <= 'F'))
+    {
+        // LLUUID::toString() emits lowercase hex and matchesFilter compares
+        // case-sensitively against it, so the keystroke has to be folded or
+        // every filter containing a-f matches nothing at all.
+        mFilter += (char)::tolower((int)key);
+        setFirstRow(0);
+        mFreezeView = false;
+        return true;
+    }
+
+    return false;
+}
+
 bool LLTextureView::addBar(LLViewerFetchedTexture *imagep, S32 hilite)
 {
     llassert(imagep);
@@ -1133,6 +1512,7 @@ bool LLTextureView::addBar(LLViewerFetchedTexture *imagep, S32 hilite)
 
 bool LLTextureView::handleMouseDown(S32 x, S32 y, MASK mask)
 {
+    gFocusMgr.setKeyboardFocus(this);
     if ((mask & (MASK_CONTROL|MASK_SHIFT|MASK_ALT)) == (MASK_ALT|MASK_SHIFT))
     {
         mPrintList = true;
@@ -1161,9 +1541,20 @@ bool LLTextureView::handleMouseUp(S32 x, S32 y, MASK mask)
     return false;
 }
 
-bool LLTextureView::handleKey(KEY key, MASK mask, bool called_from_parent)
+void LLTextureView::setVisible(bool visible)
 {
-    return false;
+    if (!visible && hasFocus())
+    {
+        gFocusMgr.setKeyboardFocus(nullptr);
+    }
+    LLContainerView::setVisible(visible);
 }
 
+bool LLTextureView::hasFocus() const
+{ return gFocusMgr.getKeyboardFocusView() == this || gFocusMgr.childHasKeyboardFocus(this); }
 
+bool LLTextureView::handleScrollWheel(S32 x, S32 y, LLScrollDelta delta)
+{
+    scrollBy(delta.mClicks * 2);
+    return true;
+}

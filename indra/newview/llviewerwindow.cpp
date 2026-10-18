@@ -3504,6 +3504,19 @@ bool LLViewerWindow::handleKey(KEY key, MASK mask)
         return true;
     }
 
+    // The texture debug view is a bare LLContainerView under LLDebugView rather
+    // than a floater, so it is never the keyboard focus, and LLView::handleKey
+    // only walks down into children when called with called_from_parent -- which
+    // nothing does for it. Without this it would never see a keystroke. Last
+    // chance before the key falls through to the world, unmodified keys only so
+    // nothing above loses one, and LLTextureView::handleKey returns false for
+    // anything it does not use.
+    if (gTextureView && gTextureView->getVisible() && (mask & MASK_MODIFIERS) == MASK_NONE && gTextureView->hasFocus() &&
+        gTextureView->handleKey(key, mask, false))
+    {
+        return true;
+    }
+
     // don't pass keys on to world when something in ui has focus
     return gFocusMgr.childHasKeyboardFocus(mRootView)
         || LLMenuGL::getKeyboardMode()
