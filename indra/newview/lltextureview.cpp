@@ -37,7 +37,6 @@
 #include "llerror.h"
 #include "lllfsthread.h"
 #include "llui.h"
-#include "llfocusmgr.h"
 #include "llimageworker.h"
 #include "algpubuffer.h"
 #include "llrender.h"
@@ -548,7 +547,7 @@ bool LLTextureBar::handleMouseDown(S32 x, S32 y, MASK mask)
 {
     if (mTextureView)
     {
-        gFocusMgr.setKeyboardFocus(mTextureView);
+        mTextureView->setFocus(true);
     }
 
     // Plain ALT on a row, not ALT+SHIFT: the view uses ALT+SHIFT for the log
@@ -669,7 +668,7 @@ bool LLAvatarTexBar::handleMouseDown(S32 x, S32 y, MASK mask)
 {
     if (mTextureView)
     {
-        gFocusMgr.setKeyboardFocus(mTextureView);
+        mTextureView->setFocus(true);
     }
     return true;
 }
@@ -959,7 +958,7 @@ bool LLGLTexMemBar::handleMouseDown(S32 x, S32 y, MASK mask)
 {
     if (mTextureView)
     {
-        gFocusMgr.setKeyboardFocus(mTextureView);
+        mTextureView->setFocus(true);
     }
     return true;
 }
@@ -1027,7 +1026,7 @@ bool LLTextureStatusBar::handleMouseDown(S32 x, S32 y, MASK mask)
 {
     if (mTextureView)
     {
-        gFocusMgr.setKeyboardFocus(mTextureView);
+        mTextureView->setFocus(true);
     }
     return true;
 }
@@ -1410,7 +1409,7 @@ bool LLTextureView::handleKey(KEY key, MASK mask, bool called_from_parent)
             }
             else
             {
-                gFocusMgr.setKeyboardFocus(nullptr);
+                setFocus(false);
             }
             return true;
 
@@ -1512,7 +1511,7 @@ bool LLTextureView::addBar(LLViewerFetchedTexture *imagep, S32 hilite)
 
 bool LLTextureView::handleMouseDown(S32 x, S32 y, MASK mask)
 {
-    gFocusMgr.setKeyboardFocus(this);
+    setFocus(true);
     if ((mask & (MASK_CONTROL|MASK_SHIFT|MASK_ALT)) == (MASK_ALT|MASK_SHIFT))
     {
         mPrintList = true;
@@ -1543,15 +1542,12 @@ bool LLTextureView::handleMouseUp(S32 x, S32 y, MASK mask)
 
 void LLTextureView::setVisible(bool visible)
 {
-    if (!visible && hasFocus())
+    if (!visible)
     {
-        gFocusMgr.setKeyboardFocus(nullptr);
+        setFocus(false);
     }
     LLContainerView::setVisible(visible);
 }
-
-bool LLTextureView::hasFocus() const
-{ return gFocusMgr.getKeyboardFocusView() == this || gFocusMgr.childHasKeyboardFocus(this); }
 
 bool LLTextureView::handleScrollWheel(S32 x, S32 y, LLScrollDelta delta)
 {
