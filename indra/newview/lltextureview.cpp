@@ -1142,9 +1142,9 @@ void LLTextureView::draw()
              iter != gTextureList.end(); )
         {
             LLViewerFetchedTexture* imagep = *iter++;
-            if(!imagep->hasFetcher())
+            if (!imagep->hasFetcher() && !imagep->hasGLTexture() && imagep->getMaxVirtualSize() <= 0.0f)
             {
-                continue ;
+                continue;
             }
 
             S32 cur_discard = imagep->getDiscardLevel();
@@ -1173,10 +1173,18 @@ void LLTextureView::draw()
             if (mOrderFetch)
             {
                 pri = ((F32)imagep->mFetchPriority)/256.f;
+                if (pri <= 0.0f && (imagep->hasGLTexture() || imagep->hasFetcher()))
+                {
+                    pri = 0.0001f;
+                }
             }
             else
             {
                 pri = imagep->getMaxVirtualSize();
+                if (pri <= 0.0f && (imagep->hasGLTexture() || imagep->hasFetcher()))
+                {
+                    pri = 0.0001f;
+                }
             }
             pri = llclamp(pri, 0.0f, HIGH_PRIORITY-1.f);
 
