@@ -21,29 +21,39 @@ on:
         description: "Override the tag name (optional). If the tag already exists, a numeric suffix is appended."
         required: false
 
+permissions: {}
+
 jobs:
   tag-release:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # The tag is created with the GITHUB_TOKEN, so its push starts no build;
+    # the build is dispatched on the tag with this run's channel and project.
+    # A dispatch is the one event the GITHUB_TOKEN may start a workflow with.
+    permissions:
+      contents: write
+      actions: write
     steps:
-      - name: Setup Env Vars
-        run: |
-          CHANNEL="${{ inputs.channel }}"
-          echo VIEWER_CHANNEL="Vayu_${CHANNEL:-Develop}" >> ${GITHUB_ENV}
-          NIGHTLY_DATE=$(date --rfc-3339=date)
-          echo NIGHTLY_DATE=${NIGHTLY_DATE} >> ${GITHUB_ENV}
-          echo TAG_ID="$(echo ${{ github.sha }} | cut -c1-8)-${{ inputs.project || '${NIGHTLY_DATE}' }}" >> ${GITHUB_ENV}
-      - name: Create Tag
+      - name: Create Tag and Build It
         uses: actions/github-script@v9
+        env:
+          # Inputs reach the script through the environment, never pasted
+          # into it, so no input can become code.
+          CHANNEL: ${{ inputs.channel }}
+          PROJECT: ${{ inputs.project }}
+          TAG_OVERRIDE: ${{ inputs.tag_override }}
         with:
-          # use a real access token instead of GITHUB_TOKEN default.
-          # required so that the results of this tag creation can trigger the build workflow
-          # https://stackoverflow.com/a/71372524
-          # https://docs.github.com/en/actions/using-workflows/triggering-a-workflow#triggering-a-workflow-from-a-workflow
-          # this token will need to be renewed anually in January
-          github-token: ${{ secrets.TAG_RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
           script: |
-            const override = `${{ inputs.tag_override }}`.trim();
-            const baseTag = override || `${{ env.VIEWER_CHANNEL }}#${{ env.TAG_ID }}`;
+            const channel = process.env.CHANNEL;
+            const project = (process.env.PROJECT || '').trim();
+            if (channel === 'Project' && !project) {
+              core.setFailed('A Project build needs a project name');
+              return;
+            }
+            // A tag name cannot hold spaces; the build reads underscores back as spaces.
+            const suffix = project.replace(/\s+/g, '_') || new Date().toISOString().slice(0, 10);
+            const override = (process.env.TAG_OVERRIDE || '').trim();
+            const baseTag = override || `Vayu_${channel}#${context.sha.slice(0, 8)}-${suffix}`;
 
             // Try the base tag first, then append -2, -3, etc. if it already exists
             let tag = baseTag;
@@ -66,3 +76,12 @@ jobs:
                 }
               }
             }
+
+            await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'build.yaml',
+              ref: `refs/tags/${tag}`,
+              inputs: { channel, project }
+            });
+            core.info(`Dispatched build of ${tag} on the ${channel} channel`);

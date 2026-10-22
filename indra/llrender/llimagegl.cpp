@@ -311,9 +311,10 @@ void LLImageGL::initClass(LLWindow* window, S32 num_catagories, bool skip_analyz
 
     if (thread_texture_loads || thread_media_updates)
     {
-        LLImageGLThread::createInstance(window);
         LLImageGLThread::sEnabledTextures = thread_texture_loads;
         LLImageGLThread::sEnabledMedia = thread_media_updates;
+        // Which clears both again if it gets no context to upload on.
+        LLImageGLThread::createInstance(window);
     }
 }
 
@@ -934,6 +935,8 @@ void LLImageGL::init(bool usemipmaps)
     mFormatComponents = -1;
 
     mIsMask = false;
+    mMaxAlpha = 255;
+    mMinAlpha = 0;
     mNeedsAlphaAndPickMask = true ;
     mAlphaAnalysisSerial = 0;
     mAlphaStride = 0 ;
@@ -1864,10 +1867,7 @@ void LLImageGL::setManualSubImage(U32 target, S32 miplevel, S32 width, S32 heigh
 // quietly linearising. Harmless on a non-sRGB format: the state exists but nothing reads it.
 static void skipSRGBDecode(U32 target)
 {
-    if (gGLManager.mHasTextureSRGBDecode)
-    {
-        glTexParameteri(target, GL_TEXTURE_SRGB_DECODE_EXT, GL_SKIP_DECODE_EXT);
-    }
+    glTexParameteri(target, GL_TEXTURE_SRGB_DECODE_EXT, GL_SKIP_DECODE_EXT);
 }
 
 // Allocate a 2D texture on the currently-bound name and upload level 0.
@@ -2324,23 +2324,20 @@ U32 LLImageGL::publishUploads()
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
     llassert(on_main_thread());
 
-    // Fences of one context signal in the order they were issued, so walking oldest first
-    // publishes an image's uploads in order. The ready ones are taken out before any is
-    // published: publishing runs the callers' callbacks, which must find the list settled.
+    // Fences of one context signal in the order they were issued, and every one here is the
+    // LLImageGL thread's, queued in the order it laid them: walking oldest first publishes an
+    // image's uploads in order, and the first still pending leaves every later one pending
+    // too, so the walk stops there. Each poll is a call that returns a value, which a threaded
+    // driver such as Mesa's glthread answers only once its own thread has caught up. The ready
+    // ones are taken out before any is published: publishing runs the callers' callbacks,
+    // which must find the list settled.
     std::vector<PendingPublish> ready;
-    size_t kept = 0;
-    for (size_t i = 0; i < sPendingPublishes.size(); ++i)
+    for (PendingPublish& pending : sPendingPublishes)
     {
-        PendingPublish& pending = sPendingPublishes[i];
         const GLenum res = glClientWaitSync(pending.mFence, 0, 0);
         if (res == GL_TIMEOUT_EXPIRED)
         {
-            if (kept != i)
-            {
-                sPendingPublishes[kept] = std::move(pending);
-            }
-            ++kept;
-            continue;
+            break;
         }
         if (res == GL_WAIT_FAILED)
         {
@@ -2351,7 +2348,7 @@ U32 LLImageGL::publishUploads()
         glDeleteSync(pending.mFence);
         ready.push_back(std::move(pending));
     }
-    sPendingPublishes.erase(sPendingPublishes.begin() + kept, sPendingPublishes.end());
+    sPendingPublishes.erase(sPendingPublishes.begin(), sPendingPublishes.begin() + ready.size());
 
     for (PendingPublish& pending : ready)
     {
@@ -2484,6 +2481,7 @@ void LLImageGL::setAlphaAnalysis(const AlphaAnalysis& analysis)
 
     mIsMask   = analysis.mIsMask;
     mMaxAlpha = analysis.mMaxAlpha;
+    mMinAlpha = analysis.mMinAlpha;
 }
 
 void LLImageGL::setStagedIsMask(bool is_mask)
@@ -2502,6 +2500,7 @@ void LLImageGL::clearAlphaAnalysis()
 {
     mIsMask   = false;
     mMaxAlpha = 255;
+    mMinAlpha = 0;
 }
 
 void LLImageGL::publishPendingAlpha()
@@ -2518,6 +2517,7 @@ void LLImageGL::publishPendingAlpha()
     {
         mIsMask   = mPendingAlpha.mAnalysis.mIsMask;
         mMaxAlpha = mPendingAlpha.mAnalysis.mMaxAlpha;
+        mMinAlpha = mPendingAlpha.mAnalysis.mMinAlpha;
     }
     if (mPendingAlpha.mHasIsMask)
     {
@@ -2896,7 +2896,7 @@ void LLImageGL::calcAlphaChannelOffsetAndStride()
         // The texture the format is for has no alpha. Staged while an upload is in flight:
         // the texture on screen keeps its own until the new one publishes.
         mNeedsAlphaAndPickMask = false;
-        setAlphaAnalysis(AlphaAnalysis());
+        setAlphaAnalysis(opaqueAlphaAnalysis());
         return; //no alpha channel.
     case GL_RED_INTEGER:
     case GL_RG_INTEGER:
@@ -2906,7 +2906,7 @@ void LLImageGL::calcAlphaChannelOffsetAndStride()
     case GL_BGRA_INTEGER:
         // Integers: even a fourth channel is a value, not coverage.
         mNeedsAlphaAndPickMask = false;
-        setAlphaAnalysis(AlphaAnalysis());
+        setAlphaAnalysis(opaqueAlphaAnalysis());
         return;
     case GL_RGBA:
     case GL_SRGB_ALPHA:
@@ -3095,17 +3095,21 @@ LLImageGL::AlphaAnalysis LLImageGL::analyzeAlphaData(const void* data_in, U32 w,
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
     // Mask bit from the shared Vayu analyzer so the GL masking decision agrees
     // with what the BC encoder decided for this texture (see pre_comp/comp_res
-    // mIsMask above); max alpha from a direct scan for AlphaAnalysis.mMaxAlpha.
+    // mIsMask above); max and min alpha from a direct scan for AlphaAnalysis.
     AlphaAnalysis analysis;
     analysis.mIsMask    = VayuImageBlockCompressor::analyzeAlphaMask(static_cast<const U8*>(data_in), w, h, alpha_offset, alpha_stride);
     U8        max_alpha = 0;
+    U8        min_alpha = 255;
     const U8* p         = static_cast<const U8*>(data_in) + alpha_offset;
     for (U32 i = 0, n = w * h; i < n; ++i, p += alpha_stride)
     {
         if (*p > max_alpha)
             max_alpha = *p;
+        if (*p < min_alpha)
+            min_alpha = *p;
     }
     analysis.mMaxAlpha = max_alpha;
+    analysis.mMinAlpha = min_alpha;
     return analysis;
 }
 
@@ -3178,6 +3182,7 @@ void LLImageGL::analyzeAlpha(const void* data_in, U32 w, U32 h)
                 {
                     mIsMask   = analysis.mIsMask;
                     mMaxAlpha = analysis.mMaxAlpha;
+                    mMinAlpha = analysis.mMinAlpha;
                 }
                 unref();
             });
@@ -3705,6 +3710,14 @@ LLImageGLThread::LLImageGLThread(LLWindow* window)
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
 
     mContext = mWindow->createSharedContext();
+    if (!mContext)
+    {
+        // Nothing to upload on, so the thread never starts and textures and media keep to the main thread.
+        LL_WARNS("LLImageGL") << "No GL context shared with the window's; uploading on the main thread" << LL_ENDL;
+        sEnabledTextures = false;
+        sEnabledMedia = false;
+        return;
+    }
     LL::ThreadPool::start();
 }
 
