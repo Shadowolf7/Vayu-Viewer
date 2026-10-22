@@ -293,8 +293,13 @@ public:
     void copyScreenSpaceReflections(LLRenderTarget* src, LLRenderTarget* dst);
     // The current pack's scene depth (mRT->deferredScreen's, which mRT->screen shares) over the whole of `dst`'s,
     // stretched as a nearest blit would, through gCopyDepthProgram: the water's depth copy and mSceneMap keep depth
-    // without the screen's stencil, which a blit's matching formats would make them carry.
+    // without the screen's stencil, which a blit's matching formats would make them carry. `dst` is cleared to the far
+    // plane first, and stays so where the program has not built.
     void copySceneDepth(LLRenderTarget& dst);
+    // The scene's depth as a haze pass reads it, with mRT->screen bound and the draws since its binding having written
+    // the depth it shares: past a texture barrier, the scene's own (nullptr); without one, a copy from `scope` taken
+    // after the screen is let go and bound again, or the scene's own past that change where the pack has no copy.
+    LLRenderTarget* hazeDepth(ALTransientTargets& scope);
     void generateLuminance(LLRenderTarget* src, LLRenderTarget* dst);
     void generateExposure(LLRenderTarget* src, LLRenderTarget* dst, bool use_history = true);
     void generateLensFlareState(LLRenderTarget* src);
@@ -1204,11 +1209,11 @@ public:
     bool                        mDeferredUBODirty{ true };
 
     // The water pool's copies of the scene under its surface, from the pool for its pass alone (beginWaterTargets to
-    // endWaterTargets) where the water is transparent: the screen's colour over the part of the screen the surface
-    // reads it at (its field's screen rectangle and the ripples' reach past it), and the scene's depth, copied since the
-    // surface writes its own depth over the scene's while it reads what lies beneath, and which the waves' depth
-    // pyramid is built from. The frame's one copy of the depth: the haze passes, which write none, read the scene's in
-    // place. Null outside that pass, and for opaque water, which reads neither.
+    // endWaterTargets) where the water refracts (ALRenderResourcePlan::refractsWater): the screen's colour over the
+    // part of the screen the surface reads it at (its field's screen rectangle and the ripples' reach past it), and the
+    // scene's depth, copied since the surface writes its own depth over the scene's while it reads what lies beneath,
+    // and which the waves' depth pyramid is built from. The frame's one copy of the depth: the haze passes, which write
+    // none, read the scene's in place. Null outside that pass, and for opaque water, which reads neither.
     void            beginWaterTargets();
     void            endWaterTargets();
     LLRenderTarget* waterRefraction() const { return mWaterRefraction; }

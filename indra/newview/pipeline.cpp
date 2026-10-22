@@ -1207,11 +1207,16 @@ ALRenderResourceInputs LLPipeline::resourceInputsFromSettings(const ALShaderInpu
     in.mGBufferNormHDR = shaders.mGlobal.mGBufferNormHDR;
     in.mReverseZ       = shaders.mGlobal.mReverseZ;
     in.mCompute        = shaders.mLocal.mCompute;
+    in.mTextureBarrier = gGLManager.mHasTextureBarrier;
 
     in.mShadowDetail     = gSavedSettings.getS32("RenderShadowDetail");
     in.mShadowScale      = gSavedSettings.getF32("RenderShadowResolutionScale");
     in.mShadowDepth32F   = gSavedSettings.getBOOL("AlchemyRenderShadowDepth32F");
     in.mSSAO             = gSavedSettings.getBOOL("RenderDeferredSSAO");
+    in.mSSAOBlurDispatched =
+        ALLightMapBlur::apron(ALLightMapBlur::kernel(gSavedSettings.getVector3("RenderShadowGaussian"),
+                                                     gSavedSettings.getF32("RenderShadowBlurSize"),
+                                                     gSavedSettings.getF32("RenderShadowBlurDistFactor"))) >= 0;
     in.mSSR              = gSavedSettings.getBOOL("RenderScreenSpaceReflections");
     in.mTransparentWater = gSavedSettings.getBOOL("RenderTransparentWater");
 
@@ -9404,13 +9409,6 @@ void LLPipeline::copySceneDepth(LLRenderTarget& dst)
 {
     LL_PROFILE_GPU_ZONE("depth copy");
     LLRenderTarget& src = mRT->deferredScreen;
-    if (!gCopyDepthProgram.isComplete())
-    {
-        // Unstretched, where the two differ in size, but the depth all the same.
-        dst.copyContents(src, 0, 0, src.getWidth(), src.getHeight(), 0, 0, dst.getWidth(), dst.getHeight(),
-                         GL_DEPTH_BUFFER_BIT, GL_NEAREST);
-        return;
-    }
 
     dst.bindTarget();
     {
@@ -9419,14 +9417,52 @@ void LLPipeline::copySceneDepth(LLRenderTarget& dst)
         LLGLDisable no_blend(GL_BLEND);
         LLGLDisable no_cull(GL_CULL_FACE);
 
-        gCopyDepthProgram.bind();
-        gCopyDepthProgram.bindDepthTexture(LLShaderMgr::DEFERRED_DEPTH, &src, ALSamplers::PointClamp);
-        mScreenTriangleVB->setBuffer();
-        mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
-        gCopyDepthProgram.unbindTexture(LLShaderMgr::DEFERRED_DEPTH);
-        gCopyDepthProgram.unbind();
+        // Cleared whole before it is drawn over. radeonsi makes a depth's tile metadata sampleable only at a whole
+        // clear, once a sample has had to decompress it: a copy never cleared is decompressed for every frame's readers.
+        dst.clear(GL_DEPTH_BUFFER_BIT);
+
+        if (gCopyDepthProgram.isComplete())
+        {
+            gCopyDepthProgram.bind();
+            gCopyDepthProgram.bindDepthTexture(LLShaderMgr::DEFERRED_DEPTH, &src, ALSamplers::PointClamp);
+            mScreenTriangleVB->setBuffer();
+            mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
+            gCopyDepthProgram.unbindTexture(LLShaderMgr::DEFERRED_DEPTH);
+            gCopyDepthProgram.unbind();
+        }
+        else
+        {
+            // A blit cannot stand in: GL copies depth only between matching formats, and the copies keep none of the
+            // scene's stencil. Their readers find nothing nearer than the far plane.
+            LL_WARNS_ONCE("RenderResources") << "No depth copy program; the scene's depth copies stay cleared" << LL_ENDL;
+        }
     }
     dst.flush();
+}
+
+LLRenderTarget* LLPipeline::hazeDepth(ALTransientTargets& scope)
+{
+    // The water, the forward pools and the alpha before the water write the scene's depth with the screen bound, and a
+    // read that follows them in that binding sees their writes only past a barrier: without one radeonsi samples the
+    // depth's tile metadata as it stood before them, a fast-cleared tile as the far plane.
+    if (gGLManager.mHasTextureBarrier)
+    {
+        gGL.textureBarrier();
+        return nullptr;
+    }
+
+    // macOS's 4.1 context may have no barrier. The screen is let go and bound again, the framebuffer change a barrier
+    // stands for, with the scene's depth copied in between where the pack has a copy, so the pass reads no attachment.
+    // Where it has none, or the copy could not be built, the pass reads the scene's own past that change, as the
+    // lighting passes read it past theirs: a null return is the scene's depth made current either way.
+    LLRenderTarget* copy = acquireResource(scope, ALRenderResourcePlan::inPack(renderPack(), ALRenderResourcePlan::Slot::DepthCopy));
+    mRT->screen.flush();
+    if (copy)
+    {
+        copySceneDepth(*copy);
+    }
+    mRT->screen.bindTarget();
+    return copy;
 }
 
 LLRenderTarget* LLPipeline::generateGlow(LLRenderTarget* src, ALTransientTargets& scope)
@@ -10070,7 +10106,6 @@ LLPipeline::SMAATargets LLPipeline::generateSMAABuffers(LLRenderTarget* src, ALT
         const bool use_predication = shaderInputs().mLocal.mSMAAPredication;
         // Stencil optimization requires all three passes to share the same stencil attachment.
         bool use_stencil = mResourceInputs.mSMAAStencil && smaa.mEdges->hasStencil() && smaa.mBlend->hasStencil();
-        LLGLState stencil(GL_STENCIL_TEST, use_stencil);
         {
             // Bind setup:
             LLRenderTarget& dest = *smaa.mEdges;
@@ -10118,14 +10153,16 @@ LLPipeline::SMAATargets LLPipeline::generateSMAABuffers(LLRenderTarget* src, ALT
                 edge_shader.uniform1f(LLShaderMgr::SMAA_PREDICATION_STRENGTH, llclamp((F32)pred_strength, 0.f, 1.f));
             }
 
-            if (use_stencil)
             {
-                glStencilFunc(GL_ALWAYS, 1, 0xFF);
-                glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
-                glStencilMask(0xFF);
+                // Marks the edges the pass finds, for the blend pass to keep to; the scope puts the stencil state back.
+                std::optional<ALGLStencil> mark_edges;
+                if (use_stencil)
+                {
+                    mark_edges.emplace(GL_ALWAYS, 1, 0xFFu, GL_KEEP, GL_KEEP, GL_REPLACE, 0xFFu);
+                }
+                mScreenTriangleVB->setBuffer();
+                mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
             }
-            mScreenTriangleVB->setBuffer();
-            mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
 
             edge_shader.unbind();
             dest.flush();
@@ -10167,17 +10204,15 @@ LLPipeline::SMAATargets LLPipeline::generateSMAABuffers(LLRenderTarget* src, ALT
                                                                gGL.getSampler(ALSamplers::BilinearClamp));
             }
 
-            if (use_stencil)
             {
-                glStencilFunc(GL_EQUAL, 1, 0xFF);
-                glStencilMask(0x00);
-            }
-            mScreenTriangleVB->setBuffer();
-            mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
-            if (use_stencil)
-            {
-                glStencilFunc(GL_ALWAYS, 0, 0xFF);
-                glStencilMask(0xFF);
+                // Only on the edges the edge pass marked, writing none.
+                std::optional<ALGLStencil> on_edges;
+                if (use_stencil)
+                {
+                    on_edges.emplace(GL_EQUAL, 1, 0xFFu, GL_KEEP, GL_KEEP, GL_KEEP, 0u);
+                }
+                mScreenTriangleVB->setBuffer();
+                mScreenTriangleVB->drawArrays(LLRender::TRIANGLES, 0, 3);
             }
             blend_weights_shader.unbind();
             dest.flush();
@@ -12297,6 +12332,10 @@ void LLPipeline::doAtmospherics()
 
     if (RenderDeferredAtmospheric)
     {
+        // The scene's depth as the haze reads it, after the water and the pools before it wrote it in this binding.
+        ALTransientTargets haze(mTransientTargets);
+        LLRenderTarget*    depth = hazeDepth(haze);
+
         LLGLEnable blend(GL_BLEND);
         // The haze dims the glow in the alpha as it dims what is lit. In a cutout frame the alpha is the subject's
         // coverage, seeded before this pass, and haze in front of the subject leaves it no less covered.
@@ -12309,12 +12348,13 @@ void LLPipeline::doAtmospherics()
 
         // The triangle lies on the far plane (hazeV.glsl), level with the depth the sky leaves cleared: it passes
         // only where the world drew something, so the sky is rejected before it is shaded. The screen target shares
-        // the G-buffer's depth, which the shader reads where it is, as the lighting passes do: neither draw writes it.
+        // the G-buffer's depth, which the shader reads where it is past the barrier, or from its copy (hazeDepth): the
+        // haze writes none.
         ALDrawnOnly drawn;
 
-        const auto apply_haze = [this](LLGLSLShader& haze_shader, bool on_water)
+        const auto apply_haze = [this, depth](LLGLSLShader& haze_shader, bool on_water)
         {
-            bindDeferredShader(haze_shader);
+            bindDeferredShader(haze_shader, nullptr, depth);
 
             LLEnvironment& environment = LLEnvironment::instance();
             haze_shader.uniform1i(LLShaderMgr::SUN_UP_FACTOR, environment.getIsSunUp() ? 1 : 0);
@@ -12388,6 +12428,10 @@ void LLPipeline::doWaterHaze()
 
     if (RenderDeferredAtmospheric)
     {
+        // The scene's depth as the haze reads it, after the pools before it wrote it in this binding.
+        ALTransientTargets haze(mTransientTargets);
+        LLRenderTarget*    depth = hazeDepth(haze);
+
         LLGLEnable blend(GL_BLEND);
         gGL.blendFunc(LLRender::BF_ONE, LLRender::BF_SOURCE_ALPHA, LLRender::BF_ZERO, LLRender::BF_SOURCE_ALPHA);
 
@@ -12398,9 +12442,9 @@ void LLPipeline::doWaterHaze()
         LLGLSLShader& haze_shader = gHazeWaterProgram;
 
         LL_PROFILE_GPU_ZONE("water haze");
-        // The scene's depth where it is, the G-buffer's, which the screen shares: the haze tests against it and
-        // writes none, from above or below.
-        bindDeferredShader(haze_shader);
+        // The scene's depth where it is, the G-buffer's, which the screen shares, past the barrier, or its copy
+        // (hazeDepth): the haze tests against it and writes none, from above or below.
+        bindDeferredShader(haze_shader, nullptr, depth);
 
         haze_shader.uniform4fv(LLShaderMgr::WATER_WATERPLANE, 1, LLDrawPoolAlpha::sWaterPlane.mV);
         haze_shader.uniform1i(LLShaderMgr::WATER_ABOVE_WATER, sUnderWaterRender ? -1 : 1);
@@ -13858,6 +13902,19 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
                 update_min_max(min, max, wpf[i]);
             }
 
+            // Receivers lying in one plane square to the light, as open water or flat ground does under a sun or moon at
+            // the zenith, have no depth along it: the ortho fit would divide by it and the perspective fit's depth scale
+            // be infinite, either leaving infinities in the matrices and NaN in every lookup of the split. Each fit takes
+            // at least MIN_SHADOW_DEPTH of depth, the ortho one about the receivers' middle and the perspective one at the
+            // split's far end (fz). Only the depth's scale changes, only in a split with less, and by its depth smoothly.
+            constexpr F32 MIN_SHADOW_DEPTH = 1.f;
+            if (max.mV[2] - min.mV[2] < MIN_SHADOW_DEPTH)
+            {
+                const F32 mid = (min.mV[2] + max.mV[2]) * 0.5f;
+                min.mV[2] = mid - MIN_SHADOW_DEPTH * 0.5f;
+                max.mV[2] = mid + MIN_SHADOW_DEPTH * 0.5f;
+            }
+
             // Construct a perspective transform with perspective along y-axis that contains
             // points in wpf
             //Known:
@@ -13943,7 +14000,9 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
                 mShadowError.mV[j] /= wpf.size();
                 mShadowError.mV[j] /= size.mV[0];
 
-                if (mShadowError.mV[j] > RenderShadowErrorCutoff)
+                // Ortho too where no line was fitted: with every point the same distance across the light, as a split
+                // seen straight along it is, the least squares divide zero by zero and the error is NaN.
+                if (!(mShadowError.mV[j] <= RenderShadowErrorCutoff))
                 { //just use ortho projection
                     mShadowFOV.mV[j] = -1.f;
                     origin.clearVec();
@@ -14034,8 +14093,8 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
                         yfar += diff;
                     }
 
-                    if (fovx > cutoff)
-                    { //just use ortho projection
+                    if (!(fovx <= cutoff))
+                    { //just use ortho projection, also where the field of view came out NaN
                         origin.clearVec();
                         mShadowError.mV[j] = -1.f;
                         proj[j] = al_ortho(min.mV[0], max.mV[0],
@@ -14062,7 +14121,8 @@ void LLPipeline::generateSunShadow(LLCamera& camera)
                         view[j] = LLMatrix4a::lookDir(origin_agent, LLVector4a(lightDir.mV[0], lightDir.mV[1], lightDir.mV[2]), LLVector4a(-up.mV[0], -up.mV[1], -up.mV[2]));
 
                         F32 fx = 1.f/tanf(fovx);
-                        F32 fz = 1.f/tanf(fovz);
+                        // MIN_SHADOW_DEPTH across at yfar, at least; also where the field of view came out NaN.
+                        F32 fz = 1.f/tanf(llmax(fovz, atanf(MIN_SHADOW_DEPTH * 0.5f / yfar)));
 
                         proj[j].mMatrix[0].set(-fx, 0.f, 0.f, 0.f);
                         proj[j].mMatrix[1].set(0.f, (yfar + ynear) / (ynear - yfar), 0.f, -1.f);
