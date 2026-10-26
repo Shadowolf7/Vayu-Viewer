@@ -823,7 +823,8 @@ bool LLAppViewer::init()
     // the translation bridge LLWearableType reads its labels through
     LLTranslationBridge::ptr_t trans = std::make_shared<LLUITranslationBridge>();
 
-    // initialize SSE options
+    // llmath: the floating-point mode, and meshoptimizer's scratch from each
+    // thread's own arena
     LLVector4a::initClass();
 
     //initialize particle index pool
@@ -1455,10 +1456,6 @@ bool LLAppViewer::doFrame()
     }
 
     LLPerfStats::RecordSceneTime T (LLPerfStats::StatType_t::RENDER_FRAME);
-    if (!LLWorld::instanceExists())
-    {
-        LLWorld::createInstance();
-    }
 
     LLEventPump& mainloop(LLEventPumps::instance().obtain("mainloop"));
     LLSD newFrame;
@@ -1595,12 +1592,19 @@ bool LLAppViewer::doFrame()
                 gGLActive = true;
 
                 display();
+                // The frame display() showed, if paced, ends here: the main loop's work in its slack, then the wait.
+                display_end_frame();
 
                 {
                     LLPerfStats::RecordSceneTime T(LLPerfStats::StatType_t::RENDER_IDLE);
                     LL_PROFILE_ZONE_NAMED_CATEGORY_APP("df Snapshot");
                     pingMainloopTimeout("Main:Snapshot");
-                    gPipeline.mReflectionMapManager.update();
+                    // Probes are captured only while the world is drawn: a hidden or minimized window shows none of
+                    // them, so their captures would be GPU work for nothing.
+                    if (!display_window_hidden())
+                    {
+                        gPipeline.mReflectionMapManager.update();
+                    }
                     LLFloaterSnapshot::update(); // take snapshots
                     LLFloaterSimpleSnapshot::update();
                     gGLActive = false;
@@ -2368,7 +2372,7 @@ bool LLAppViewer::initThreads()
 
     static const bool enable_threads = true;
 
-    LLImage::initClass(gSavedSettings.getBOOL("TextureNewByteRange"),gSavedSettings.getS32("TextureReverseByteRange"));
+    LLImage::initClass();
 
     LLLFSThread::initClass(enable_threads && true); // TODO: fix crashes associated with this shutdo
 
@@ -3591,6 +3595,10 @@ bool LLAppViewer::initWindow()
         .ignore_pixel_depth(ignorePixelDepth)
         .first_run(mIsFirstRun);
 
+#if LL_WINDOWS
+    // The window opens the D3D/GL interop device with its context, and only accelerated media paint uses it.
+    gDXHardware.setGLDXInteropWanted(gSavedSettings.getBOOL("ALCefAcceleratedPaint"));
+#endif
     gViewerWindow = new LLViewerWindow(window_params);
 
     LL_INFOS("AppInit") << "gViewerwindow created." << LL_ENDL;
@@ -3876,8 +3884,8 @@ LLSD LLAppViewer::getViewerInfo() const
     // Moved hack adjustment to Windows memory size into llsys.cpp
     info["CONCURRENCY"] = LLSD::Integer((S32) std::thread::hardware_concurrency());
     info["OS_VERSION"] = LLOSInfo::instance().getOSString();
-    info["GRAPHICS_CARD_VENDOR"] = ll_safe_string((const char*)(glGetString(GL_VENDOR)));
-    info["GRAPHICS_CARD"] = ll_safe_string((const char*)(glGetString(GL_RENDERER)));
+    info["GRAPHICS_CARD_VENDOR"] = gGLManager.mGLVendorString;
+    info["GRAPHICS_CARD"] = gGLManager.mGLRendererString;
 
 #if LL_WINDOWS
     std::string drvinfo;
@@ -3920,7 +3928,7 @@ LLSD LLAppViewer::getViewerInfo() const
 // [RLVa:KB] - Checked: 2010-04-18 (RLVa-1.2.0)
     info["RLV_VERSION"] = (rlv_handler_t::isEnabled()) ? RlvStrings::getVersionAbout() : "(disabled)";
 // [/RLVa:KB]
-    info["OPENGL_VERSION"] = ll_safe_string((const char*)(glGetString(GL_VERSION)));
+    info["OPENGL_VERSION"] = gGLManager.mGLVersionString;
 
     // Settings
 
@@ -6664,12 +6672,11 @@ void LLAppViewer::disconnectViewer()
     // Also writes cached agent settings to gSavedSettings
     gAgent.cleanup();
 
-    // This is where we used to call gObjectList.destroy() and then delete gWorldp.
-    // Now we just ask the LLWorld singleton to cleanly shut down.
+    // The world gives up its regions and objects here but stays until cleanup() deletes it: the frames drawn while
+    // disconnected, this one among them, still read it.
     if(LLWorld::instanceExists())
     {
         LLWorld::getInstance()->resetClass();
-        LLWorld::deleteSingleton();
     }
     LLVOCache::deleteSingleton();
 

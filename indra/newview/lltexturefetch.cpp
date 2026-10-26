@@ -516,6 +516,21 @@ private:
     void setDesiredDiscard(S32 discard, S32 size);
 
     // Locks:  Mw
+    // The bytes a request for `discard` needs: from the codestream's layout once it is known,
+    // `estimate` until then. A request for discard 0 keeps `estimate`, which asks for all of it.
+    S32 calcDesiredSize(S32 discard, S32 estimate) const;
+
+    // Locks:  Mw
+    // Takes the layout from the formatted image once it holds the codestream's headers, and
+    // sizes the request by it. True when this call found it.
+    bool updateLayout();
+
+    // Locks:  Mw
+    // The discard level `bytes` of formatted data decode a request for `discard` at: the
+    // finest they reach, never finer than the request.
+    S32 calcLoadedDiscard(S32 discard, S32 bytes) const;
+
+    // Locks:  Mw
     void removeFromCache();
 
     // Threads:  Ttf
@@ -575,6 +590,8 @@ private:
     LLPointer<LLImageFormatted> mFormattedImage;
     LLPointer<LLImageRaw>       mRawImage,
                                 mAuxImage;
+    // The codestream's layout, once mFormattedImage has held its headers.
+    ALJ2CLayout mLayout;
     FTType mFTType;
     LLUUID mID;
     LLHost mHost;
@@ -607,7 +624,8 @@ private:
                                 mRequestedOffset,
                                 mDesiredSize,
                                 mFileSize,
-                                mCachedSize;
+                                mCachedSize,
+                                mCacheReadEnd;   // where the last cache read was asked to stop
     e_request_state mSentRequest;
     handle_t mDecodeHandle;
     // DecodeResponders alive that point at this worker. A responder lives on past completed()
@@ -621,6 +639,9 @@ private:
     bool mAllowCompression;
     EVayuTextureJob mTextureJob;
     bool mHaveAllData;
+    // The last network request failed: the worker decodes what it holds and finishes rather
+    // than asking again.
+    bool mFetchFailed;
     bool mInLocalCache;
     bool mInCache;
     bool                        mCanUseHTTP;
@@ -940,6 +961,7 @@ LLTextureFetchWorker::LLTextureFetchWorker(LLTextureFetch* fetcher,
       mFileSize(0),
       mSkippedStatesTime(0),
       mCachedSize(0),
+      mCacheReadEnd(0),
       mLoaded(false),
       mSentRequest(UNSENT),
       mDecodeHandle(0),
@@ -950,6 +972,7 @@ LLTextureFetchWorker::LLTextureFetchWorker(LLTextureFetch* fetcher,
       mAllowCompression(true),
       mTextureJob(EVayuTextureJob::Unknown),
       mHaveAllData(false),
+      mFetchFailed(false),
       mInLocalCache(false),
       mInCache(false),
       mCanUseHTTP(true),
@@ -1023,6 +1046,7 @@ LLTextureFetchWorker::~LLTextureFetchWorker()
 // Locks:  Mw (ctor invokes without lock)
 void LLTextureFetchWorker::setDesiredDiscard(S32 discard, S32 size)
 {
+    size = calcDesiredSize(discard, size);
     bool prioritize = false;
     if (mDesiredDiscard != discard)
     {
@@ -1050,6 +1074,42 @@ void LLTextureFetchWorker::setDesiredDiscard(S32 discard, S32 size)
     {
         setState(INIT);
     }
+}
+
+// Locks:  Mw
+S32 LLTextureFetchWorker::calcDesiredSize(S32 discard, S32 estimate) const
+{
+    return (mLayout.isValid() && discard > 0) ? mLayout.calcDataSize(discard) : estimate;
+}
+
+// Locks:  Mw
+bool LLTextureFetchWorker::updateLayout()
+{
+    if (mLayout.isValid() || mFormattedImage.isNull() || mFormattedImage->getCodec() != IMG_CODEC_J2C)
+    {
+        return false;
+    }
+
+    {
+        LLImageDataSharedLock lock(mFormattedImage);
+        mLayout = static_cast<const LLImageJ2C*>(mFormattedImage.get())->getLayout();
+    }
+    if (!mLayout.isValid())
+    {
+        return false;
+    }
+    mDesiredSize = llmax(calcDesiredSize(mDesiredDiscard, mDesiredSize), TEXTURE_CACHE_ENTRY_SIZE);
+    return true;
+}
+
+// Locks:  Mw
+S32 LLTextureFetchWorker::calcLoadedDiscard(S32 discard, S32 bytes) const
+{
+    if (mHaveAllData || !mLayout.isValid())
+    {
+        return discard;
+    }
+    return llmax(discard, mLayout.calcDiscardLevelBytes(bytes));
 }
 
 // Locks:  Mw
@@ -1206,8 +1266,10 @@ bool LLTextureFetchWorker::doWork(S32 param)
         mHttpReplySize = 0;
         mHttpReplyOffset = 0;
         mHaveAllData = false;
-        mReadResponder = NULL;
-        mWriteResponder = NULL;
+        mFetchFailed = false;
+        mCacheReadEnd = 0;
+        mCacheReadHandle = LLTextureCache::nullHandle();
+        mCacheWriteHandle = LLTextureCache::nullHandle();
         setState(LOAD_FROM_TEXTURE_CACHE);
         mInCache = false;
         mDesiredSize = llmax(mDesiredSize, TEXTURE_CACHE_ENTRY_SIZE); // min desired size is TEXTURE_CACHE_ENTRY_SIZE
@@ -1322,6 +1384,13 @@ bool LLTextureFetchWorker::doWork(S32 param)
                 return doWork(param);
                 // return false;
             }
+            if (mLayout.isValid() && 2 * S64(mDesiredSize) >= mLayout.mLength)
+            {
+                // Reading the rest of a local entry now costs less than reading it later
+                // for a finer level.
+                size = llmax(size, mLayout.mLength - offset);
+            }
+            mCacheReadEnd = offset + size;
             mFileSize = 0;
             mLoaded = false;
 
@@ -1384,12 +1453,19 @@ bool LLTextureFetchWorker::doWork(S32 param)
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_THREAD("tfwdw - CACHE_POST");
         mCachedSize = mFormattedImage.notNull() ? mFormattedImage->getDataSize() : 0;
+        if (updateLayout() && mCachedSize < mDesiredSize && !mHaveAllData && mCachedSize >= mCacheReadEnd)
+        {
+            // The headers just read size the request past a read the entry filled, so it
+            // may hold more.
+            setState(LOAD_FROM_TEXTURE_CACHE);
+            return doWork(param);
+        }
         // Successfully loaded
         if ((mCachedSize >= mDesiredSize) || mHaveAllData)
         {
             // we have enough data, decode it
             llassert_always(mFormattedImage->getDataSize() > 0);
-            mLoadedDiscard = mDesiredDiscard;
+            mLoadedDiscard = calcLoadedDiscard(mDesiredDiscard, mCachedSize);
             if (mLoadedDiscard < 0)
             {
                 LL_WARNS(LOG_TXT) << mID << " mLoadedDiscard is " << mLoadedDiscard
@@ -1785,6 +1861,7 @@ bool LLTextureFetchWorker::doWork(S32 param)
                 if (cur_size > 0)
                 {
                     // Use available data
+                    mFetchFailed = true;
                     mLoadedDiscard = mFormattedImage->getDiscardLevel();
                     if (mLoadedDiscard < 0)
                     {
@@ -1905,7 +1982,8 @@ bool LLTextureFetchWorker::doWork(S32 param)
             mHttpReplySize = 0;
             mHttpReplyOffset = 0;
 
-            mLoadedDiscard = mRequestedDiscard;
+            updateLayout();
+            mLoadedDiscard = calcLoadedDiscard(mRequestedDiscard, total_size);
             if (mLoadedDiscard < 0 || (mLoadedDiscard > MAX_DISCARD_LEVEL && mFormattedImage->getCodec() == IMG_CODEC_J2C))
             {
                 LL_WARNS(LOG_TXT) << mID << " mLoadedDiscard is " << mLoadedDiscard
@@ -2049,6 +2127,7 @@ bool LLTextureFetchWorker::doWork(S32 param)
                     LL_DEBUGS(LOG_TXT) << mID << ": Decode of cached file failed (removed), retrying" << LL_ENDL;
                     llassert_always(mDecodeHandle == 0);
                     mFormattedImage = NULL;
+                    mLayout = {};
                     ++mRetryAttempt;
                     setState(INIT);
                     //return false;
@@ -2065,6 +2144,21 @@ bool LLTextureFetchWorker::doWork(S32 param)
                 llassert_always(mRawImage.notNull());
                 LL_DEBUGS(LOG_TXT) << mID << ": Decoded. Discard: " << mDecodedDiscard
                                    << " Raw Image: " << llformat("%dx%d",mRawImage->getWidth(),mRawImage->getHeight()) << LL_ENDL;
+                if (mLayout.isValid() && mFormattedImage.notNull())
+                {
+                    // Once a texture: a decode finer than its bytes reach, which decodes what they lack as nothing --
+                    // a codestream with fewer resolutions than the level asked for, or bytes short of the level's target.
+                    const S32 bytes = mFormattedImage->getDataSize();
+                    const S32 reach = mLayout.calcDiscardLevelBytes(bytes);
+                    if (mDecodedDiscard < reach)
+                    {
+                        LL_INFOS_ONCE(LOG_TXT) << mID << " decoded " << mRawImage->getWidth() << "x" << mRawImage->getHeight()
+                                               << " at discard " << mDecodedDiscard << " from " << bytes << " of " << mLayout.mLength
+                                               << " bytes, which reach discard " << reach << " (" << mLayout.mWidth << "x"
+                                               << mLayout.mHeight << ", " << mLayout.mLevels << " levels, " << mLayout.mLayers
+                                               << " layers, all data " << mHaveAllData << ")" << LL_ENDL;
+                    }
+                }
                 setState(WRITE_TO_CACHE);
             }
             // fall through
@@ -2174,13 +2268,15 @@ bool LLTextureFetchWorker::doWork(S32 param)
     if (mState == DONE)
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_THREAD("tfwdw - DONE");
-        if (mDecodedDiscard >= 0 && mDesiredDiscard < mDecodedDiscard)
+        // The decode can come out finer than the bytes support when the codestream has fewer
+        // resolutions than the level loaded, so the bytes' level counts as well.
+        if (mDecodedDiscard >= 0 && !mFetchFailed && mDesiredDiscard < llmax(mDecodedDiscard, mLoadedDiscard))
         {
             // More data was requested, return to INIT
             setState(INIT);
             LL_DEBUGS(LOG_TXT) << mID << " more data requested, returning to INIT: "
-                               << " mDecodedDiscard " << mDecodedDiscard << ">= 0 && mDesiredDiscard " << mDesiredDiscard
-                               << "<" << " mDecodedDiscard " << mDecodedDiscard << LL_ENDL;
+                               << " mDecodedDiscard " << mDecodedDiscard << " mLoadedDiscard " << mLoadedDiscard
+                               << " > mDesiredDiscard " << mDesiredDiscard << LL_ENDL;
             // return false;
             return doWork(param);
         }
@@ -2815,6 +2911,7 @@ S32 LLTextureFetch::createRequest(FTType f_type, const std::string& url, const L
             return CREATE_REQUEST_ERROR_ABORTED; // need to wait for previous aborted request to complete
         }
         worker->lockWorkMutex();                                        // +Mw
+        desired_size = worker->calcDesiredSize(desired_discard, desired_size);
         if (worker->mState == LLTextureFetchWorker::DONE && worker->mDesiredSize == llmax(desired_size, TEXTURE_CACHE_ENTRY_SIZE) && worker->mDesiredDiscard == desired_discard) {
             if (job == worker->mTextureJob)
             {

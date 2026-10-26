@@ -5,7 +5,7 @@
         <key>ALCefAcceleratedPaint</key>
         <map>
             <key>Comment</key>
-            <string>Use CEF GPU shared-texture (accelerated paint) zero-copy path for browser media instead of CPU pixel readback/upload. Requires a viewer restart. (CEF daemon rework, on by default; falls back to CPU paint where the GPU interop is unavailable.)</string>
+            <string>Use CEF GPU shared-texture (accelerated paint) zero-copy path for browser media instead of CPU pixel readback/upload. Requires a viewer restart: on Windows the D3D/GL interop it needs is opened with the window only while this is on. Falls back to CPU paint where the GPU interop is unavailable.</string>
             <key>Persist</key>
             <integer>1</integer>
             <key>Type</key>
@@ -2311,6 +2311,72 @@
             <key>Value</key>
             <integer>0</integer>
         </map>
+        <key>AlchemyRenderMaxFramesAhead</key>
+        <map>
+            <key>Comment</key>
+            <string>How many frames the GPU may still be drawing when the viewer begins the next: each frame, straight after the swap, waits for the frame that many before it to finish, so frames come at an even pace and input is no more than that many frames behind. 3, the default, keeps a GPU-bound frame's CPU work and the driver's under the GPU's: at 1 a GPU-bound scene that runs at 150 fps can fall to 50. Past 3 the frame rings sized for 3 (the uniform blocks' segments) can wait inside a frame for a GPU that far behind. 1 is the least latency. 0 waits for none and leaves the pace to the driver, which on NVIDIA's threaded driver runs ahead and then stalls a whole frame. Takes effect at once.</string>
+            <key>Persist</key>
+            <integer>1</integer>
+            <key>Type</key>
+            <string>U32</string>
+            <key>Value</key>
+            <integer>3</integer>
+        </map>
+        <key>AlchemyObjectCreationTime</key>
+        <map>
+            <key>Comment</key>
+            <string>The most milliseconds a frame spends making objects from the regions' object caches, every region's together, past the first few (NewObjectCreationThrottle still caps each region's count). A camera moving fast into a crowd of cached objects would otherwise make the count's worth in one frame and build their geometry in the next; under the limit they come in over a few frames instead. Not while the login or teleport screen is up, nor for NewObjectCreationThrottleDelayTime after. 0 for no limit but the count. Takes effect at once.</string>
+            <key>Persist</key>
+            <integer>1</integer>
+            <key>Type</key>
+            <string>F32</string>
+            <key>Value</key>
+            <real>3.0</real>
+        </map>
+        <key>AlchemyRenderFrameStamps</key>
+        <map>
+            <key>Comment</key>
+            <string>Where the GPU writes the query results (NVIDIA), have it also write when each frame has finished, into memory the viewer reads, rather than laying and polling a fence each frame. A poll of a fence, and the pacing wait on one, waits on NVIDIA's threaded optimization until its own thread has run every command before it, which leaves that thread idle while the next frame begins; reading the stamps makes no such call. Off lays a fence a frame, as other drivers do. Takes effect at once.</string>
+            <key>Persist</key>
+            <integer>1</integer>
+            <key>Type</key>
+            <string>Boolean</string>
+            <key>Value</key>
+            <integer>1</integer>
+        </map>
+        <key>AlchemyRenderStagedUploads</key>
+        <map>
+            <key>Comment</key>
+            <string>The main thread's texture uploads (glyphs, UI images, media) copy their pixels into a persistently mapped buffer and upload from it, which a threaded driver (NVIDIA's threaded optimization, Mesa's glthread) queues like a draw, rather than from the viewer's own memory, which it copies on the main thread first or waits for its own thread to catch up before reading. Off uploads from the viewer's memory. Takes effect at once.</string>
+            <key>Persist</key>
+            <integer>1</integer>
+            <key>Type</key>
+            <string>Boolean</string>
+            <key>Value</key>
+            <integer>1</integer>
+        </map>
+        <key>AlchemyRenderQueryResultAge</key>
+        <map>
+            <key>Comment</key>
+            <string>How many frames after its own a frame's GPU queries (occlusion culling, GPU timers) are read at the soonest, however soon the GPU finished them, 1 to 7. A dense scene issues thousands of occlusion queries a frame; read sooner, a result may be one a threaded driver (NVIDIA's threaded optimization, Mesa's glthread) has yet to write, and asking for it waits for the driver's thread. 3, the default, is the frame AlchemyRenderMaxFramesAhead's pacing wait has just seen finished. Lower culls by fresher results; higher leaves each object as its last result left it, shown or hidden, that much longer. Takes effect at once.</string>
+            <key>Persist</key>
+            <integer>1</integer>
+            <key>Type</key>
+            <string>U32</string>
+            <key>Value</key>
+            <integer>3</integer>
+        </map>
+        <key>AlchemyRenderPacingSlackWork</key>
+        <map>
+            <key>Comment</key>
+            <string>While AlchemyRenderMaxFramesAhead paces the frames and the GPU is the slower, run the main loop's queued work (textures, meshes and replies arriving from other threads) in the time each frame's end would otherwise wait for the GPU, for half as long as the shortest of the last eight frames' waits shows there is. Off, that work runs only in its millisecond a frame (MainWorkTime). Takes effect at once.</string>
+            <key>Persist</key>
+            <integer>1</integer>
+            <key>Type</key>
+            <string>Boolean</string>
+            <key>Value</key>
+            <integer>1</integer>
+        </map>
         <key>AlchemyRenderDepthBoundsTest</key>
         <map>
             <key>Comment</key>
@@ -2410,6 +2476,28 @@
             <key>Value</key>
             <real>200.0</real>
         </map>
+        <key>AlchemyRenderSpotShadowCache</key>
+        <map>
+            <key>Comment</key>
+            <string>Draw a projector (spot light) shadow map only when its light or what it casts has changed, and keep it otherwise. Off draws both maps every frame, which tells a map kept stale from a shadow drawn wrong.</string>
+            <key>Persist</key>
+            <integer>1</integer>
+            <key>Type</key>
+            <string>Boolean</string>
+            <key>Value</key>
+            <integer>1</integer>
+        </map>
+        <key>AlchemyRenderSpotShadowMaxResolution</key>
+        <map>
+            <key>Comment</key>
+            <string>Largest edge of the two projector (spot light) shadow maps, in texels. They are square at the render width times RenderShadowResolutionScale up to this edge. 0 takes the render width alone. Reallocates the spot shadow maps.</string>
+            <key>Persist</key>
+            <integer>1</integer>
+            <key>Type</key>
+            <string>U32</string>
+            <key>Value</key>
+            <integer>2048</integer>
+        </map>
         <key>AlchemyRenderTerrainHexTiling</key>
         <map>
             <key>Comment</key>
@@ -2435,13 +2523,13 @@
         <key>AlchemyRenderTerrainTessDensity</key>
         <map>
             <key>Comment</key>
-            <string>Base density of the terrain tessellation: metres of patch edge per level, divided by the distance to the camera, so at 64 a 16 m patch is split 64 ways (25 cm) within 16 m of the camera, 16 ways (1 m) at 64 m and not at all past 1 km. The terrain detail slider multiplies it. Triangle count grows with the square; clamped to 8 to 256.</string>
+            <string>Base density of the terrain tessellation: metres of patch edge per level, divided by the distance to the camera, so at 48 a 16 m patch is split 48 ways (33 cm) within 16 m of the camera, 12 ways (1.3 m) at 64 m and not at all past 768 m. The terrain detail slider multiplies it. Triangle count grows with the square; clamped to 8 to 256.</string>
             <key>Persist</key>
             <integer>1</integer>
             <key>Type</key>
             <string>F32</string>
             <key>Value</key>
-            <real>64</real>
+            <real>48</real>
         </map>
         <key>AlchemyRenderTerrainTessRasterSegment</key>
         <map>
@@ -2798,13 +2886,13 @@
         <key>AlchemyRenderUBOUpdateMode</key>
         <map>
             <key>Comment</key>
-            <string>Upload strategy for the engine's shared uniform blocks: 0 = direct sub-updates per write, 1 = orphan and re-upload whole block per draw, 2 = stream through a shared ring buffer (unsynchronized map/unmap), 3 = stream through a persistently-mapped coherent ring (no per-draw map/orphan; falls back to 1 if buffer-storage is unavailable), 4 = persistently-mapped NON-coherent ring with explicit flush (often faster than 3 where coherent mappings are write-combined). Applies live; 2-4 avoid GPU sync stalls on drivers where buffer sub-updates are expensive (macOS).</string>
+            <string>Upload strategy for the engine's shared uniform blocks: 0 = direct sub-updates per write, 1 = orphan and re-upload whole block per draw, 2 = stream through a shared ring buffer (unsynchronized map/unmap), 3 = stream through a persistently-mapped coherent ring (no per-draw map/orphan; falls back to 1 if buffer-storage is unavailable), 4 = persistently-mapped NON-coherent ring with explicit flush (often faster than 3 where coherent mappings are write-combined; falls back to 1 likewise), the default. Applies live; 2-4 avoid GPU sync stalls on drivers where buffer sub-updates are expensive (macOS). The feature tables hold Intel's drivers short of OpenGL 4.6 at 1, and give macOS 2.</string>
             <key>Persist</key>
             <integer>1</integer>
             <key>Type</key>
             <string>S32</string>
             <key>Value</key>
-            <integer>1</integer>
+            <integer>4</integer>
         </map>
         <key>AlchemyRevokeObjectPerms</key>
         <map>

@@ -146,6 +146,10 @@ public:
     // reads back without waiting.
     bool read(size_t offset, void* out, size_t bytes) const;
 
+    // Whether a READBACK or STREAM store is mapped persistently on this context (buffer storage, GL 4.4 or
+    // ARB_buffer_storage): what the CPU writes into a STREAM store is then a copy into its map, with no map or unmap.
+    static bool canMapPersistently();
+
     // Every live ALGPUBuffer's store, in bytes.
     static U64 sBytesAllocated;
 
@@ -161,8 +165,12 @@ private:
 // hands back the oldest result once the frame fences show that frame finished (ALFrameFences), which is a frame or two
 // later. A request that finds every slot holding a result not yet collected is refused rather than stalling on the
 // oldest. Slots are mapped for reading where persistent maps resolved, and read by glGetBufferSubData elsewhere --
-// once the frame has finished, so neither waits on the GPU. Neither a request nor a mapped slot's collect lays or polls
-// a fence of its own, so nothing waits on a threaded driver's own thread either.
+// once the frame has finished, so neither waits on the GPU. Where the frames' ends stamp their frames rather than lay
+// fences (ALFrameFences::willStamp), a request also lays a fence of its own, and its result is collected only once that
+// has signalled too: GL says a mapped store is written by the commands before it only through a sync object, and a
+// stamp is a query. The fence is laid at once and polled only once its frame has finished, when it has signalled and
+// the poll answers at once, so nothing waits on a threaded driver's own thread either. release() waits out the requests
+// still in flight before it lets the store go.
 //
 // All operations require the GL context of the frame fences to be current: gGL's, unless others are given. Non-copyable.
 class ALGPUReadback
@@ -182,6 +190,8 @@ public:
     size_t getSlotSize() const { return mSlotBytes; }
     // Requests made and not yet collected.
     U32    getPending() const { return mPending; }
+    // Fences of the slots' own, laid while stamping and not yet seen signalled.
+    U32    getFences() const;
 
     // Copy [src_offset, src_offset + bytes) of `src` into the next slot. A shader's writes to `src` are ordered before
     // the copy here. False, and nothing copied, while every slot is pending.
@@ -200,8 +210,9 @@ public:
 private:
     struct Slot
     {
-        U32    mFrame = 0;  // the frame the slot's copy was issued in
+        U32    mFrame = 0;        // the frame the slot's copy was issued in
         size_t mBytes = 0;
+        void*  mFence = nullptr;  // a fence of its own, where the frame is stamped (GLsync)
     };
 
     ALFrameFences& frames() const;
@@ -223,8 +234,10 @@ private:
 // (ALFrameFences); only a GPU that many frames behind, or a ring mapped round within one frame, makes map() wait. Where
 // persistent maps did not resolve, map() gives memory of its own and publish() uploads it.
 //
-// A published region's reads -- binds, draws, dispatches -- are all issued before the next map(), which notes the frame
-// they were issued in. Neither call lays or polls a fence while the GPU keeps up.
+// A published region's reads -- binds, draws, dispatches -- are issued before the next map(), which notes the frame
+// they were issued in, or are noted with noteRead() in the frame they are issued, as a user that keeps what it
+// published for later frames does: the region stays as published until the ring comes round to it, `regions` maps on.
+// Neither call lays or polls a fence while the GPU keeps up.
 //
 // All operations require the GL context of the frame fences to be current: gGL's, unless others are given. Non-copyable.
 class ALGPUStream
@@ -251,6 +264,10 @@ public:
     // Hand the GPU the `bytes` written since map(). Returns where they start in getBuffer(): a multiple of
     // gGLManager.mShaderStorageBufferOffsetAlignment, so a storage range can start there.
     size_t publish(size_t bytes);
+
+    // The region publish() placed at `offset` is read again in this frame, after a later map(): the ring writes it
+    // again only once this frame has finished. Every read, in every frame, is noted so.
+    void noteRead(size_t offset);
 
     // map() calls that found their region still in use by the GPU, and waited.
     U32 getStalls() const { return mStalls; }

@@ -436,6 +436,56 @@ namespace
         CHECK(glGetError() == GLenum(GL_NO_ERROR));
     }
 
+    // Where the frames' ends stamp their frames, a request lays a fence of its own behind its copy, and its result is
+    // collected only once that has signalled too: GL says a mapped store is written by the commands before it only
+    // through a sync object, and a stamp is a query. Frames fenced lay none.
+    TEST_CASE_METHOD(algpubuffer_data, "algpubuffer_gl: ALGPUReadback lays a fence of its own while stamping", "[algpubuffer_gl]")
+    {
+        if (!ALFrameFences::canStamp())
+        {
+            SKIP("the context cannot stamp frames");
+        }
+        constexpr U32 COUNT = 16;
+        ALGPUBuffer source;
+        REQUIRE(source.allocate(WORDS * sizeof(U32), ALGPUBuffer::DYNAMIC, nullptr, "source (test)"));
+        ALGPUReadback readback(&mFrames);
+        REQUIRE(readback.allocate(COUNT * sizeof(U32), 3, "readback (test)"));
+        const std::vector<U32> words = pattern(WORDS, 31u);
+        source.upload(0, words.data(), words.size() * sizeof(U32));
+
+        REQUIRE(readback.request(source, 0, COUNT * sizeof(U32)));
+        UNSCOPED_INFO("frames fenced: no fence of its own");
+        CHECK(readback.getFences() == 0u);
+        std::vector<U32> result(COUNT, 0u);
+        REQUIRE(readback.collect(result.data(), result.size() * sizeof(U32), true));
+
+        // The request above counted on its frame's fence: that frame's end lays it, and the stamps start after.
+        mFrames.setStamps(true);
+        mFrames.endFrame();
+        CHECK_FALSE(mFrames.isStamping());
+        mFrames.endFrame();
+        REQUIRE(mFrames.isStamping());
+        REQUIRE(readback.request(source, 0, COUNT * sizeof(U32)));
+        UNSCOPED_INFO("stamped: a fence of its own");
+        CHECK(readback.getFences() == 1u);
+        // Its frame stamped, the stamp written, and a later frame's end reading it.
+        mFrames.endFrame();
+        glFinish();
+        mFrames.endFrame();
+        REQUIRE(readback.collect(result.data(), result.size() * sizeof(U32)));
+        UNSCOPED_INFO("collected, and its fence let go");
+        CHECK(readback.getFences() == 0u);
+        CHECK(result == std::vector<U32>(words.begin(), words.begin() + COUNT));
+
+        // A request in flight when the readback is let go is waited out first, and its fence with it.
+        REQUIRE(readback.request(source, 0, COUNT * sizeof(U32)));
+        readback.release();
+        CHECK(readback.getFences() == 0u);
+        mFrames.setStamps(false);
+        mFrames.endFrame();
+        CHECK(glGetError() == GLenum(GL_NO_ERROR));
+    }
+
     // ALGPUReadback::requestPixels: each request reads the rectangle it names of the framebuffer bound for reading, as
     // the framebuffer held it then, into its own slot; a request past the slots is refused; and the pack binding is
     // left at none, so that a read into memory after it writes to memory.
@@ -595,6 +645,41 @@ namespace
         REQUIRE(stream.map() != nullptr);
         stream.publish(COUNT * sizeof(U32));
         UNSCOPED_INFO("a region read in the open frame waits for what has been issued");
+        CHECK(mFrames.getCalls() >= calls + 2);
+        CHECK(glGetError() == GLenum(GL_NO_ERROR));
+    }
+
+    // ALGPUStream: a region its user reads again in a later frame, after the next map(), is written again only once that
+    // frame has finished, not the frame the next map() noted.
+    TEST_CASE_METHOD(algpubuffer_data, "algpubuffer_gl: ALGPUStream holds a region read again in a later frame until that frame finishes", "[algpubuffer_gl]")
+    {
+        constexpr U32 REGIONS = 3;
+        constexpr U32 COUNT = 10;
+        ALGPUStream stream(&mFrames);
+        REQUIRE(stream.allocate(COUNT * sizeof(U32), REGIONS, "stream (test)"));
+
+        // Every region mapped and published in one frame, the first noted read in it by the second's map.
+        size_t kept = 0;
+        for (U32 i = 0; i < REGIONS; ++i)
+        {
+            REQUIRE(stream.map() != nullptr);
+            const size_t offset = stream.publish(COUNT * sizeof(U32));
+            if (i == 0)
+            {
+                kept = offset;
+            }
+        }
+        mFrames.endFrame();
+        glFinish();
+        // The next frame's end shows it finished.
+        mFrames.endFrame();
+
+        // The first region read again in this frame, as a user that keeps what it published does.
+        stream.noteRead(kept);
+        const U32 calls = mFrames.getCalls();
+        REQUIRE(stream.map() != nullptr);
+        stream.publish(COUNT * sizeof(U32));
+        UNSCOPED_INFO("back to the first region, read in this open frame: it waits for what has been issued");
         CHECK(mFrames.getCalls() >= calls + 2);
         CHECK(glGetError() == GLenum(GL_NO_ERROR));
     }

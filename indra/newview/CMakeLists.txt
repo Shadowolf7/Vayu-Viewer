@@ -2490,6 +2490,7 @@ if(AL_BUILD_TESTS)
     llappearance
     llprimitive
     lllogin
+    alrender
   )
   set(test_project ${AL_VIEWER_BINARY_NAME})
   get_property(newview_includes TARGET ${test_project} PROPERTY INTERFACE_INCLUDE_DIRECTORIES)
@@ -2733,6 +2734,8 @@ if(AL_BUILD_TESTS)
       tests/alcasfold_gl_test.cpp
       tests/aldof_gl_test.cpp
       tests/alselectionoutline_gl_test.cpp
+      tests/copycolor_gl_test.cpp
+      tests/objectskinblock_gl_test.cpp
       tests/shadowutil_gl_test.cpp
     BENCH_SOURCES tests/alcasfold_bench.cpp tests/aldof_bench.cpp tests/alssrhistory_bench.cpp
     LIBRARIES llrender

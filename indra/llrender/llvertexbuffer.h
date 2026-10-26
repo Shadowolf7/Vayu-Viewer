@@ -264,6 +264,10 @@ public:
     U8* getMappedIndices() const            { return mMappedIndexData; }
     U32 getOffset(AttributeType type) const { return mOffsets[type]; }
 
+    // What the buffer holds, as a value no buffer has held before: taken whenever its stores are allocated, mapped for
+    // writing or written. A pass that keeps what it drew tells by it whether the geometry it drew is as it was.
+    U64 getContentStamp() const             { return mContentStamp; }
+
     // these functions assume (and assert on) the current VBO being bound
     // Detailed error checking can be enabled by setting gDebugGL to true
     void draw(U32 mode, U32 count, U32 indices_offset) const;
@@ -327,6 +331,10 @@ private:
     void _mapBuffer();
     bool mMapped = false;
 
+    // The contents changed, or may have: a new stamp.
+    void touchContents();
+    U64 mContentStamp = 0;
+
     // Apple's path only: whether mMappedData / mMappedIndexData hold writes GL has not been
     // given. An upload sends those stores, and any GL has no buffer for yet, and no others.
     bool mVerticesWritten = false;
@@ -335,6 +343,17 @@ private:
 public:
 
     static U64 getBytesAllocated();
+
+    // What the buffer pool has handed out since it was made: stores it had to make, stores it reused, and of those the
+    // ones freed in a frame the GPU had not been shown finished with, which it gave a new store under the same name.
+    struct PoolStats
+    {
+        U32 mMisses  = 0;
+        U32 mHits    = 0;
+        U32 mOrphans = 0;
+    };
+    static PoolStats getPoolStats();
+
     static const U32 sTypeSize[TYPE_MAX];
     static const U32 sGLMode[LLRender::NUM_MODES];
     static U32 sGLRenderBuffer;

@@ -43,6 +43,16 @@ class LLVolume;
 class LLVolumeTriangle;
 class LLVolumeOctree;
 
+namespace ll_test
+{
+    struct VolumeProbe;
+}
+
+namespace alsimd
+{
+    struct TexTransform;
+}
+
 #include "lluuid.h"
 #include "v4color.h"
 #include "v2math.h"
@@ -202,7 +212,21 @@ constexpr U8 LL_SCULPT_FLAG_INVERT    = 64;
 constexpr U8 LL_SCULPT_FLAG_MIRROR    = 128;
 constexpr U8 LL_SCULPT_FLAG_MASK = LL_SCULPT_FLAG_INVERT | LL_SCULPT_FLAG_MIRROR;
 
+// The most faces a mesh LOD may hold: an upload splits a model into
+// meshes of as many, and none of 66,000 LODs in a viewer's mesh cache held
+// more. A LOD of more does not decode.
 constexpr S32 LL_SCULPT_MESH_MAX_FACES = 8;
+
+// The most indices a mesh face may hold: 32 for each of the 65,536 vertices
+// its 16-bit indices reach. A large face has about six for each of its
+// vertices, and the largest of 136,000 faces in a viewer's mesh cache held
+// 360,564. A LOD with a face past this does not decode.
+constexpr S32 LL_SCULPT_MESH_MAX_FACE_INDICES = 32 * 65536;
+
+// The most indices a mesh LOD's faces may hold between them: two faces of
+// as many as a face may hold. The largest of 66,000 LODs in a viewer's mesh
+// cache held 526,422, an eighth of this. A LOD past this does not decode.
+constexpr S32 LL_SCULPT_MESH_MAX_LOD_INDICES = 2 * LL_SCULPT_MESH_MAX_FACE_INDICES;
 
 extern bool gDebugGL;
 
@@ -709,6 +733,29 @@ public:
     bool generate(const LLProfileParams& params, bool path_open, F32 detail = 1.0f, S32 split = 0,
                   bool is_sculpted = false, S32 sculpt_size = 0);
     bool isConcave() const                              { return mConcave; }
+    // Whether the hole was drawn in where it would have gone through the
+    // outer wall, and so touches it there.
+    bool holeTouchesWall() const                        { return mHoleTouchesWall; }
+
+    // The tangent in the profile's plane at point i, the way the points'
+    // indices run, of no length in particular: its circle's at the point's
+    // angle, which is the point turned a quarter turn about the centre, the
+    // other way round along a hole. A cut point lies on the chord of its
+    // step, and genNGon keeps the circle's at the cut's angle for it. The
+    // centre of a cut profile has none, and a flat profile's points have
+    // the circle's they were laid out on, which only a round side reads.
+    LLVector4a getTangent(S32 i) const
+    {
+        for (S32 c = 0; c < mCutCount; ++c)
+        {
+            if (mCutPoints[c] == i)
+            {
+                return mCutTangents[c];
+            }
+        }
+        const LLVector4a& point = mProfile[i];
+        return i >= mHoleBegin ? LLVector4a(point[1], -point[0], 0.f) : LLVector4a(-point[1], point[0], 0.f);
+    }
 public:
     struct Face
     {
@@ -718,6 +765,17 @@ public:
         bool      mCap;
         bool      mFlat;
         LLFaceID  mFaceID;
+        // A flat hole's corners, where its side folds: of its points between
+        // its two ends, mFirstCorner and every mCornerStep-th after it. The
+        // rest are split points, on the straight edge between two corners.
+        // A step of 0 marks none.
+        S32       mFirstCorner = 0;
+        S32       mCornerStep = 0;
+
+        bool isCorner(S32 point) const
+        {
+            return mCornerStep > 0 && point > 0 && point + 1 < mCount && point >= mFirstCorner && (point - mFirstCorner) % mCornerStep == 0;
+        }
     };
 
     LLAlignedArray<LLVector4a, 64> mProfile;
@@ -733,7 +791,9 @@ protected:
     ~LLProfile();
 
     static S32 getNumNGonPoints(const LLProfileParams& params, S32 sides, F32 offset=0.0f, F32 bevel = 0.0f, F32 ang_scale = 1.f, S32 split = 0);
-    void genNGon(const LLProfileParams& params, S32 sides, F32 offset=0.0f, F32 bevel = 0.0f, F32 ang_scale = 1.f, S32 split = 0);
+    // Returns whether it began with the point of the begin cut, which it
+    // leaves out where the cut falls just short of a step.
+    bool genNGon(const LLProfileParams& params, S32 sides, F32 offset=0.0f, F32 bevel = 0.0f, F32 ang_scale = 1.f, S32 split = 0);
 
     Face* addHole(const LLProfileParams& params, bool flat, F32 sides, F32 offset, F32 box_hollow, F32 ang_scale, S32 split = 0);
     Face* addCap (S16 faceID);
@@ -743,9 +803,18 @@ protected:
     bool          mOpen;
     bool          mConcave;
     bool          mDirty;
+    bool          mHoleTouchesWall = false;
 
     S32           mTotalOut;
     S32           mTotal;
+
+    // The cut points that fall between two steps, of the profile and of its
+    // hole, and their tangents; and the first of the hole's points, or
+    // past the last point where there is none.
+    S32           mCutPoints[4] = { -1, -1, -1, -1 };
+    LLVector4a    mCutTangents[4];
+    S32           mCutCount = 0;
+    S32           mHoleBegin = S32_MAX;
 };
 
 //-------------------------------------------------------------------
@@ -755,6 +824,18 @@ protected:
 class LLPath
 {
 public:
+    // A station's frame for the surface its profile sweeps out: the rows
+    // its profile's x and y are scaled and turned by, M, how fast they
+    // change along the path, M', and how fast the station moves, per unit
+    // of its t. Five vectors one after another, as alsimd::swept_normals
+    // reads a row's.
+    struct PathFrame
+    {
+        LLVector4a mRow[2];
+        LLVector4a mRate[2];
+        LLVector4a mVelocity;
+    };
+
     class PathPt
     {
     public:
@@ -764,6 +845,8 @@ public:
         LLVector4a   mScale;
         F32          mTexT;
         F32 pad[3]; //for alignment
+        // Where the path has frames (see hasFrames).
+        PathFrame    mFrame;
         PathPt()
         {
             mPos.clear();
@@ -794,7 +877,8 @@ public:
     static S32 getNumPoints(const LLPathParams& params, F32 detail);
     static S32 getNumNGonPoints(const LLPathParams& params, S32 sides, F32 offset=0.0f, F32 end_scale = 1.f, F32 twist_scale = 1.f);
 
-    void genNGon(const LLPathParams& params, S32 sides, F32 offset=0.0f, F32 end_scale = 1.f, F32 twist_scale = 1.f);
+    void genNGon(const LLPathParams& params, S32 sides, F32 offset=0.0f, F32 end_scale = 1.f, F32 twist_scale = 1.f,
+                 bool is_sculpted = false);
     virtual bool generate(const LLPathParams& params, F32 detail=1.0f, S32 split = 0,
                           bool is_sculpted = false, S32 sculpt_size = 0);
 
@@ -806,6 +890,18 @@ public:
 
     void resizePath(S32 length) { mPath.resize(length); }
 
+    // Whether its stations have frames: a path that is a function of t, a
+    // line or a circle. A circle2 path's stations alternate sides, and a
+    // flexible or sculpted one's normals come from its points.
+    bool hasFrames() const                  { return mHasFrames; }
+    // Whether every station's frame is the first's: a line that neither
+    // twists nor scales.
+    bool framesRepeat() const               { return mFramesRepeat; }
+    // Whether every station's frame is the first's turned as the station's
+    // rotation turns it from the first's: a line that neither scales nor
+    // shears, twisted or not.
+    bool framesTurn() const                 { return mFramesTurn; }
+
     friend std::ostream& operator<<(std::ostream &s, const LLPath &path);
 
 public:
@@ -816,6 +912,9 @@ protected:
     S32           mTotal;
     bool          mDirty;
     F32           mStep;
+    bool          mHasFrames = false;
+    bool          mFramesRepeat = false;
+    bool          mFramesTurn = false;
 };
 
 class LLDynamicPath : public LLPath
@@ -830,9 +929,8 @@ public:
 class LLVolumeFace
 {
 public:
-    // A vertex as the importers and the optimizer pass it around: position,
-    // normal and texture coordinate in one block, so a vector of them is one
-    // allocation.
+    // A vertex as the importers pass it around: position, normal and texture
+    // coordinate in one block, so a vector of them is one allocation.
     class VertexData
     {
     public:
@@ -847,7 +945,6 @@ public:
 
         bool operator<(const VertexData& rhs) const;
         bool operator==(const VertexData& rhs) const;
-        bool compareNormal(const VertexData& rhs, F32 angle_cutoff) const;
 
     private:
         LLVector4a mPosition;
@@ -881,14 +978,6 @@ public:
     void resizeIndices(S32 num_indices);
     void fillFromLegacyData(std::vector<LLVolumeFace::VertexData>& v, std::vector<U16>& idx);
 
-    void pushVertex(const VertexData& cv);
-    void pushVertex(const LLVector4a& pos, const LLVector4a& norm, const LLVector2& tc);
-    void pushIndex(const U16& idx);
-
-    void swapData(LLVolumeFace& rhs);
-
-    void getVertexData(U16 indx, LLVolumeFace::VertexData& cv);
-
     class VertexMapData : public LLVolumeFace::VertexData
     {
     public:
@@ -908,13 +997,75 @@ public:
     // normals and texture coordinates into account.
     void remap();
 
-    void optimize(F32 angle_cutoff = 2.f);
     bool cacheOptimize(bool gen_tangents = false);
+
+    // Normals made from the face's shape: smooth across an edge whose two
+    // triangles meet at less than crease_angle radians and hard across one
+    // where they meet at more, evened out over their neighbours by smoothing
+    // passes. Returns false, leaving the face as it was, where it has no
+    // triangle or would need more vertices than 16-bit indices reach.
+    bool generateNormals(F32 crease_angle, F32 smoothing);
 
     void createOctree(F32 scaler = 0.25f, const LLVector4a& center = LLVector4a(0,0,0), const LLVector4a& size = LLVector4a(0.5f,0.5f,0.5f));
     void destroyOctree();
     // Get a reference to the octree, which may be null
     const LLVolumeOctree* getOctree() const;
+
+    // Planar texture generation projects a point, in the face's volume
+    // space at its object's scale, along a normal, by
+    // alsimd::planar_texcoords: the binormal is y where the normal's x is
+    // at least PLANAR_SWITCH_X in size and x where it is not.
+    //
+    // A face whose vertex normals all lie within 60 degrees of its planar
+    // normal, their cosines past PLANAR_CONE_COS by PLANAR_CONE_TIE, is
+    // projected along that normal at every point, as one plane: normals on
+    // the cone's edge, as a half cylinder's last ones at LOD 0, are outside
+    // it however rounding falls.
+    // Any other face is projected along the normal at each point, where an
+    // x within PLANAR_TIE below the switch counts as reaching it, so that
+    // the normals a round prim puts on the switch go one way on every row
+    // and at every LOD.
+    static constexpr F32 PLANAR_SWITCH_X = 0.5f;
+    static constexpr F32 PLANAR_TIE = 1e-4f;
+    static constexpr F32 PLANAR_CONE_COS = 0.5f;
+    static constexpr F32 PLANAR_CONE_TIE = 1e-4f;
+
+    // The planar normal: in xyz the vertices' one normal where they all
+    // have the same, and otherwise the sum of the triangles' normals
+    // weighted by their areas, normalized; in w 1 where the face is
+    // projected as one plane and -1 where it is not. Made on the first call
+    // and kept until a build other than a flexible prim's partial one: its
+    // frames keep their first build's planar texture coordinates. A face
+    // with no area keeps nothing, and its planar normal is made again at
+    // each call: a flexible prim's sides have none before its first pose.
+    // Main thread only.
+    LLVector4a getPlanarNormal() const
+    {
+        LLVector4a planar;
+        planar.loadua(mPlanarNormal);
+        return planar[3] != 0.f ? planar : makePlanarNormal();
+    }
+
+    // Every vertex's planar texture coordinate, the positions taken at
+    // scale, through transform where one is given: two floats a vertex.
+    void getPlanarTexCoords(const LLVector4a& scale, const alsimd::TexTransform* transform, F32* dst) const;
+
+    // The planar texture coordinate of a point of the face, in volume space
+    // at its object's scale, whose normal is normal.
+    LLVector2 getPlanarTexCoord(const LLVector4a& position, const LLVector4a& normal, const alsimd::TexTransform* transform = nullptr) const;
+
+    // Every vertex's tangent for those coordinates, in volume space, by
+    // alsimd::planar_tangents: what the tangent generators give for UVs that
+    // are the planar coordinates, so that a normal map planar texgen lays
+    // out shades by its own frame. One vector a vertex, 16-byte aligned.
+    void getPlanarTangents(const LLVector4a& scale, LLVector4a* dst) const;
+
+    // The same where normal is, for a point of the face.
+    LLVector4a getPlanarTangent(const LLVector4a& normal, const LLVector4a& scale) const;
+
+    // The binormal planar texgen takes along normal with the switch at
+    // switch_x, and the tangent, binormal x normal.
+    static void getPlanarBasis(const LLVector4a& normal, F32 switch_x, LLVector4a& binormal, LLVector4a& tangent);
 
     enum
     {
@@ -940,6 +1091,26 @@ public:
     S32 mBeginT;
     S32 mNumS;
     S32 mNumT;
+
+    // Whether a side's first and last columns, and its first and last rows,
+    // are one seam whose normals are joined. A full build decides them and a
+    // partial build keeps them.
+    bool mJoinsS = false;
+    bool mJoinsT = false;
+
+    // Whether a cap's triangles wind against the way its profile runs, so
+    // that it faces away from the wall it closes where that wall lies on the
+    // side its profile's winding faces. A full build decides it and a
+    // partial build keeps it.
+    bool mReversed = false;
+
+    // Whether the face is a flexible prim's. Its tangents are then the cheap
+    // ones, on every build, so that they do not change in kind between its
+    // first build and the partial builds of its frames: along a side's rows
+    // by central difference, and over a cap the one tangent its end
+    // station's frame gives, which every build of the cap sets here.
+    bool mFlexible = false;
+    F32 mCapTangent[4] = { 1.f, 0.f, 0.f, 1.f };
 
     LLVector4a* mExtents; //minimum and maximum point of face
     LLVector4a* mCenter;
@@ -989,6 +1160,14 @@ private:
     LLVolumeOctree* mOctree;
     LLVolumeTriangle* mOctreeTriangles;
 
+    // The tangents were made for positions a partial build has since moved:
+    // createTangents makes them again, in the buffer they have.
+    bool mTangentsStale = false;
+
+    // getPlanarNormal's, w 0 until it is made.
+    mutable F32 mPlanarNormal[4] = { 0.f, 0.f, 0.f, 0.f };
+    LLVector4a makePlanarNormal() const;
+
     bool createUnCutCubeCap(LLVolume* volume, bool partial_build = false);
     bool createCap(LLVolume* volume, bool partial_build = false);
     bool createSide(LLVolume* volume, bool partial_build = false);
@@ -997,6 +1176,7 @@ private:
 class LLVolume : public LLRefCount
 {
     friend class LLVolumeLODGroup;
+    friend struct ll_test::VolumeProbe;
 
 protected:
     virtual ~LLVolume(); // use unref
@@ -1040,8 +1220,21 @@ public:
     bool isFlat(S32 face);
     bool isUnique() const                                   { return mUnique; }
 
+    // Whether generate() builds the same profile, path and faces from these
+    // parameters at every detail, so that one volume serves every LOD.
+    static bool isLODInvariant(const LLVolumeParams& params);
+    // Whether this volume is shared and its parameters are LOD-invariant.
+    bool isLODInvariant() const                             { return mLODInvariant; }
+
     S32 getSculptLevel() const                              { return mSculptLevel; }
     void setSculptLevel(S32 level)                          { mSculptLevel = level; }
+
+    // Whether the sculpt shows the sphere it shows while its map is missing
+    // or has no area, which is laid out and stitched as a sphere sculpt is,
+    // whatever its own stitching.
+    bool isSculptSpherePlaceholder() const                  { return mSculptSpherePlaceholder; }
+    // The pixels of the map the last sculpt() was given: 0 where it had none.
+    S32 getSculptPixels() const                             { return mSculptPixels; }
 
 
     static void getLoDTriangleCounts(const LLVolumeParams& params, S32* counts);
@@ -1080,8 +1273,9 @@ public:
     void copyFacesTo(std::vector<LLVolumeFace> &faces) const;
     void copyFacesFrom(const std::vector<LLVolumeFace> &faces);
 
-    // use meshoptimizer to optimize index buffer for vertex shader cache
-    //  gen_tangents - if true, generate MikkTSpace tangents if needed before optimizing index buffer
+    // Each face's vertices and triangles in the order a vertex cache and a
+    // fetch take them best, with MikkTSpace tangents where gen_tangents is
+    // set; see LLVolumeFace::cacheOptimize.
     bool cacheOptimize(bool gen_tangents = false);
 
 private:
@@ -1098,6 +1292,8 @@ public:
     bool unpackVolumeFaces(U8* in_data, S32 size);
 private:
     bool unpackVolumeFacesInternal(const LLSD& mdl);
+    // A LOD block's faces as it holds them, before cacheOptimize.
+    bool decodeVolumeFaces(const LLSD& mdl);
 
 public:
     virtual void setMeshAssetLoaded(bool loaded);
@@ -1107,8 +1303,11 @@ public:
 
  protected:
     bool mUnique;
+    bool mLODInvariant;
     F32 mDetail;
     S32 mSculptLevel;
+    bool mSculptSpherePlaceholder = false;
+    S32 mSculptPixels = 0;
     F32 mSurfaceArea; //unscaled surface area
     bool mIsMeshAssetLoaded;
     bool mIsMeshAssetUnavaliable;
@@ -1130,8 +1329,6 @@ public:
 };
 
 std::ostream& operator<<(std::ostream &s, const LLVolumeParams &volume_params);
-
-void LLCalculateTangentArray(U32 vertexCount, const LLVector4a *vertex, const LLVector4a *normal, const LLVector2 *texcoord, U32 triangleCount, const U16* index_array, LLVector4a *tangent);
 
 bool LLLineSegmentBoxIntersect(const F32* start, const F32* end, const F32* center, const F32* size);
 bool LLLineSegmentBoxIntersect(const LLVector3& start, const LLVector3& end, const LLVector3& center, const LLVector3& size);

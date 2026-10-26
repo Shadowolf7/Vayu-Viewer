@@ -7,10 +7,14 @@ set(
   algpubuffer.cpp
   algputimer.cpp
   alimageslot.cpp
+  alpacingslack.cpp
   alprimitiveplot.cpp
   alquerypool.cpp
   alsamplerstate.cpp
+  alstagingring.cpp
   altexture3d.cpp
+  altextureblit.cpp
+  altexturereadback.cpp
   altextureslot.cpp
   alfontcolrv1.cpp
   alfontface.cpp
@@ -47,11 +51,15 @@ set(
   algpubuffer.h
   algputimer.h
   alimageslot.h
+  alpacingslack.h
   alprimitiveplot.h
   alquerypool.h
   alrendertargetdesc.h
   alsamplerstate.h
+  alstagingring.h
   altexture3d.h
+  altextureblit.h
+  altexturereadback.h
   altextureslot.h
   alfontcolrv1.h
   alfontface.h
@@ -161,6 +169,7 @@ if(AL_BUILD_TESTS)
     SOURCES
       tests/alfontcolrv1_test.cpp
       tests/alfontshaping_test.cpp
+      tests/alpacingslack_test.cpp
       tests/alrendertargetdesc_test.cpp
       tests/llfontbitmapcache_test.cpp
       tests/llfontfreetype_test.cpp
@@ -207,7 +216,9 @@ if(AL_BUILD_TESTS)
   # - which fragment output reaches a render target's colour attachment,
   #   integer attachments cleared and drawn, targets kept, built again and
   #   re-pointed at a shared depth by their descriptions, and their labels;
-  # - LLRender's cached clear colour and scissor box, and LLGLSScissor;
+  # - LLRender's cached clear colour, scissor box, viewport and raster state,
+  #   LLGLSScissor and ALGLStencil, and a copy from one texture into another
+  #   (ALTextureBlit);
   # - LLGLSLShader's cache key, its uniform value cache, the compute path
   #   (programs built through the shader manager, their images, storage
   #   blocks and dispatches), integer textures through reserved samplers,
@@ -222,14 +233,24 @@ if(AL_BUILD_TESTS)
   #   ring's segments reused once the frame each was left in has finished;
   # - ALGPUTimer: one span timed at a time, as timestamps and as Elapsed
   #   queries;
-  # - ALFrameFences: one fence a frame, polled at the frame's end under
-  #   Mesa's glthread and where its user asks elsewhere, and waits that stall
-  #   only on frames the GPU has not finished;
+  # - ALFrameFences: one fence a frame, polled at the frame's end, waits that
+  #   stall only on frames the GPU has not finished, and the frame's end's
+  #   pacing wait for the frame a given number before it, and no later one;
   # - ALQueryPool: each kind's names kept to its target, a held target
   #   refused, results read once their frame has ended, spans, release and
   #   conditional draws;
   # - ALImageSlot: what a unit issues, re-issues and forgets as LLRender keeps
   #   it, and integer images;
+  # - ALStagingRing: room aligned and apart, a segment entered again only once
+  #   the frame it was left in has finished, a take too large for a segment
+  #   refused and the ring grown for it at the frame's end, the store a new
+  #   size replaces kept until its frame has finished, fences of its own
+  #   waited on where frames are stamped, the ring switched off, a texture
+  #   upload read from the ring, and release;
+  # - ALTextureReadback: a level read back collected once its frame has
+  #   finished, buffers given back serving the reads after, requests past the
+  #   pool's bounds refused, reads no one collects expiring, fences of its own
+  #   waited on where frames are stamped, and release;
   # - LLVertexBuffer: what a buffer draws straight after an upload, after a
   #   second upload and after a new size, and that an upload sends only the
   #   stores its map wrote; and LLRenderSphere's buffer drawn under the debug
@@ -247,7 +268,10 @@ if(AL_BUILD_TESTS)
       tests/alinstanceddraw_gl_test.cpp
       tests/alquerypool_gl_test.cpp
       tests/alrenderstate_gl_test.cpp
+      tests/alstagingring_gl_test.cpp
       tests/altessellation_gl_test.cpp
+      tests/altextureblit_gl_test.cpp
+      tests/altexturereadback_gl_test.cpp
       tests/aluniformbuffer_gl_test.cpp
       tests/alwindowsdlheadless_test.cpp
       tests/llfontgl_test.cpp
@@ -258,6 +282,7 @@ if(AL_BUILD_TESTS)
       tests/llrendersphere_gl_test.cpp
       tests/lluiimage_test.cpp
       tests/llvertexbuffer_gl_test.cpp
+    BENCH_SOURCES tests/aldriversync_bench.cpp
     LIBRARIES llrender
     SUPPORT llrender_test_checks llcommon_test_checks
     DEFINES ${font_defines}

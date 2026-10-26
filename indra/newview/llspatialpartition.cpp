@@ -238,10 +238,14 @@ bool LLSpatialGroup::updateInGroup(LLDrawable *drawablep, bool immediate)
 
     OctreeNode* parent = mOctreeNode->getOctParent();
 
+    // Where LLOctreeNode::insert would leave it: its own size's node, or a node below a full one with room, which here
+    // counts the drawable itself -- or one too small to split, which insert fills whatever it holds.
     if (mOctreeNode->isInside(drawablep->getPositionGroup()) &&
         (mOctreeNode->contains(drawablep->getEntry()) ||
          (drawablep->getBinRadius() > mOctreeNode->getSize()[0] &&
-                parent && parent->getElementCount() >= gOctreeMaxCapacity)))
+                parent && parent->getElementCount() >= gOctreeMaxCapacity &&
+                (mOctreeNode->getElementCount() <= gOctreeMaxCapacity ||
+                 mOctreeNode->getSize()[0] < 2.f * gOctreeMinSize))))
     {
         unbound();
         setState(OBJECT_DIRTY);
@@ -1405,6 +1409,24 @@ bool LLSpatialPartition::visibleObjectsInFrustum(LLCamera& camera)
     return vis.mResult;
 }
 
+bool LLSpatialPartition::addRootBounds(LLVector4a& min, LLVector4a& max)
+{
+    if (mOctree->getElementCount() == 0 && mOctree->getChildCount() == 0)
+    {
+        return false;
+    }
+    LLSpatialGroup* group = (LLSpatialGroup*)mOctree->getListener(0);
+    group->rebound();
+    const LLVector4a* bounds = group->getBounds();
+    LLVector4a lo;
+    LLVector4a hi;
+    lo.setSub(bounds[0], bounds[1]);
+    hi.setAdd(bounds[0], bounds[1]);
+    min.setMin(min, lo);
+    max.setMax(max, hi);
+    return true;
+}
+
 S32 LLSpatialPartition::cull(LLCamera &camera, std::vector<LLDrawable *>* results, bool for_select)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_SPATIAL;
@@ -1678,7 +1700,7 @@ void renderOctree(LLSpatialGroup* group)
         {
             LLGLDepthTest gl_depth(false, false);
             gGL.flush();
-            glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+            gGL.setPolygonMode(GL_LINE);
 
             gGL.diffuseColor4f(1,0,0,group->mBuilt);
             gGL.setLineWidth(5.f);
@@ -1779,7 +1801,7 @@ void renderOctree(LLSpatialGroup* group)
                     gGL.popMatrix();
                 }
             }
-            glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+            gGL.setPolygonMode(GL_FILL);
             gDebugProgram.bind(); // make sure non-rigged variant is bound
             gGL.diffuseColor4f(1,1,1,1);
         }
@@ -2598,14 +2620,14 @@ void renderPhysicsShapes(LLSpatialGroup* group, bool wireframe)
                             LLVertexBuffer* buff = face->getVertexBuffer();
                             if (buff)
                             {
-                                glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+                                gGL.setPolygonMode(GL_LINE);
 
                                 buff->setBuffer();
                                 gGL.diffuseColor4f(0.2f, 0.5f, 0.3f, 0.5f);
                                 buff->draw(LLRender::TRIANGLES, buff->getNumIndices(), 0);
 
                                 gGL.diffuseColor4f(0.2f, 1.f, 0.3f, 0.75f);
-                                glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+                                gGL.setPolygonMode(GL_FILL);
                                 buff->draw(LLRender::TRIANGLES, buff->getNumIndices(), 0);
                             }
                         }
@@ -3001,7 +3023,7 @@ void renderRaycast(LLDrawable* drawablep)
                     dir.setSub(end, start);
 
                     gGL.flush();
-                    glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+                    gGL.setPolygonMode(GL_LINE);
 
                     {
                         //render face positions
@@ -3020,7 +3042,7 @@ void renderRaycast(LLDrawable* drawablep)
                     }
 
                     gGL.popMatrix();
-                    glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+                    gGL.setPolygonMode(GL_FILL);
                 }
             }
         }
@@ -3608,7 +3630,7 @@ void LLSpatialPartition::renderDebug()
 
             LLGLEnable blend(GL_BLEND);
             LLGLDepthTest depth_under(GL_TRUE, GL_FALSE, GL_GREATER);
-            glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+            gGL.setPolygonMode(GL_LINE);
             gGL.diffuseColor4f(0.5f, 0.0f, 0, 0.25f);
 
             LLGLEnable offset(GL_POLYGON_OFFSET_LINE);
@@ -3617,7 +3639,7 @@ void LLSpatialPartition::renderDebug()
             LLOctreeRenderXRay xray(camera);
             xray.traverse(mOctree);
 
-            glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+            gGL.setPolygonMode(GL_FILL);
         }
     }
     gDebugProgram.unbind();

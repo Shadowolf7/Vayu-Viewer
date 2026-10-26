@@ -140,8 +140,7 @@ void LLDrawPoolWater::renderPostDeferred(S32 pass)
     if (glint_glow)
     {
         gGL.blendFunc(LLRender::BF_ONE, LLRender::BF_ZERO, LLRender::BF_ONE, LLRender::BF_ONE);
-        gGL.flush();
-        glBlendEquationSeparate(GL_FUNC_ADD, GL_MAX);
+        gGL.setBlendEquation(GL_FUNC_ADD, GL_MAX);
     }
     gGL.setColorMask(true, glint_glow);
 
@@ -368,8 +367,7 @@ void LLDrawPoolWater::renderPostDeferred(S32 pass)
 
     if (glint_glow)
     {
-        gGL.flush();
-        glBlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD);
+        gGL.setBlendEquation(GL_FUNC_ADD, GL_FUNC_ADD);
         gGL.setSceneBlendType(LLRender::BT_ALPHA);
     }
     gGL.setColorMask(true, false);

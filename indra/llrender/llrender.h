@@ -46,6 +46,8 @@
 #include "hbfastmap.h"
 #include "algpubuffer.h"     // AL_NUM_STORAGE_BINDINGS -- the storage binding points this context keeps
 #include "alframefences.h"
+#include "alstagingring.h"
+#include "altexturereadback.h"
 #include "alimageslot.h"
 #include "alquerypool.h"
 #include "altextureslot.h"
@@ -303,24 +305,34 @@ public:
         F32 light_ambient[3];  F32 _tail_pad;
     };
 
-    // ---- Shared matrix uniform block (UB_MATRICES) ----------------------------------------
+    // ---- Shared matrix uniform blocks (UB_MATRICES, UB_PROJECTION_MATRICES) ----------------
     // The matrix stack plus the matrices derived from it. Like the Lights block above, these
     // used to be LOOSE uniforms re-pushed per program -- and they were the worst offenders:
     // every (modelview, projection) epoch (camera set, shadow cascade, probe face, mirror
     // pass, each UI translate/scale) re-taxed every program bound after it with up to six
-    // matrix writes. Packed once per epoch and bound at a fixed engine point, a matrix change
-    // costs one upload total and a program bind costs no matrix work at all.
+    // matrix writes. Packed once per epoch and bound at fixed engine points, a matrix change
+    // costs an upload and a program bind costs no matrix work at all.
+    //
+    // Two blocks, split by what moves them. A draw with a model matrix of its own (an
+    // attachment, a moving object, a UI translate) moves the modelview alone: it writes the
+    // Matrices block, 176 bytes, which takes a 256-byte slice of the ring where the alignment
+    // is 256, and leaves the projection's block bound. One block of all six took 368 bytes, a
+    // 512-byte slice, for every such draw. A pass's projection moves both blocks, the
+    // modelview-projection being the Matrices block's, and a texture matrix the projection's.
     //
     // Matrices go up as they lie: LLMatrix4a's rows are the columns std140 reads by default.
     // normal is a mat3, which std140 strides at 16 bytes per column, hence float[3][4].
     struct alignas(16) MatricesUBOData
     {
         F32 modelview[16];
-        F32 projection[16];
         F32 modelview_projection[16];
+        F32 normal[3][4];   // .xyz used per column, .w std140 padding
+    };
+    struct alignas(16) ProjectionMatricesUBOData
+    {
+        F32 projection[16];
         F32 inv_proj[16];
         F32 texture0[16];
-        F32 normal[3][4];   // .xyz used per column, .w std140 padding
     };
 
     void translateUI(F32 x, F32 y, F32 z);
@@ -411,6 +423,75 @@ public:
     // Redundant sets are dropped without a flush.
     void setPatchVertices(U32 count);
 
+    // How polygons rasterize, front and back alike, the only face a core context takes: GL_FILL, GL_LINE or
+    // GL_POINT. A change flushes what is batched under the old mode; redundant sets are dropped without one.
+    void setPolygonMode(U32 mode);
+    U32  getPolygonMode() const { return mPolygonMode; }
+
+    // The faces GL_CULL_FACE (an LLGLState) culls: GL_BACK, GL_FRONT or GL_FRONT_AND_BACK. A change flushes what is
+    // batched; redundant sets are dropped without one.
+    void setCullFace(U32 face);
+    U32  getCullFace() const { return mCullFace; }
+
+    // The diameter in pixels points rasterize at while the program writes no gl_PointSize. A change flushes what is
+    // batched; redundant sets are dropped without one.
+    void setPointSize(F32 size);
+    F32  getPointSize() const { return mPointSize; }
+
+    // The stencil test GL_STENCIL_TEST (an LLGLState) runs, front and back alike: its function, reference and the
+    // bits it compares, what each outcome does to the stencil, and the bits a draw or a clear may write. Each setter
+    // flushes what is batched on a change and drops a redundant set without one. ALGLStencil scopes all three.
+    void setStencilFunc(U32 func, S32 ref, U32 mask);
+    void setStencilOp(U32 stencil_fail, U32 depth_fail, U32 pass);
+    void setStencilMask(U32 mask);
+    void getStencilFunc(U32& func, S32& ref, U32& mask) const
+    {
+        func = mStencilFunc;
+        ref  = mStencilRef;
+        mask = mStencilReadMask;
+    }
+    void getStencilOp(U32& stencil_fail, U32& depth_fail, U32& pass) const
+    {
+        stencil_fail = mStencilFail;
+        depth_fail   = mStencilDepthFail;
+        pass         = mStencilPass;
+    }
+    U32  getStencilMask() const { return mStencilWriteMask; }
+
+    // How blending combines source and destination, the colour by `rgb` and alpha by `alpha` (GL_FUNC_ADD, GL_MAX
+    // and the rest), for every draw buffer. A change flushes what is batched; redundant sets are dropped without one.
+    void setBlendEquation(U32 rgb, U32 alpha);
+    void getBlendEquation(U32& rgb, U32& alpha) const
+    {
+        rgb   = mBlendEquationRGB;
+        alpha = mBlendEquationAlpha;
+    }
+
+    // The viewport, in pixels of the bound framebuffer. Every writer goes through here, LLRenderTarget's binds
+    // included; a change flushes what is batched under the old viewport, and redundant sets are dropped without one.
+    void setViewport(S32 x, S32 y, S32 width, S32 height);
+    // The viewport in force: x, y, width, height. Width is negative until one is set in this context, which GL starts
+    // at the size of the window it was made for.
+    void getViewport(S32 (&box)[4]) const
+    {
+        box[0] = mViewport[0];
+        box[1] = mViewport[1];
+        box[2] = mViewport[2];
+        box[3] = mViewport[3];
+    }
+
+    // Issue the clip control and the depth clear value sReverseZ calls for: zero-to-one clip depth cleared to 0
+    // under reverse-Z, minus-one-to-one cleared to 1 otherwise, clip control only where the context has it
+    // (gGLManager.mHasClipControl). Both are issued whether or not they changed.
+    static void applyDepthConvention();
+
+    // Reads the `width` x `height` rectangle at (x, y) of the framebuffer bound for reading into `data`, as
+    // glReadPixels reads it in `format` and `type` under the pack alignment of 1 init() set, after what is batched
+    // has been drawn. Synchronous: it waits for the GPU, and for a threaded driver's own thread, to finish everything
+    // issued before it. For a read made once on purpose, a snapshot or a click's probe; anything read every frame
+    // reads through ALGPUReadback.
+    void readPixels(S32 x, S32 y, S32 width, S32 height, U32 format, U32 type, void* data);
+
     // The colour glClear fills colour buffers with. Every writer in the tree goes through
     // here, so the cache is the state. Redundant sets are dropped; nothing batched reads it,
     // so a change needs no flush.
@@ -478,10 +559,25 @@ public:
     // context in shutdown().
     ALFrameFences& frameFences() { return mFrameFences; }
 
+    // The room the main thread's texture uploads read from in place of client memory (LLImageGL), sized and its
+    // segments' frames kept by endFrame().
+    ALStagingRing& stagingRing() { return mStagingRing; }
+
+    // Whether this context reads an upload's rows tight, at an unpack alignment of 1, which init() sets: before it a
+    // context reads them at GL's default of 4, padding every row to a multiple of four bytes. The rows the staging ring
+    // packs are tight, so no upload is staged before init(): the fonts made before it (LLViewerWindow::initFonts) would
+    // read every glyph whose rows are not a multiple of four bytes askew.
+    bool unpacksTightRows() const { return mUnpacksTightRows; }
+
+    // The buffers the main thread's texture readbacks are read into and collected from once the GPU has written them
+    // (LLImageGL::requestReadBack), their reads expired and their buffers trimmed by endFrame().
+    ALTextureReadback& textureReadback() { return mTextureReadback; }
+
     // Ends the frame for what is kept a frame at a time: the query pool's batch closes, the frame's fence is laid, and
-    // the uniform buffer rings close their counters and resize. Once a frame, straight after the swap; the main
-    // context's only.
-    void endFrame();
+    // the staging ring, the texture readbacks and the uniform buffer rings close their counters and resize. Once a frame, straight after the swap; the main
+    // context's only. `frames_ahead`, above 0, paces the CPU: the frame that many before this one is waited for
+    // (ALFrameFences::endFrame), on the frames a user sees.
+    void endFrame(U32 frames_ahead = 0);
 
     // The scissor box, in pixels of the bound framebuffer, that GL_SCISSOR_TEST (an
     // LLGLState) cuts to. Every writer goes through here; a change flushes what is batched
@@ -595,6 +691,13 @@ public:
     // from it, because a shader compiled against the wrong assumption unpacks noise.
     static bool sGBufferNormHDR;
 
+    // The rigged programs read their joint palette from the ObjectSkin uniform block (LLGLSLShader::UB_OBJECT_SKIN),
+    // which a draw binds a slice of the scratch UBO ring to, rather than from uniforms each program is given: the
+    // shared skinning object is compiled with OBJECT_SKIN_BLOCK. Where the context maps no buffer persistently, the
+    // scratch ring would map and unmap for every palette, and the uniforms stay. Latched by newview at shader load, as
+    // sGBufferNormHDR is.
+    static bool sObjectSkinBlock;
+
 private:
     friend class LLLightState;
     // The tests' state guard reads how deep each matrix stack is.
@@ -624,16 +727,20 @@ private:
     U32             mLightsUBOHash  = 0xFFFFFFFFu;
     bool            mLightsUBOBound = false;
 
-    // Rebuild the matrix block from the current stacks into the buffer's shadow. The derived
-    // matrices are recomputed only for the stack that actually moved.
+    // Rebuild the matrix blocks from the current stacks into the buffers' shadows, each written only where its bytes
+    // moved. The derived matrices are recomputed only for the stack that actually moved.
     void packMatricesUBO();
 
     ALUniformBuffer mMatricesUBO;
+    ALUniformBuffer mProjectionUBO;
     U32             mMatricesUBOHash[NUM_MATRIX_MODES] = { 0xFFFFFFFFu, 0xFFFFFFFFu, 0xFFFFFFFFu };
-    bool            mMatricesUBOBound = false;
+    bool            mMatricesUBOBound = false; // both blocks
 
     ALFrameFences mFrameFences;
     ALQueryPool   mQueries{ mFrameFences };
+    ALStagingRing mStagingRing{ mFrameFences };
+    bool          mUnpacksTightRows = false;
+    ALTextureReadback mTextureReadback{ mFrameFences };
 
     // Derived matrices, cached across epochs so a stack that did not move is not re-derived.
     // Members rather than function statics: they belong to this context, and shutdown() has to
@@ -654,6 +761,24 @@ private:
     U32             mPatchVertices = 3; // GL's initial GL_PATCH_VERTICES
     LLColor4        mClearColor = LLColor4(0.f, 0.f, 0.f, 0.f); // GL's initial GL_COLOR_CLEAR_VALUE
     S32             mScissor[4] = { 0, 0, -1, -1 };              // unknown until set (see getScissor)
+    S32             mViewport[4] = { 0, 0, -1, -1 };             // unknown until set (see getViewport)
+    // The rest at GL's initial values, which init() issues.
+    U32             mPolygonMode = GL_FILL;
+    U32             mCullFace = GL_BACK;
+    F32             mPointSize = 1.f;
+    U32             mStencilFunc = GL_ALWAYS;
+    S32             mStencilRef = 0;
+    U32             mStencilReadMask = ~0u;
+    U32             mStencilFail = GL_KEEP;
+    U32             mStencilDepthFail = GL_KEEP;
+    U32             mStencilPass = GL_KEEP;
+    U32             mStencilWriteMask = ~0u;
+    U32             mBlendEquationRGB = GL_FUNC_ADD;
+    U32             mBlendEquationAlpha = GL_FUNC_ADD;
+
+    // Issue the polygon mode, cull face, point size, stencil state and blend equation this holds, as init() and
+    // refreshState() do.
+    void issueRasterState() const;
 
     LLPointer<LLVertexBuffer>   mBuffer;
     LLStrider<LLVector4a>       mVerticesp;

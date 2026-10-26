@@ -36,6 +36,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
+#include <vector>
 
 namespace
 {
@@ -51,11 +52,14 @@ namespace
         "layout (std140) uniform Matrices\n"
         "{\n"
         "    mat4 modelview_matrix;\n"
-        "    mat4 projection_matrix;\n"
         "    mat4 modelview_projection_matrix;\n"
+        "    mat3 normal_matrix;\n"
+        "};\n"
+        "layout (std140) uniform ProjectionMatrices\n"
+        "{\n"
+        "    mat4 projection_matrix;\n"
         "    mat4 inv_proj;\n"
         "    mat4 texture_matrix0;\n"
-        "    mat3 normal_matrix;\n"
         "};\n"
         "in vec3 position;\n"
         "in vec4 diffuse_color;\n"
@@ -327,5 +331,157 @@ namespace
         uploadAndDrawFromScratch(*vb);
 
         CHECK(at(RIGHT) == packed(green));
+    }
+
+    // A pass that keeps what it drew compares stamps to tell whether its geometry is as it was: each write must move
+    // the stamp as it is made, before the upload that sends it, and nothing that only draws may.
+    TEST_CASE_METHOD(llvertexbuffer_gl_data, "llvertexbuffer_gl: a buffer's content stamp moves with each write and holds through draws", "[llvertexbuffer_gl]")
+    {
+        setUp();
+        const LLColor4U green(0, 255, 0, 255);
+        const LLColor4U blue(0, 0, 255, 255);
+
+        LLPointer<LLVertexBuffer> vb    = makeBuffer(4, 6);
+        LLPointer<LLVertexBuffer> other = makeBuffer(4, 6);
+        CHECK(vb->getContentStamp() != 0);
+        CHECK(vb->getContentStamp() != other->getContentStamp());
+
+        writeQuad(*vb, 0, 0.f, 1.f, green);
+        writeIndices(*vb, 0, 0);
+        uploadAndDrawFromScratch(*vb);
+        REQUIRE(at(RIGHT) == packed(green));
+
+        U64 stamp = vb->getContentStamp();
+        draw(*vb);
+        draw(*vb);
+        CHECK(vb->getContentStamp() == stamp);
+
+        // Mapped for writing: moved before the upload.
+        writeColours(*vb, 0, blue);
+        CHECK(vb->getContentStamp() != stamp);
+        vb->unmapBuffer();
+        draw(*vb);
+        stamp = vb->getContentStamp();
+        draw(*vb);
+        CHECK(vb->getContentStamp() == stamp);
+
+        LLStrider<U16> idx;
+        REQUIRE(vb->getIndexStrider(idx, 0, 6));
+        CHECK(vb->getContentStamp() != stamp);
+        vb->unmapBuffer();
+        stamp = vb->getContentStamp();
+
+        // Written straight to GL, with the buffer bound.
+        vb->setBuffer();
+        LLVector4a positions[4];
+        for (LLVector4a& position : positions)
+        {
+            position.set(0.5f, 0.f, 0.f, 1.f);
+        }
+        vb->setPositionData(positions);
+        CHECK(vb->getContentStamp() != stamp);
+        stamp = vb->getContentStamp();
+
+        const U16 indices[6] = { 0, 1, 2, 2, 1, 3 };
+        vb->setIndexData(indices);
+        CHECK(vb->getContentStamp() != stamp);
+        stamp = vb->getContentStamp();
+
+        // New stores hold nothing yet that was drawn.
+        REQUIRE(vb->allocateBuffer(8, 12));
+        CHECK(vb->getContentStamp() != stamp);
+
+        // A buffer made where one was freed is still not the one that was there: no stamp comes round again.
+        U64 latest = std::max(vb->getContentStamp(), other->getContentStamp());
+        for (S32 i = 0; i < 4; ++i)
+        {
+            other = makeBuffer(4, 6);
+            CHECK(other->getContentStamp() > latest);
+            latest = other->getContentStamp();
+        }
+    }
+
+    // The pool hands a buffer freed in a frame the GPU may still be drawing to the next allocation of its size with a
+    // new store under its name, so writing it waits for nothing; one freed in a frame shown finished it hands back as
+    // it is. Either way the buffer draws what is written into it.
+    TEST_CASE_METHOD(llvertexbuffer_gl_data, "llvertexbuffer_gl: the pool gives a buffer freed this frame a new store", "[llvertexbuffer_gl]")
+    {
+        if (gGLManager.mIsApple)
+        {
+            SKIP("Apple's GPUs pool no buffers");
+        }
+        setUp();
+        // A size no other case makes, so that the pool's entries of it are this case's.
+        constexpr U32 QUADS = 37;
+        constexpr U32 COUNT = 32;
+        auto make_all = [](std::vector<LLPointer<LLVertexBuffer>>& buffers)
+        {
+            buffers.clear();
+            for (U32 i = 0; i < COUNT; ++i)
+            {
+                buffers.push_back(makeBuffer(4 * QUADS, 6 * QUADS));
+            }
+        };
+
+        // Every entry of the size other cases left in the pool taken first, until both a vertex and an index store had
+        // to be made, so that what the pool holds of the size next is what this frame frees.
+        std::vector<LLPointer<LLVertexBuffer>> buffers;
+        for (U32 i = 0; i < 4096; ++i)
+        {
+            const U32 misses = LLVertexBuffer::getPoolStats().mMisses;
+            buffers.push_back(makeBuffer(4 * QUADS, 6 * QUADS));
+            if (LLVertexBuffer::getPoolStats().mMisses - misses == 2)
+            {
+                break;
+            }
+        }
+        while (buffers.size() < COUNT)
+        {
+            buffers.push_back(makeBuffer(4 * QUADS, 6 * QUADS));
+        }
+        // Freed now, in the open frame.
+        buffers.clear();
+
+        const LLVertexBuffer::PoolStats before = LLVertexBuffer::getPoolStats();
+        make_all(buffers);
+        const LLVertexBuffer::PoolStats again = LLVertexBuffer::getPoolStats();
+        {
+            INFO("each vertex and index store came back from the pool, under a new store");
+            CHECK(again.mHits - before.mHits == 2 * COUNT);
+            CHECK(again.mOrphans - before.mOrphans == 2 * COUNT);
+            CHECK(again.mMisses == before.mMisses);
+        }
+
+        const LLColor4U red(255, 0, 0, 255);
+        writeQuad(*buffers.front(), 0, -1.f, 1.f, red);
+        writeIndices(*buffers.front(), 0, 0);
+        uploadAndDrawFromScratch(*buffers.front());
+        {
+            INFO("a buffer given a new store draws what was written into it");
+            CHECK(at(LEFT) == packed(red));
+            CHECK(at(RIGHT) == packed(red));
+        }
+
+        // Freed in a frame that then ends and is shown finished.
+        buffers.clear();
+        ALFrameFences& frames = gGL.frameFences();
+        gGL.endFrame();
+        frames.waitFinished(frames.frame() - 1);
+        const LLVertexBuffer::PoolStats finished = LLVertexBuffer::getPoolStats();
+        make_all(buffers);
+        const LLVertexBuffer::PoolStats after = LLVertexBuffer::getPoolStats();
+        {
+            INFO("freed in a finished frame, each is handed back as it is");
+            CHECK(after.mHits - finished.mHits == 2 * COUNT);
+            CHECK(after.mOrphans == finished.mOrphans);
+        }
+
+        const LLColor4U green(0, 255, 0, 255);
+        mTarget.clear();
+        writeQuad(*buffers.back(), 0, -1.f, 1.f, green);
+        writeIndices(*buffers.back(), 0, 0);
+        uploadAndDrawFromScratch(*buffers.back());
+        CHECK(at(LEFT) == packed(green));
+        CHECK(glGetError() == GLenum(GL_NO_ERROR));
     }
 }

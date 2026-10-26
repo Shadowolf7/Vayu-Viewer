@@ -47,6 +47,7 @@
 #include "alrenderinputrequests.h"
 #include "alrenderresourceplan.h"
 #include "alshaderinputs.h"
+#include "alspotshadowcache.h"
 #include "altransienttargetpool.h"
 #include "altransienttargets.h"
 #include "alwatersurface.h"
@@ -117,6 +118,12 @@ public:
     /// The inputs as they were last latched: the resources' and the programs'.
     const ALRenderResourceInputs& latchedInputs() const { return mLatchedInputs; }
     const ALShaderInputs&         latchedShaderInputs() const { return mLatchedShaderInputs; }
+    /// How many frames the GPU may still be drawing when the CPU begins the next (AlchemyRenderMaxFramesAhead), as last
+    /// latched: display() paces the main view's frames by it at their end (LLRender::endFrame). 0 for no pacing.
+    U32 maxFramesAhead() const { return mMaxFramesAhead; }
+    /// Whether a paced frame's end has the main loop's work run in what its wait would leave idle
+    /// (AlchemyRenderPacingSlackWork), as last latched.
+    bool pacingSlackWork() const { return mPacingSlackWork; }
     /// The inputs the programs were last loaded for (LLViewerShaderMgr::setShaders), which a pass drawing with them
     /// reads rather than the settings.
     const ALShaderInputs& shaderInputs() const;
@@ -236,6 +243,8 @@ private:
     // The inputs as the last latch read them, which the next reconcile and reload are asked for.
     ALRenderResourceInputs mLatchedInputs;
     ALShaderInputs         mLatchedShaderInputs;
+    U32                    mMaxFramesAhead = 0;
+    bool                   mPacingSlackWork = false;
     // Whether the last reconcile built the render size in full, which a snapshot at the size it was built for finds.
     bool                   mResourcesFullSize = true;
     // The link of gDeferredGenBrdfLutProgram (LLGLSLShader::linkCount) the BRDF LUT was last drawn with.
@@ -266,6 +275,10 @@ public:
     //  for_profile - if true, a profile is being performed, do not update actual impostor
     //  specific_attachment - specific attachment to profile, or nullptr to profile entire avatar
     void generateImpostor(LLVOAvatar* avatar, bool preview_avatar = false, bool for_profile = false, LLViewerObject* specific_attachment = nullptr);
+    // The avatar's impostor target, made at the size a bake from the viewer's camera now wants where it is not that
+    // already. Making one asks GL for names and errors, which a threaded driver answers only once its thread has run
+    // everything queued before them, so LLVOAvatar::allocateImpostors makes the frame's before its first draw.
+    void allocateImpostorTarget(LLVOAvatar& avatar);
 
     // A full-screen quad at the far plane, depth-tested against the bound
     // target's depth and never writing it: GL_GREATER reaches every texel that
@@ -296,6 +309,12 @@ public:
     // without the screen's stencil, which a blit's matching formats would make them carry. `dst` is cleared to the far
     // plane first, and stays so where the program has not built.
     void copySceneDepth(LLRenderTarget& dst);
+    // `src`'s colour into `dst` through gCopyProgram: a draw, where a framebuffer blit is a pixel transfer NVIDIA's
+    // driver may have to synchronize with the rendering around it. A blit stands in where the program has not built.
+    // Over the whole of `dst`: texel for texel where it is `src`'s size, and stretched by a nearest blit where it is not.
+    void copyColor(LLRenderTarget& dst, LLRenderTarget& src);
+    // Or only `rect` of `src` into the same texels of `dst`, a target of `src`'s size, the rest of `dst` left as it was.
+    void copyColor(LLRenderTarget& dst, LLRenderTarget& src, const LLRect& rect);
     // The scene's depth as a haze pass reads it, with mRT->screen bound and the draws since its binding having written
     // the depth it shares: past a texture barrier, the scene's own (nullptr); without one, a copy from `scope` taken
     // after the screen is let go and bound again, or the scene's own past that change where the pack has no copy.
@@ -503,8 +522,12 @@ public:
     void updateMovedList(LLDrawable::drawable_vector_t& move_list);
     void updateMove();
     bool visibleObjectsInFrustum(LLCamera& camera);
-    bool getVisibleExtents(LLCamera& camera, LLVector3 &min, LLVector3& max);
-    bool getVisiblePointCloud(LLCamera& camera, LLVector3 &min, LLVector3& max, std::vector<LLVector3>& fp, LLVector3 light_dir = LLVector3(0,0,0));
+    // With `water`, the water's field is among the receivers wherever it receives shadows (waterReceivesShadows).
+    bool getVisibleExtents(LLCamera& camera, LLVector3 &min, LLVector3& max, bool water = true);
+    bool getVisiblePointCloud(LLCamera& camera, LLVector3 &min, LLVector3& max, std::vector<LLVector3>& fp, LLVector3 light_dir = LLVector3(0,0,0),
+                              bool water = true);
+    // Whether the water's field receives shadows in `camera`'s frustum: drawn from where the water is, and in view.
+    bool waterReceivesShadows(LLCamera& camera);
 
     // Populate given LLCullResult with results of a frustum cull of the entire scene against the given LLCamera
     void updateCull(LLCamera& camera, LLCullResult& result);
@@ -623,8 +646,16 @@ public:
     void renderHighlight(const LLViewerObject* obj, F32 fade);
 
     // `occlusion` is the sUseOcclusion level the pass culls with: 0 for none, 2 to ask the shadow camera's own
-    // occlusion queries and draw them after the opaque casters.
+    // occlusion queries and draw them after the opaque casters. The cull and sort (sortShadow) and the draw
+    // (drawShadow), one after the other.
     void renderShadow(const LLMatrix4a& view, const LLMatrix4a& proj, LLCamera& camera, LLCullResult& result, bool depth_clamp, bool do_cull = true, S32 occlusion = 0);
+    // What a shadow camera sees, sorted into `result` as its pass draws it: culled first unless `do_cull` is false,
+    // where `result` holds a cull made for it already.
+    void sortShadow(LLCamera& camera, LLCullResult& result, bool do_cull, S32 occlusion);
+    // The casters the last sortShadow sorted, drawn into the bound shadow map.
+    void drawShadow(const LLMatrix4a& view, const LLMatrix4a& proj, LLCamera& camera, bool depth_clamp, S32 occlusion);
+    // What the casters the last sortShadow sorted are drawn from, as drawShadow draws them, folded into `casters`.
+    void addShadowCasters(ALSpotShadowCache::Casters& casters);
     void renderSelectedFaces(const LLColor4& color);
     void renderHighlights();
     void renderDebug();
@@ -774,6 +805,8 @@ private:
     void hideDrawable( LLDrawable *pDrawable );
     void unhideDrawable( LLDrawable *pDrawable );
     void skipRenderingShadows();
+    // allocateImpostorTarget at `res_x` by `res_y`.
+    void allocateImpostorTarget(LLVOAvatar& avatar, U32 res_x, U32 res_y);
 public:
     enum {GPU_CLASS_MAX = 3 };
 
@@ -1085,6 +1118,8 @@ public:
     LLRenderTarget* mLightMap = nullptr;
 
     LLRenderTarget          mSpotShadow[2];
+    // What each spot map holds, so that one whose light and casters are as they were is not drawn again.
+    ALSpotShadowCache       mSpotShadowCache;
 
     LLRenderTarget          mPbrBrdfLut;
 
@@ -1586,8 +1621,6 @@ public:
     static U32 RenderSSAOMaxScale;
     static F32 RenderSSAOFactor;
     static LLVector3 RenderSSAOEffect;
-    static F32 RenderShadowOffsetError;
-    static F32 RenderShadowBiasError;
     static F32 RenderShadowOffset;
     static F32 RenderShadowBias;
     static F32 RenderSpotShadowOffset;

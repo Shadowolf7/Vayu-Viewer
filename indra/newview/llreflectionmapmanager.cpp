@@ -128,6 +128,7 @@ void hdri_preview()
 }
 
 extern bool gCubeSnapshot;
+extern bool gSnapshotOffMainView;
 extern bool gTeleportDisplay;
 
 static U32 sUpdateCount = 0;
@@ -371,18 +372,6 @@ void LLReflectionMapManager::update()
     LLVector4a camera_pos;
     camera_pos.load3(LLViewerCamera::instance().getOrigin().mV);
 
-    // process kill list
-    for (auto& probe : mKillList)
-    {
-        auto const & iter = std::find(mProbes.begin(), mProbes.end(), probe);
-        if (iter != mProbes.end())
-        {
-            deleteProbe((U32)(iter - mProbes.begin()));
-        }
-    }
-
-    mKillList.clear();
-
     // process create list
     for (auto& probe : mCreateList)
     {
@@ -390,6 +379,9 @@ void LLReflectionMapManager::update()
     }
 
     mCreateList.clear();
+
+    // Before the sort, so that a probe gone takes no eclipse test, face render or cube slot.
+    deleteUnreferencedProbes();
 
     if (mProbes.empty())
     {
@@ -427,10 +419,12 @@ void LLReflectionMapManager::update()
     //
     // An automatic probe is a fallback for space nobody placed a probe in. Where a placed probe
     // has swallowed its whole influence volume it can no longer change a single pixel -- see
-    // eclipses() for what "swallowed" has to mean for that to be true of each volume shape --
+    // ALProbeEclipse for what "swallowed" has to mean for that to be true of each volume shape --
     // so the cube slot and the place in the update queue it holds are pure waste. Only probes
     // that are actually rendering get to evict anything, or a probe still generating would
-    // leave a hole where the one it displaced used to be.
+    // leave a hole where the one it displaced used to be. Every automatic probe is asked of
+    // every placed one, each placed probe's shape worked out once a frame, and a pair whose
+    // centres lie farther apart than the placed probe could swallow across is turned away first.
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_DISPLAY("rmmu - manual eclipse");
 
@@ -439,7 +433,7 @@ void LLReflectionMapManager::update()
         // each flip costs it a full twelve-pass regeneration.
         const F32 ECLIPSE_HYSTERESIS = 0.5f;
 
-        std::vector<LLReflectionMap*> manual_probes;
+        mEclipse.clear(ECLIPSE_HYSTERESIS);
 
         for (auto& probe : mProbes)
         {
@@ -448,7 +442,7 @@ void LLReflectionMapManager::update()
             if (probe != mDefaultProbe && probe->mViewerObject && probe->mComplete &&
                 probe->mCubeIndex != -1 && probe->mFadeIn >= 1.f && probe->isRelevant())
             {
-                manual_probes.push_back(probe);
+                probe->addEclipser(mEclipse);
             }
         }
 
@@ -460,18 +454,8 @@ void LLReflectionMapManager::update()
             }
 
             F32 margin = probe->mInsideManualProbe ? ECLIPSE_HYSTERESIS : -ECLIPSE_HYSTERESIS;
-
-            bool eclipsed = false;
-            for (auto* manual : manual_probes)
-            {
-                if (manual->eclipses(probe, margin))
-                {
-                    eclipsed = true;
-                    break;
-                }
-            }
-
-            probe->mInsideManualProbe = eclipsed;
+            probe->mInsideManualProbe = mEclipse.size() > 0 &&
+                mEclipse.eclipses(LLVector3(probe->mOrigin.getF32ptr()), probe->mRadius, margin);
         }
     }
 
@@ -581,13 +565,6 @@ void LLReflectionMapManager::update()
     for (unsigned int i = 0; i < mProbes.size(); ++i)
     {
         LLReflectionMap* probe = mProbes[i];
-        if (probe->getNumRefs() == 1)
-        { // no references held outside manager, delete this probe
-            deleteProbe(i);
-            --i;
-            continue;
-        }
-
         if (probe != mDefaultProbe &&
             (!probe->isRelevant() || mPaused))
         { // skip irrelevant probes (or all non-default probes if paused)
@@ -782,8 +759,12 @@ void LLReflectionMapManager::getReflectionMaps(std::vector<LLReflectionMap*>& ma
     // rendering from somewhere else can see. llviewerdisplay stops the queries for the duration
     // of a snapshot for exactly that reason -- "don't read or write it during cube snapshots" --
     // but only the write half was ever honoured, and this is the read. Without it every capture
-    // omits whatever the player happens not to be looking at, and bakes that into the probe.
-    const bool honor_occlusion = !gCubeSnapshot;
+    // omits whatever the player happens not to be looking at, and bakes that into the probe. A
+    // snapshot queries none (LLPipeline::doOcclusion) and keeps the main view's: its camera is the
+    // main one, or a tile of it, so the probes that view hides are hidden from it too, and none of
+    // them takes the slot of one it sees. A 360 capture's faces look elsewhere, and shade with
+    // every probe.
+    const bool honor_occlusion = !gCubeSnapshot && !gSnapshotOffMainView;
 
     U32 count = 0;
     U32 lastIdx = 0;
@@ -895,11 +876,34 @@ S32 LLReflectionMapManager::allocateCubeIndex()
     return -1;
 }
 
-void LLReflectionMapManager::deleteProbe(U32 i)
+void LLReflectionMapManager::deleteUnreferencedProbes()
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_DISPLAY;
-    LLReflectionMap* probe = mProbes[i];
+    // Probes grow with the regions: a 64-probe grid for each region's terrain, and one for each 16 m node of its
+    // volumes. Erasing each probe gone from the middle of the list took time growing with the square of them, when a
+    // region left took its probes all at once. Now each is released and let go of where it stands, and the list is
+    // closed up once, keeping the rest in their distance order.
+    bool any = false;
+    for (U32 i = 1; i < mProbes.size(); ++i)
+    {
+        LLPointer<LLReflectionMap>& probe = mProbes[i];
+        if (probe->getNumRefs() == 1)
+        { // no references held outside manager, delete this probe
+            releaseProbe(probe);
+            probe = nullptr;
+            any = true;
+        }
+    }
+    if (any)
+    {
+        mProbes.erase(std::remove_if(mProbes.begin() + 1, mProbes.end(),
+                                     [](const LLPointer<LLReflectionMap>& probe) { return probe.isNull(); }),
+                      mProbes.end());
+    }
+}
 
+void LLReflectionMapManager::releaseProbe(LLReflectionMap* probe)
+{
     llassert(probe != mDefaultProbe);
 
     if (probe->mCubeIndex != -1)
@@ -918,9 +922,6 @@ void LLReflectionMapManager::deleteProbe(U32 i)
         llassert(iter != other->mNeighbors.end());
         other->mNeighbors.erase(iter);
     }
-
-    // Probes are distance sorted, order matters.
-    mProbes.erase(mProbes.begin() + i);
 }
 
 void LLReflectionMapManager::abandonProbeUpdate()
@@ -1162,7 +1163,7 @@ void LLReflectionMapManager::updateProbeFace(LLReflectionMap* probe, U32 face)
                 if (i != mMipChain.size() - 1)
                 {
                     res /= 2;
-                    glViewport(0, 0, res, res);
+                    gGL.setViewport(0, 0, res, res);
                 }
             }
 
@@ -1191,7 +1192,7 @@ void LLReflectionMapManager::updateProbeFace(LLReflectionMap* probe, U32 face)
                 program.uniform1i(LLShaderMgr::U_WIDTH, (S32)sh_res);
 
                 mSHCoeffs.bindTarget();
-                glViewport(0, probe->mCubeIndex, LL_SH_PACKED_TEXELS, 1);
+                gGL.setViewport(0, probe->mCubeIndex, LL_SH_PACKED_TEXELS, 1);
 
                 mVertexBuffer->setBuffer();
                 mVertexBuffer->drawArrays(gGL.TRIANGLE_STRIP, 0, 4);
@@ -1221,7 +1222,7 @@ void LLReflectionMapManager::updateProbeFace(LLReflectionMap* probe, U32 face)
                     mSHPartial.bindTarget();
                     // bindTarget sets the viewport to the whole target, which is exactly this
                     // strip; restated because the draw depends on it.
-                    glViewport(0, 0, LL_SH_COEFF_COUNT, sh_rows);
+                    gGL.setViewport(0, 0, LL_SH_COEFF_COUNT, sh_rows);
 
                     mVertexBuffer->setBuffer();
                     mVertexBuffer->drawArrays(gGL.TRIANGLE_STRIP, 0, 4);
@@ -1904,7 +1905,6 @@ void LLReflectionMapManager::cleanup()
     mSHPartial.release();
 
     mProbes.clear();
-    mKillList.clear();
     mCreateList.clear();
 
     mReflectionMaps.clear();

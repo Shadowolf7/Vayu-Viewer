@@ -254,8 +254,8 @@ static bool handleNumpadControlChanged(const LLSD& newvalue)
 }
 
 
-// An input of the programs or the render resources (ALShaderInputs, ALRenderResourceInputs): the frame's application
-// latches the inputs again with its other changes, and reloads and reconciles only what they moved.
+// An input of the programs or the render resources (ALShaderInputs, ALRenderResourceInputs), or the frames' pacing: the
+// frame's application latches the inputs again with its other changes, and reloads and reconciles only what they moved.
 static bool handleRenderInputChanged(const LLSD& newvalue)
 {
     gPipeline.markRenderInputsDirty();
@@ -600,8 +600,9 @@ static bool handleRepartition(const LLSD&)
 {
     if (gPipeline.isInit())
     {
-        gOctreeMaxCapacity = gSavedSettings.getU32("OctreeMaxNodeCapacity");
-        gOctreeMinSize = gSavedSettings.getF32("OctreeMinimumNodeSize");
+        // As LLPipeline::init reads them: a capacity of one at the least, and a size above none.
+        gOctreeMaxCapacity = llmax(gSavedSettings.getU32("OctreeMaxNodeCapacity"), 1u);
+        gOctreeMinSize = llmax(gSavedSettings.getF32("OctreeMinimumNodeSize"), 0.001f);
         gObjectList.repartitionObjects();
     }
     return true;
@@ -1026,6 +1027,11 @@ void settings_setup_listeners()
     setting_setup_signal_listener(gSavedSettings, "AlchemyRenderWaterHextile", handleRenderInputChanged);
     setting_setup_signal_listener(gSavedSettings, "AlchemyRenderWaterWaves", handleRenderInputChanged);
     setting_setup_signal_listener(gSavedSettings, "AlchemyRenderDisableCompute", handleRenderInputChanged);
+    setting_setup_signal_listener(gSavedSettings, "AlchemyRenderMaxFramesAhead", handleRenderInputChanged);
+    setting_setup_signal_listener(gSavedSettings, "AlchemyRenderPacingSlackWork", handleRenderInputChanged);
+    setting_setup_signal_listener(gSavedSettings, "AlchemyRenderFrameStamps", handleRenderInputChanged);
+    setting_setup_signal_listener(gSavedSettings, "AlchemyRenderStagedUploads", handleRenderInputChanged);
+    setting_setup_signal_listener(gSavedSettings, "AlchemyRenderQueryResultAge", handleRenderInputChanged);
     setting_setup_signal_listener(gSavedSettings, "RenderShaderLightingMaxLevel", handleRenderInputChanged);
     setting_setup_signal_listener(gSavedSettings, "RenderReservedTextureIndices", handleRenderInputChanged);
     setting_setup_signal_listener(gSavedSettings, "OctreeStaticObjectSizeFactor", handleRepartition);
@@ -1041,6 +1047,7 @@ void settings_setup_listeners()
     setting_setup_signal_listener(gSavedSettings, "RenderCompressTextures", handleRenderCompressTexturesChanged);
     setting_setup_signal_listener(gSavedSettings, "RenderCompressTexturesHybridMips", handleRenderCompressTexturesHybridMipsChanged);
     setting_setup_signal_listener(gSavedSettings, "RenderShadowResolutionScale", handleRenderInputChanged);
+    setting_setup_signal_listener(gSavedSettings, "AlchemyRenderSpotShadowMaxResolution", handleRenderInputChanged);
     setting_setup_signal_listener(gSavedSettings, "RenderGlow", handleRenderGlowChanged);
     setting_setup_signal_listener(gSavedSettings, "RenderGlowResolutionPow", handleRenderInputChanged);
     setting_setup_signal_listener(gSavedSettings, "RenderGlowHDR", handleRenderInputChanged);

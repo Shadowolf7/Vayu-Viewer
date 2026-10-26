@@ -36,11 +36,15 @@
 #include "llgl.h"
 #include "llglslshader.h"
 #include "llglstates.h"
+#include "llrect.h"
+#include "llshadermgr.h"
+#include "llvertexbuffer.h"
 
 #include <algorithm>
 #include <bit>
 #include <cmath>
 #include <limits>
+#include <optional>
 
 #include <fmt/format.h>
 
@@ -924,7 +928,7 @@ void LLRenderTarget::bindTarget()
     }
     check_framebuffer_status();
 
-    glViewport(0, 0, mResX, mResY);
+    gGL.setViewport(0, 0, mResX, mResY);
     sCurResX = mResX;
     sCurResY = mResY;
 
@@ -1111,7 +1115,7 @@ void LLRenderTarget::flush()
         gGL.queries().checkPassBoundary();
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
         sCurFBO = 0;
-        glViewport(gGLViewport[0], gGLViewport[1], gGLViewport[2], gGLViewport[3]);
+        gGL.setViewport(gGLViewport[0], gGLViewport[1], gGLViewport[2], gGLViewport[3]);
         sCurResX = gGLViewport[2];
         sCurResY = gGLViewport[3];
         glReadBuffer(GL_BACK);
@@ -1172,6 +1176,32 @@ void LLRenderTarget::copyContents(LLRenderTarget& source, S32 srcX0, S32 srcY0, 
 }
 
 // static
+void LLRenderTarget::drawCopy(LLRenderTarget& dest, LLRenderTarget& source, const LLRect* rect, LLGLSLShader& program,
+                              LLVertexBuffer& triangle)
+{
+    dest.bindTarget();
+    {
+        LLGLSColorMask color(true, true);
+        LLGLDepthTest no_depth(GL_FALSE, GL_FALSE);
+        LLGLDisable no_blend(GL_BLEND);
+        LLGLDisable no_cull(GL_CULL_FACE);
+        std::optional<LLGLSScissor> scissor;
+        if (rect)
+        {
+            scissor.emplace(rect->mLeft, rect->mBottom, rect->getWidth(), rect->getHeight());
+        }
+
+        program.bind();
+        program.bindTexture(LLShaderMgr::DIFFUSE_MAP, &source, ALSamplers::PointClamp);
+        triangle.setBuffer();
+        triangle.drawArrays(LLRender::TRIANGLES, 0, 3);
+        program.unbindTexture(LLShaderMgr::DIFFUSE_MAP);
+        program.unbind();
+    }
+    dest.flush();
+}
+
+// static
 // WARNING: passing GL_DEPTH_BUFFER_BIT here blits into the default framebuffer's 24-bit
 // depth. Under reverse-Z the scene depth targets are DEPTH_COMPONENT32F, and glBlitFramebuffer
 // requires matching depth formats -- a 32F->24 depth blit is invalid. There is currently no
@@ -1225,6 +1255,25 @@ void LLRenderTarget::copyFromBound(S32 srcX0, S32 srcY0, S32 srcX1, S32 srcY1, S
     glBindFramebuffer(GL_READ_FRAMEBUFFER, sCurFBO);
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, mFBO);
     glBlitFramebuffer(srcX0, srcY0, srcX1, srcY1, dstX0, dstY0, dstX1, dstY1, GL_COLOR_BUFFER_BIT, filter);
+    stop_glerror();
+    glBindFramebuffer(GL_FRAMEBUFFER, sCurFBO);
+}
+
+void LLRenderTarget::copyFromWindow(S32 x, S32 y, S32 width, S32 height)
+{
+    // What gGL has batched is drawn before the copy reads it.
+    gGL.flush();
+
+    if (mTex.empty())
+    {
+        LL_WARNS() << "Cannot copy into a render target without a colour attachment." << LL_ENDL;
+        return;
+    }
+
+    LL_PROFILE_GPU_ZONE("LLRenderTarget::copyFromWindow");
+    gGL.getTextureSlot(0)->bind(this);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+    glCopyTexSubImage2D(ALTextureSlot::getInternalType(mUsage), 0, 0, 0, x, y, width, height);
     stop_glerror();
     glBindFramebuffer(GL_FRAMEBUFFER, sCurFBO);
 }

@@ -37,9 +37,11 @@ endif()
 target_sources(
   llmath
   PRIVATE
+    almeshsimplifier.cpp
     alplaneset.cpp
     alprojection.cpp
     alsimdkernels.cpp
+    alsimdplanar.cpp
     llbbox.cpp
     llbboxlocal.cpp
     llcalc.cpp
@@ -49,7 +51,6 @@ target_sources(
     llline.cpp
     llmatrix3a.cpp
     llmatrix4a.cpp
-    llmeshoptimizer.cpp
     llmodularmath.cpp
     lloctree.cpp
     llquaternion.cpp
@@ -79,6 +80,7 @@ target_sources(
   PUBLIC
     FILE_SET HEADERS
       FILES
+        almeshsimplifier.h
         alplaneset.h
         alprojection.h
         alsimdkernels.h
@@ -96,7 +98,6 @@ target_sources(
         llmatrix3a.h
         llmatrix3a.inl
         llmatrix4a.h
-        llmeshoptimizer.h
         llmodularmath.h
         lloctree.h
         llplane.h
@@ -135,8 +136,26 @@ if(ENABLE_FRUSTUM_CULL_ISPC)
   target_sources(llmath PUBLIC FILE_SET HEADERS FILES ${CMAKE_CURRENT_SOURCE_DIR}/frustum_cull_ispc.h)
 endif()
 
-target_link_libraries(llmath PRIVATE al::flags PUBLIC llcommon ll::mikktspace ll::meshoptimizer)
+target_link_libraries(llmath PRIVATE al::flags PUBLIC llcommon ll::meshoptimizer)
 target_precompile_headers(llmath REUSE_FROM llprecompiled)
+
+# The planar kernels are instantiated in alsimdplanar.cpp, built strict as
+# the kernel test is: with the tree's reassociation and contraction, the
+# compiler may round one sum differently at each place it inlines it, and a
+# touch would then land a unit in the last place from the coordinate its
+# vertex is drawn with. MSVC is held to the same by the float_control pragma
+# around the kernels in alsimdkernels.inl, which clang-cl does not take, and
+# clang-cl by the same options as Clang.
+set(AL_STRICT_FP_OPTIONS "-ffp-contract=off;-fno-associative-math;-fno-reciprocal-math")
+if(COMPILER_IS_CLANG_CL)
+  list(TRANSFORM AL_STRICT_FP_OPTIONS PREPEND "/clang:")
+endif()
+if(NOT COMPILER_IS_MSVC)
+  set_source_files_properties(
+    alsimdplanar.cpp
+    PROPERTIES COMPILE_OPTIONS "${AL_STRICT_FP_OPTIONS}" SKIP_PRECOMPILE_HEADERS TRUE
+  )
+endif()
 
 # Add tests
 if(AL_BUILD_TESTS)
@@ -148,6 +167,7 @@ if(AL_BUILD_TESTS)
     PROJECT llmath
     SOURCES
       tests/alignment_test.cpp
+      tests/almeshsimplifier_test.cpp
       tests/alplaneset_test.cpp
       tests/alsimdkernels_test.cpp
       tests/llbbox_test.cpp
@@ -189,10 +209,10 @@ if(AL_BUILD_TESTS)
   # intrinsics, and the file passes there as it is. Accuracy against a double
   # reference, and the library's own entry built as the viewer has it, are
   # checked to a tolerance.
-  if(NOT COMPILER_IS_MSVC AND NOT COMPILER_IS_CLANG_CL)
+  if(NOT COMPILER_IS_MSVC)
     set_source_files_properties(
       tests/alsimdkernels_test.cpp
-      PROPERTIES COMPILE_OPTIONS "-ffp-contract=off;-fno-associative-math;-fno-reciprocal-math"
+      PROPERTIES COMPILE_OPTIONS "${AL_STRICT_FP_OPTIONS}"
     )
   endif()
 
