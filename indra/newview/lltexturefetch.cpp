@@ -1266,10 +1266,10 @@ bool LLTextureFetchWorker::doWork(S32 param)
         mHttpReplySize = 0;
         mHttpReplyOffset = 0;
         mHaveAllData = false;
+        mReadResponder = NULL;
+        mWriteResponder = NULL;
         mFetchFailed = false;
         mCacheReadEnd = 0;
-        mCacheReadHandle = LLTextureCache::nullHandle();
-        mCacheWriteHandle = LLTextureCache::nullHandle();
         setState(LOAD_FROM_TEXTURE_CACHE);
         mInCache = false;
         mDesiredSize = llmax(mDesiredSize, TEXTURE_CACHE_ENTRY_SIZE); // min desired size is TEXTURE_CACHE_ENTRY_SIZE
