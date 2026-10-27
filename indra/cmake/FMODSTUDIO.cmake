@@ -1,17 +1,80 @@
 # -*- cmake -*-
 #
-# FMOD is licensed per product from fmod.com, so its port, fmodstudio, lives
-# in AlchemyViewer's private vcpkg registry: AL_USE_FMODSTUDIO asks for it
-# through the manifest's fmodstudio feature, and the build needs read access
-# to that registry. The port's target takes FMOD's logging build, fmodL, in
-# the Debug configuration and fmod in every other.
+# FMOD is licensed per product from fmod.com. When AL_FMODSTUDIO_SDK_DIR is set,
+# the local SDK is used directly. Alternatively, if no local SDK is configured,
+# FMOD Studio can be discovered as a vcpkg port (unofficial-fmodstudio).
 include_guard()
 add_library(ll::fmodstudio INTERFACE IMPORTED)
 
 if(AL_USE_FMODSTUDIO)
-  find_package(unofficial-fmodstudio CONFIG REQUIRED)
-
   target_compile_definitions(ll::fmodstudio INTERFACE LL_FMODSTUDIO=1)
-  # A shared library on every platform; ViewerInstall.cmake ships it.
-  target_link_libraries(ll::fmodstudio INTERFACE unofficial::fmodstudio::fmod)
+
+  if(AL_FMODSTUDIO_LIBRARY AND AL_FMODSTUDIO_INCLUDE_DIR)
+    target_link_libraries(ll::fmodstudio INTERFACE ${AL_FMODSTUDIO_LIBRARY})
+    target_include_directories(ll::fmodstudio SYSTEM INTERFACE ${AL_FMODSTUDIO_INCLUDE_DIR})
+  else()
+    if(NOT AL_FMODSTUDIO_SDK_DIR AND WINDOWS)
+      cmake_host_system_information(
+        RESULT registered_sdk_dir
+        QUERY WINDOWS_REGISTRY "HKCU/Software/FMOD Studio API Windows"
+        ERROR_VARIABLE registry_error
+      )
+      if(NOT registry_error)
+        set(
+          AL_FMODSTUDIO_SDK_DIR
+          "${registered_sdk_dir}"
+          CACHE PATH
+          "Path to the FMOD Studio SDK."
+          FORCE
+        )
+      endif()
+    endif()
+
+    if(AL_FMODSTUDIO_SDK_DIR)
+      unset(FMOD_LIBRARY_RELEASE CACHE)
+      unset(FMOD_LIBRARY_DEBUG CACHE)
+      unset(FMOD_INCLUDE_DIR CACHE)
+
+      if(DARWIN)
+        set(fmod_lib_paths "${AL_FMODSTUDIO_SDK_DIR}/api/core/lib")
+      elseif(WINDOWS AND BUILD_TARGET_IS_ARM64)
+        set(fmod_lib_paths "${AL_FMODSTUDIO_SDK_DIR}/api/core/lib/arm64")
+      else()
+        set(fmod_lib_paths "${AL_FMODSTUDIO_SDK_DIR}/api/core/lib/x64" "${AL_FMODSTUDIO_SDK_DIR}/api/core/lib/x86_64")
+      endif()
+      set(fmod_inc_paths "${AL_FMODSTUDIO_SDK_DIR}/api/core/inc")
+
+      if(WINDOWS)
+        # The SDK ships fmod.dll beside fmod_vc.lib; the DLL is what the
+        # staging step copies, the import library is what links.
+        set(CMAKE_FIND_LIBRARY_SUFFIXES_OLD ${CMAKE_FIND_LIBRARY_SUFFIXES})
+        set(CMAKE_FIND_LIBRARY_SUFFIXES .dll)
+      endif()
+
+      find_library(FMOD_LIBRARY_RELEASE fmod PATHS ${fmod_lib_paths} NO_DEFAULT_PATH REQUIRED)
+      find_library(FMOD_LIBRARY_DEBUG fmodL PATHS ${fmod_lib_paths} NO_DEFAULT_PATH REQUIRED)
+
+      if(WINDOWS)
+        set(CMAKE_FIND_LIBRARY_SUFFIXES ${CMAKE_FIND_LIBRARY_SUFFIXES_OLD})
+        string(REPLACE ".dll" "_vc.lib" FMOD_LINK_LIBRARY_RELEASE ${FMOD_LIBRARY_RELEASE})
+        string(REPLACE ".dll" "_vc.lib" FMOD_LINK_LIBRARY_DEBUG ${FMOD_LIBRARY_DEBUG})
+      else()
+        set(FMOD_LINK_LIBRARY_RELEASE ${FMOD_LIBRARY_RELEASE})
+        set(FMOD_LINK_LIBRARY_DEBUG ${FMOD_LIBRARY_DEBUG})
+      endif()
+
+      find_path(FMOD_INCLUDE_DIR fmod.hpp PATHS ${fmod_inc_paths} NO_DEFAULT_PATH REQUIRED)
+      message(VERBOSE "Using FMOD Studio from ${AL_FMODSTUDIO_SDK_DIR}")
+
+      target_link_libraries(
+        ll::fmodstudio
+        INTERFACE debug ${FMOD_LINK_LIBRARY_DEBUG} optimized ${FMOD_LINK_LIBRARY_RELEASE}
+      )
+      target_include_directories(ll::fmodstudio SYSTEM INTERFACE ${FMOD_INCLUDE_DIR})
+    else()
+      find_package(unofficial-fmodstudio CONFIG REQUIRED)
+      # A shared library on every platform; ViewerInstall.cmake ships it.
+      target_link_libraries(ll::fmodstudio INTERFACE unofficial::fmodstudio::fmod)
+    endif()
+  endif()
 endif()

@@ -240,16 +240,17 @@ cmake_dependent_option(
   OFF
 )
 
-# FMOD Studio comes from the same registry, and is built for every platform
-# the viewer is; see cmake/FMODSTUDIO.cmake. It takes precedence over the
-# other audio engines when the viewer starts, so a proprietary build plays
-# through it.
-cmake_dependent_option(
+# FMOD Studio can come from a local SDK (AL_FMODSTUDIO_SDK_DIR) or from a private registry.
+# It takes precedence over the other audio engines when the viewer starts.
+if(AL_ENABLE_PROPRIETARY)
+  set(AL_USE_FMODSTUDIO_DEFAULT ON)
+else()
+  set(AL_USE_FMODSTUDIO_DEFAULT OFF)
+endif()
+option(
   AL_USE_FMODSTUDIO
   "Enable support for the FMOD Studio audio engine"
-  ON
-  "AL_ENABLE_PROPRIETARY"
-  OFF
+  ${AL_USE_FMODSTUDIO_DEFAULT}
 )
 
 # SDL Options
@@ -416,7 +417,7 @@ if(AL_USE_DISCORD)
   list(APPEND VCPKG_MANIFEST_FEATURES "discord")
 endif()
 
-if(AL_USE_FMODSTUDIO)
+if(AL_USE_FMODSTUDIO AND NOT AL_FMODSTUDIO_SDK_DIR)
   list(APPEND VCPKG_MANIFEST_FEATURES "fmodstudio")
 endif()
 
