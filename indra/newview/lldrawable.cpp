@@ -38,7 +38,6 @@
 #include "llface.h"
 #include "lllightconstants.h"
 #include "llmatrix4a.h"
-#include "llsky.h"
 #include "llsurfacepatch.h"
 #include "llviewercamera.h"
 #include "llviewerregion.h"
@@ -514,8 +513,7 @@ void LLDrawable::makeActive()
         U32 pcode = mVObjp->getPCode();
         if (pcode == LLViewerObject::LL_VO_SURFACE_PATCH ||
             pcode == LLViewerObject::LL_VO_PART_GROUP ||
-            pcode == LLViewerObject::LL_VO_HUD_PART_GROUP ||
-            pcode == LLViewerObject::LL_VO_SKY)
+            pcode == LLViewerObject::LL_VO_HUD_PART_GROUP)
         {
             LL_ERRS() << "Static viewer object has active drawable!" << LL_ENDL;
         }
@@ -1040,8 +1038,7 @@ void LLDrawable::shiftPos(const LLVector4a &shift_vector)
 
         bool rebuild = (!volume &&
                         getRenderType() != LLPipeline::RENDER_TYPE_TREE &&
-                        getRenderType() != LLPipeline::RENDER_TYPE_TERRAIN &&
-                        getRenderType() != LLPipeline::RENDER_TYPE_SKY);
+                        getRenderType() != LLPipeline::RENDER_TYPE_TERRAIN);
 
         if (rebuild)
         {

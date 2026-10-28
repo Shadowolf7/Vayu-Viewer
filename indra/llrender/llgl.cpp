@@ -52,6 +52,7 @@
 #include "llvertexbuffer.h"
 
 #include <fmt/format.h>
+#include <atomic>
 #include <iterator>
 
 
@@ -3547,6 +3548,20 @@ const std::string getGLErrorString(GLenum error)
     }
 }
 
+namespace
+{
+    // Raised by an error read that finds GL_OUT_OF_MEMORY, on any context; take_gl_out_of_memory lowers it.
+    std::atomic<bool> sGLOutOfMemory{ false };
+
+    void note_gl_error(GLenum error)
+    {
+        if (error == GL_OUT_OF_MEMORY) [[unlikely]]
+        {
+            sGLOutOfMemory.store(true, std::memory_order_relaxed);
+        }
+    }
+}
+
 //this function outputs gl error to the log file, does not crash the code.
 void log_glerror()
 {
@@ -3559,6 +3574,7 @@ void log_glerror()
     error = glGetError();
     while (error) [[unlikely]]
     {
+        note_gl_error(error);
         std::string gl_error_msg = getGLErrorString(error);
         LL_WARNS() << "GL Error: 0x" << std::hex << error << std::dec << " GL Error String: " << gl_error_msg << LL_ENDL;
         error = glGetError();
@@ -3573,6 +3589,7 @@ void do_assert_glerror()
     bool quit = false;
     if (error) [[unlikely]]
     {
+        note_gl_error(error);
         quit = true;
         std::string gl_error_msg = getGLErrorString(error);
         LL_WARNS("RenderState") << "GL Error: 0x" << std::hex << error << std::dec << LL_ENDL;
@@ -3622,8 +3639,32 @@ void assert_glerror()
 
 void clear_glerror()
 {
-    glGetError();
-    glGetError();
+    read_gl_errors();
+}
+
+GLenum read_gl_errors()
+{
+    GLenum first = GL_NO_ERROR;
+    // GL keeps a flag an error kind, so a few reads take them all.
+    for (U32 i = 0; i < 8; ++i)
+    {
+        const GLenum error = glGetError();
+        if (error == GL_NO_ERROR)
+        {
+            break;
+        }
+        note_gl_error(error);
+        if (first == GL_NO_ERROR || error == GL_OUT_OF_MEMORY)
+        {
+            first = error;
+        }
+    }
+    return first;
+}
+
+bool take_gl_out_of_memory()
+{
+    return sGLOutOfMemory.load(std::memory_order_relaxed) && sGLOutOfMemory.exchange(false, std::memory_order_relaxed);
 }
 
 ///////////////////////////////////////////////////////////////

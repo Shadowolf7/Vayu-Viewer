@@ -134,7 +134,9 @@ target_sources(
         alsanitizer.h
         alsavehistory.h
         alscratcharena.h
+        alsharedmutex.h
         alsimd.h
+        alunitconversion.h
         alwatchedfile.h
         always_return.h
         apply.h
@@ -316,7 +318,9 @@ if(AL_BUILD_TESTS)
       tests/alsavehistory_test.cpp
       tests/alscratcharena_test.cpp
       tests/alserialworker_test.cpp
+      tests/alsharedmutex_test.cpp
       tests/alsimd_test.cpp
+      tests/alunitconversion_test.cpp
       tests/alwatchedfile_test.cpp
       tests/apply_test.cpp
       tests/bitpack_test.cpp
@@ -364,6 +368,7 @@ if(AL_BUILD_TESTS)
       tests/lluri_test.cpp
       tests/lluuid_test.cpp
       tests/stringize_test.cpp
+      tests/threadpool_test.cpp
       tests/threadsafeschedule_test.cpp
       tests/tuple_test.cpp
       tests/workqueue_test.cpp

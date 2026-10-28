@@ -716,54 +716,34 @@ GLuint LLShaderMgr::compileShaderFile(const std::string& filename, S32 & shader_
 
     std::string open_file_name;
 
-#if 0  // WIP -- try to come up with a way to fallback to an error shader without needing debug stubs all over the place in the shader tree
-    if (shader_level == -1)
-    {
-        // use "error" fallback
-        if (type == GL_VERTEX_SHADER)
+    //find the most relevant file
+    for (gpu_class = try_gpu_class; gpu_class > 0; gpu_class--)
+    {   //search from the current gpu class down to class 1 to find the most relevant shader
+        std::stringstream fname;
+        fname << getShaderDirPrefix();
+        fname << gpu_class << gDirUtilp->getDirDelimiter() << filename;
+
+        open_file_name = fname.str();
+
+        /*
+        Would be awesome, if we didn't have shaders that re-use files
+        with different environments to say, add skinning, etc
+        can't depend on cached version to have evaluate ifdefs identically...
+        if we can define a deterministic hash for the shader based on
+        all the inputs, maybe we can save some time here.
+        if (mShaderObjects.count(filename) > 0)
         {
-            open_file_name = gDirUtilp->getExpandedFilename(LL_PATH_APP_SETTINGS, "shaders/errorV.glsl");
+            return mShaderObjects[filename];
         }
-        else
+
+        */
+
+        LL_DEBUGS("ShaderLoading") << "Looking in " << open_file_name << LL_ENDL;
+        file = LLFile::fopen(open_file_name, LLFILE_MODE("r")); /* Flawfinder: ignore */
+        if (file)
         {
-            llassert(type == GL_FRAGMENT_SHADER);  // type must be vertex or fragment shader
-            open_file_name = gDirUtilp->getExpandedFilename(LL_PATH_APP_SETTINGS, "shaders/errorF.glsl");
-        }
-
-        file = LLFile::fopen(open_file_name, LLFILE_MODE("r"));
-    }
-    else
-#endif
-    {
-        //find the most relevant file
-        for (gpu_class = try_gpu_class; gpu_class > 0; gpu_class--)
-        {   //search from the current gpu class down to class 1 to find the most relevant shader
-            std::stringstream fname;
-            fname << getShaderDirPrefix();
-            fname << gpu_class << gDirUtilp->getDirDelimiter() << filename;
-
-            open_file_name = fname.str();
-
-            /*
-            Would be awesome, if we didn't have shaders that re-use files
-            with different environments to say, add skinning, etc
-            can't depend on cached version to have evaluate ifdefs identically...
-            if we can define a deterministic hash for the shader based on
-            all the inputs, maybe we can save some time here.
-            if (mShaderObjects.count(filename) > 0)
-            {
-                return mShaderObjects[filename];
-            }
-
-            */
-
-            LL_DEBUGS("ShaderLoading") << "Looking in " << open_file_name << LL_ENDL;
-            file = LLFile::fopen(open_file_name, LLFILE_MODE("r")); /* Flawfinder: ignore */
-            if (file)
-            {
-                LL_DEBUGS("ShaderLoading") << "Loading file: " << open_file_name << " (Want class " << gpu_class << ")" << LL_ENDL;
-                break; // done
-            }
+            LL_DEBUGS("ShaderLoading") << "Loading file: " << open_file_name << " (Want class " << gpu_class << ")" << LL_ENDL;
+            break; // done
         }
     }
 
@@ -1676,7 +1656,6 @@ void LLShaderMgr::initAttribsAndUniforms()
     mReservedUniforms.push_back("clipSign");
 
     mReservedUniforms.push_back("diffuseMap");
-    mReservedUniforms.push_back("altDiffuseMap");
     mReservedUniforms.push_back("specularMap");
     mReservedUniforms.push_back("metallicRoughnessMap");
     mReservedUniforms.push_back("normalMap");
@@ -1697,6 +1676,7 @@ void LLShaderMgr::initAttribsAndUniforms()
     mReservedUniforms.push_back("sky_hdr_scale");
     mReservedUniforms.push_back("sky_sunlight_scale");
     mReservedUniforms.push_back("sky_ambient_scale");
+    mReservedUniforms.push_back("sky_classic_scale");
     mReservedUniforms.push_back("blue_horizon");
     mReservedUniforms.push_back("blue_density");
     mReservedUniforms.push_back("haze_horizon");
@@ -2018,11 +1998,11 @@ void LLShaderMgr::initAttribsAndUniforms()
     mReservedUniforms.push_back("hdri_split_screen");
     mReservedUniforms.push_back("meter_params");
     mReservedUniforms.push_back("meterMap");
+    mReservedUniforms.push_back("meterWaterMap");
     mReservedUniforms.push_back("exposureHistogram");
 
     // Stars/Aurora/Meteors
     mReservedUniforms.push_back("custom_alpha");
-    mReservedUniforms.push_back("meteor_width_pixels");
     mReservedUniforms.push_back("aurora_intensity");
     mReservedUniforms.push_back("aurora_time");
     llassert(mReservedUniforms.size() == LLShaderMgr::AURORA_TIME + 1);
@@ -2207,7 +2187,7 @@ void LLShaderMgr::initAttribsAndUniforms()
     mReservedUniforms.push_back("waterRim");
 
     mReservedUniforms.push_back("eyeToSky");
-    mReservedUniforms.push_back("skyBehindMap");
+    mReservedUniforms.push_back("skyDomeRadius");
 
     mReservedUniforms.push_back("haze_extinction");
     mReservedUniforms.push_back("blue_weight");
@@ -2228,6 +2208,27 @@ void LLShaderMgr::initAttribsAndUniforms()
     mReservedUniforms.push_back("moonQuadCenter");
     mReservedUniforms.push_back("moonQuadU");
     mReservedUniforms.push_back("moonQuadV");
+
+    mReservedUniforms.push_back("skySunMap");
+    mReservedUniforms.push_back("skySunMapNext");
+    mReservedUniforms.push_back("skySunBlend");
+    mReservedUniforms.push_back("skySunQuad");
+    mReservedUniforms.push_back("skyMoonMap");
+    mReservedUniforms.push_back("skyMoonQuad");
+    mReservedUniforms.push_back("skyMoonFade");
+    mReservedUniforms.push_back("skyBloomMap");
+    mReservedUniforms.push_back("skyBloomMapNext");
+    mReservedUniforms.push_back("skyBloomBlend");
+    mReservedUniforms.push_back("skyBloomQuad");
+    mReservedUniforms.push_back("skyBloomColor");
+    mReservedUniforms.push_back("skyCloudBlend");
+    mReservedUniforms.push_back("skyMeteorData");
+    mReservedUniforms.push_back("skyMeteorCount");
+    mReservedUniforms.push_back("skyLayers");
+    mReservedUniforms.push_back("skyHdriMap");
+    mReservedUniforms.push_back("skyHdriRotation");
+    mReservedUniforms.push_back("skyHdriScale");
+    mReservedUniforms.push_back("skyCubeFace");
 
     // Selection outlines, hover glow and wireframe (ALSelectionOutline)
     mReservedUniforms.push_back("selection_id");

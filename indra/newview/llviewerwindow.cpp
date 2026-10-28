@@ -71,7 +71,6 @@
 #include "llfontgl.h"
 #include "llmousehandler.h"
 #include "llrect.h"
-#include "llsky.h"
 #include "llstring.h"
 #include "llui.h"
 #include "lluuid.h"
@@ -2752,9 +2751,6 @@ void LLViewerWindow::shutdownGL()
     //--------------------------------------------------------
     LLFontGL::destroyDefaultFonts();
     SUBSYSTEM_CLEANUP(LLFontManager);
-    stop_glerror();
-
-    gSky.cleanup();
     stop_glerror();
 
     LL_INFOS() << "Cleaning up pipeline" << LL_ENDL;
@@ -6596,9 +6592,6 @@ void LLViewerWindow::stopGL()
         // Pause texture decode threads (will get unpaused during main loop)
         LLAppViewer::getTextureFetch()->pause();
 
-        gSky.destroyGL();
-        stop_glerror();
-
         LLManipTranslate::destroyGL() ;
         stop_glerror();
 
@@ -6664,7 +6657,6 @@ void LLViewerWindow::restoreGL(const std::string& progress_message)
         //LLFontGL::destroyDefaultFonts();
         initFonts();
 
-        gSky.restoreGL();
         gPipeline.restoreGL();
         LLManipTranslate::restoreGL();
 
