@@ -320,10 +320,9 @@ bool ImageRequest::processRequest()
 
     if (done && mDecodedRaw && mDecodedImageRaw.notNull() && !mDecodedImageRaw->getBlockCompressionResult())
     {
-        // mAllowCompression is the whole gate. It is decided once per request, in
-        // LLViewerFetchedTexture, and already folds in the category exclusions and the
-        // requirement that a role exists -- so an unclaimed texture, a placeholder or an
-        // excluded category all arrive here with it false and stay raw.
+        // mAllowCompression is the single source of truth passed from
+        // LLViewerFetchedTexture. If true, the request is eligible and authorized
+        // for block compression under mTextureJob.
         if (mAllowCompression &&
             VayuImageBlockCompressor::isEligible(mDecodedImageRaw->getWidth(),
                                                mDecodedImageRaw->getHeight(),

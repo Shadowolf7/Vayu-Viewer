@@ -897,12 +897,6 @@ bool VayuImageBlockCompressor::encode(const U8* src_data, U32 width, U32 height,
     if (!src_data || !isEligible(width, height, components))
         return false;
 
-    // Defense in depth: an unclaimed texture must never be block-compressed.
-    // The worker gate and fetch-side read gate prevent Unknown from reaching here,
-    // but refuse outright rather than silently misclassifying it as color.
-    if (job == EVayuTextureJob::Unknown)
-        return false;
-
     init();
 
     // 1. Resolve format and color space

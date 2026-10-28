@@ -2430,22 +2430,10 @@ bool LLViewerFetchedTexture::updateFetch()
         // bypass texturefetch directly by pulling from LLTextureCache
         S32 fetch_request_response = -1;
         S32 worker_discard = -1;
-        // The one place the BC decision is made, so the rest of the pipeline reads
-        // mTextureJob and never re-asks whether the role is resolved.
-        //
-        // The mTextureJob term is currently dead and is kept only to document the invariant:
-        // a request is issued only when mMaxVirtualSize > 0, and every path that raises it
-        // has already claimed the role, in the same statement sequence or earlier -- water
-        // (lldrawpoolwater.cpp:72-75/84-85/93-98), tree (lldrawpooltree.cpp:85 via
-        // llvotree.cpp:476-480), glTF (llfetchedgltfmaterial.cpp:187 then :201), and grass and
-        // clouds, whose textures are claimed in the constructor by setTEImage
-        // (llvograss.cpp:102, llvoclouds.cpp:64 -> llviewerobject.cpp:5612) long before
-        // updateTextures raises priority (llvograss.cpp:334, llvoclouds.cpp:129).
-        //
-        // Contrast llimagegl.cpp:1888, where the equivalent test is live: images with no
-        // material role at all (UI, local files, preview) have LLImageRaw::mTextureJob and
-        // LLImageGL::mTextureJob still at Unknown and must take the raw bind. That is the only
-        // place the unresolved state is genuinely observable today.
+        // Single source of truth for block-compression eligibility:
+        // Requires global compression enabled, GL texture support, an eligible
+        // category, and a resolved material slot role (EVayuTextureJob != Unknown).
+        // Once decided, allow_compression is passed to LLTextureFetch and trusted downstream.
         const bool allow_compression = LLImageGL::sCompressTextures && mGLTexturep->getAllowCompression() &&
                                        LLImageGL::categoryAllowsCompression(getCategory()) && mTextureJob != EVayuTextureJob::Unknown;
         LLTextureFetch::FetchStatus status;
