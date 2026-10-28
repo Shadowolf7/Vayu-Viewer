@@ -928,6 +928,7 @@ protected:
     void unpackParticleSource(LLDataPacker &dp, const LLUUID& owner_id, bool legacy);
     void deleteParticleSource();
     void setParticleSource(const LLPartSysData& particle_parameters, const LLUUID& owner_id);
+    void updateParticleSourceImage();
 
 private:
     void setNameValueList(const std::string& list);     // clears nv pairs and then individually adds \n separated NV pairs from \0 terminated string

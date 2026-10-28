@@ -1016,19 +1016,10 @@ void LLVOVolume::updateTextureVirtualSize(bool forced)
 
     }
 
-    if (getLightTextureID().notNull())
+    if (LLViewerTexture* light_texture = getLightTexture())
     {
-        LLLightImageParams* params = getLightImageParams();
-        LLUUID id = params->getLightTexture();
-        mLightTexture = LLViewerTextureManager::getFetchedTexture(id, FTT_DEFAULT, true, LLGLTexture::BOOST_NONE);
-        if (mLightTexture.notNull())
-        {
-            mLightTexture->setTextureJob(EVayuTextureJob::RGBA);
-            F32 rad = getLightRadius();
-            mLightTexture->addTextureStats(gPipeline.calcPixelArea(getPositionAgent(),
-                                                                    LLVector3(rad,rad,rad),
-                                                                    *camera));
-        }
+        F32 rad = getLightRadius();
+        light_texture->addTextureStats(gPipeline.calcPixelArea(getPositionAgent(), LLVector3(rad, rad, rad), *camera));
     }
 
     if (gPipeline.hasRenderDebugMask(LLPipeline::RENDER_DEBUG_TEXTURE_AREA))

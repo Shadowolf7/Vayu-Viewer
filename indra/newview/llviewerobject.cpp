@@ -6575,24 +6575,7 @@ void LLViewerObject::setParticleSource(const LLPartSysData& particle_parameters,
     if (mPartSourcep)
     {
         mPartSourcep->setOwnerUUID(owner_id);
-
-        if (mPartSourcep->getImage()->getID() != mPartSourcep->mPartSysData.mPartImageID)
-        {
-            LLViewerTexture* image;
-            if (mPartSourcep->mPartSysData.mPartImageID == LLUUID::null)
-            {
-                image = LLViewerTextureManager::getFetchedTextureFromFile("pixiesmall.tga");
-            }
-            else
-            {
-                image = LLViewerTextureManager::getFetchedTexture(mPartSourcep->mPartSysData.mPartImageID);
-            }
-            if (image)
-            {
-                image->setTextureJob(EVayuTextureJob::RGBA);
-            }
-            mPartSourcep->setImage(image);
-        }
+        updateParticleSourceImage();
     }
     LLViewerPartSim::getInstance()->addPartSource(pss);
 }
@@ -6630,23 +6613,7 @@ void LLViewerObject::unpackParticleSource(const S32 block_num, const LLUUID& own
     }
     if (mPartSourcep)
     {
-        if (mPartSourcep->getImage()->getID() != mPartSourcep->mPartSysData.mPartImageID)
-        {
-            LLViewerTexture* image;
-            if (mPartSourcep->mPartSysData.mPartImageID == LLUUID::null)
-            {
-                image = LLViewerFetchedTexture::sDefaultParticleImagep;
-            }
-            else
-            {
-                image = LLViewerTextureManager::getFetchedTexture(mPartSourcep->mPartSysData.mPartImageID);
-            }
-            if (image)
-            {
-                image->setTextureJob(EVayuTextureJob::RGBA);
-            }
-            mPartSourcep->setImage(image);
-        }
+        updateParticleSourceImage();
     }
 }
 
@@ -6682,23 +6649,34 @@ void LLViewerObject::unpackParticleSource(LLDataPacker &dp, const LLUUID& owner_
     }
     if (mPartSourcep)
     {
-        if (mPartSourcep->getImage()->getID() != mPartSourcep->mPartSysData.mPartImageID)
+        updateParticleSourceImage();
+    }
+}
+
+void LLViewerObject::updateParticleSourceImage()
+{
+    if (mPartSourcep.isNull())
+    {
+        return;
+    }
+
+    const LLUUID& part_image_id = mPartSourcep->mPartSysData.mPartImageID;
+    if (mPartSourcep->getImage()->getID() != part_image_id)
+    {
+        LLViewerTexture* image = nullptr;
+        if (part_image_id.isNull())
         {
-            LLViewerTexture* image;
-            if (mPartSourcep->mPartSysData.mPartImageID == LLUUID::null)
-            {
-                image = LLViewerFetchedTexture::sDefaultParticleImagep;
-            }
-            else
-            {
-                image = LLViewerTextureManager::getFetchedTexture(mPartSourcep->mPartSysData.mPartImageID);
-            }
+            image = LLViewerFetchedTexture::sDefaultParticleImagep;
+        }
+        else
+        {
+            image = LLViewerTextureManager::getFetchedTexture(part_image_id);
             if (image)
             {
                 image->setTextureJob(EVayuTextureJob::RGBA);
             }
-            mPartSourcep->setImage(image);
         }
+        mPartSourcep->setImage(image);
     }
 }
 
