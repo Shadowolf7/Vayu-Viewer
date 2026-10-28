@@ -83,7 +83,7 @@ jobs:
         with:
           # The build needs the submodules, and vcpkg its full history to
           # resolve the versions the manifest pins.
-          fetch-depth: ${{ matrix.build-mode == 'manual' && '0' || '1' }}
+          fetch-depth: 0
           persist-credentials: false
           submodules: ${{ matrix.build-mode == 'manual' && 'recursive' || 'false' }}
 
