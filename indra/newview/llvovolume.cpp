@@ -1023,6 +1023,7 @@ void LLVOVolume::updateTextureVirtualSize(bool forced)
         mLightTexture = LLViewerTextureManager::getFetchedTexture(id, FTT_DEFAULT, true, LLGLTexture::BOOST_NONE);
         if (mLightTexture.notNull())
         {
+            mLightTexture->setTextureJob(EVayuTextureJob::RGBA);
             F32 rad = getLightRadius();
             mLightTexture->addTextureStats(gPipeline.calcPixelArea(getPositionAgent(),
                                                                     LLVector3(rad,rad,rad),
@@ -3614,6 +3615,10 @@ LLViewerTexture* LLVOVolume::getLightTexture()
         if (mLightTexture.isNull() || id != mLightTexture->getID())
         {
             mLightTexture = LLViewerTextureManager::getFetchedTexture(id, FTT_DEFAULT, true, LLGLTexture::BOOST_NONE);
+            if (mLightTexture.notNull())
+            {
+                mLightTexture->setTextureJob(EVayuTextureJob::RGBA);
+            }
         }
     }
     else

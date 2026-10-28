@@ -6587,6 +6587,10 @@ void LLViewerObject::setParticleSource(const LLPartSysData& particle_parameters,
             {
                 image = LLViewerTextureManager::getFetchedTexture(mPartSourcep->mPartSysData.mPartImageID);
             }
+            if (image)
+            {
+                image->setTextureJob(EVayuTextureJob::RGBA);
+            }
             mPartSourcep->setImage(image);
         }
     }
@@ -6637,6 +6641,10 @@ void LLViewerObject::unpackParticleSource(const S32 block_num, const LLUUID& own
             {
                 image = LLViewerTextureManager::getFetchedTexture(mPartSourcep->mPartSysData.mPartImageID);
             }
+            if (image)
+            {
+                image->setTextureJob(EVayuTextureJob::RGBA);
+            }
             mPartSourcep->setImage(image);
         }
     }
@@ -6684,6 +6692,10 @@ void LLViewerObject::unpackParticleSource(LLDataPacker &dp, const LLUUID& owner_
             else
             {
                 image = LLViewerTextureManager::getFetchedTexture(mPartSourcep->mPartSysData.mPartImageID);
+            }
+            if (image)
+            {
+                image->setTextureJob(EVayuTextureJob::RGBA);
             }
             mPartSourcep->setImage(image);
         }
