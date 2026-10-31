@@ -152,11 +152,12 @@ if(AL_BUILD_TESTS)
       tests/llimageworker_test.cpp
       tests/vayuimageblockcompressor_test.cpp
       tests/vayubctexturecache_test.cpp
+    UNIT
+      llimageworker.cpp
       vayuimageblockcompressor.cpp
       vayubctexturecache.cpp
       bc7e/rgbcx.cpp
       ${BC7E_SOURCES}
-    UNIT llimageworker.cpp
     LIBRARIES llfilesystem ll::libyuv
   )
 

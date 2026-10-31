@@ -296,8 +296,16 @@ public:
 
         bool compressed() const { return mPrimary != 0; }
         // glTexStorage2D wants a sized format, and for a compressed upload the sized one is
-        // the primary the encoder hands over; a raw upload allocates what the members hold.
-        LLGLint  storageFormat(LLGLint source_internal) const { return mPrimary ? (LLGLint)mPrimary : source_internal; }
+        // the primary the encoder hands over; a raw upload allocates what the members hold,
+        // or the sized compressed primary format if explicitly configured.
+        LLGLint storageFormat(LLGLint source_internal, LLGLenum source_primary = 0) const
+        {
+            if (mPrimary)
+                return (LLGLint)mPrimary;
+            if (source_primary && isCompressedFormat(source_primary))
+                return (LLGLint)source_primary;
+            return source_internal;
+        }
         LLGLenum primaryFormat(LLGLenum source_primary) const { return mPrimary ? mPrimary : source_primary; }
     };
 

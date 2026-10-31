@@ -1277,8 +1277,8 @@ bool LLImageGL::setImage(const U8* data_in, bool data_hasmips /* = false */, S32
 
     // What this upload's data is in: the compressed format it brought, or the source format
     // the members hold. Only a compressed upload differs, and it says so on the call.
-    const bool     is_compressed = upload.compressed();
     const LLGLenum primary       = upload.primaryFormat(mFormatPrimary);
+    const bool     is_compressed = upload.compressed() || isCompressedFormat(primary);
 
     mHasMipMaps = mUseMipMaps;
 
@@ -1301,7 +1301,7 @@ bool LLImageGL::setImage(const U8* data_in, bool data_hasmips /* = false */, S32
     {
         free_cur_tex_image();
         allocateTextureStorage(liveWidth(mCurrentDiscardLevel), liveHeight(mCurrentDiscardLevel), mUseMipMaps,
-                               upload.storageFormat(mFormatInternal));
+                               upload.storageFormat(mFormatInternal, mFormatPrimary));
     }
 
     if (data_in == nullptr)
@@ -2366,7 +2366,7 @@ bool LLImageGL::createGLTexture(S32 discard_level, const U8* data_in, bool data_
     if (main_thread    // <--- always force creation of new_texname when not on main thread ...
         && !defer_copy // <--- ... or defer copy is set
         && mTexName != 0 && discard_level == mCurrentDiscardLevel &&
-        storageFits(liveWidth(discard_level), liveHeight(discard_level), upload.storageFormat(mFormatInternal)))
+        storageFits(liveWidth(discard_level), liveHeight(discard_level), upload.storageFormat(mFormatInternal, mFormatPrimary)))
     {
         LL_PROFILE_ZONE_NAMED("cglt - early setImage");
         if (tex_name != nullptr)
@@ -3820,6 +3820,10 @@ S32 LLImageGL::getStorageInternalFormat() const
     if (mStorageAllocated && mStorage.mFormat != 0)
     {
         return mStorage.mFormat;
+    }
+    if (isCompressedFormat(mFormatPrimary))
+    {
+        return mFormatPrimary;
     }
     return mFormatInternal;
 }
