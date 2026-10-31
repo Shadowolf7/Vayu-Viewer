@@ -37,6 +37,7 @@
 #include "../algpubuffer.h"
 #include "../alstagingring.h"
 #include "../alvramusage.h"
+#include "../llgltexture.h"
 #include "../llimagegl.h"
 #include "../llgl.h"
 #include "../llrender.h"
@@ -46,6 +47,7 @@
 
 #include "altestfatal.h"
 #include "llimage.h"
+#include "lltimer.h"
 #include "vayuimageblockcompressor.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -1648,7 +1650,7 @@ namespace
         while (!worker_done && std::chrono::steady_clock::now() < deadline)
         {
             mainloop.runPending();
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            ms_sleep(1);
         }
         // The handover was posted before worker_done was raised.
         mainloop.runPending();
@@ -1673,7 +1675,7 @@ namespace
 
         while (LLImageGL::publishUploads() > 0 && std::chrono::steady_clock::now() < deadline)
         {
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            ms_sleep(1);
         }
 
         LLImageGLThread::deleteSingleton();
@@ -1719,7 +1721,7 @@ namespace
         while (!worker_done && std::chrono::steady_clock::now() < deadline)
         {
             mainloop.runPending();
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            ms_sleep(1);
         }
         mainloop.runPending();
         REQUIRE(worker_done.load());
@@ -1732,7 +1734,7 @@ namespace
         while (std::chrono::steady_clock::now() < idle_until)
         {
             LLImageGL::updateClass();
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            ms_sleep(1);
         }
         UNSCOPED_INFO("idle polls no fence, so nothing is published without a frame's end");
         CHECK_FALSE(completed);
@@ -1741,7 +1743,7 @@ namespace
         {
             gGL.endFrame();
             LLImageGL::updateClass();
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            ms_sleep(1);
         }
         LLImageGLThread::deleteSingleton();
 
@@ -1779,7 +1781,7 @@ namespace
         while (!worker_done && std::chrono::steady_clock::now() < deadline)
         {
             mainloop.runPending();
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            ms_sleep(1);
         }
         mainloop.runPending();
         REQUIRE(worker_done.load());
@@ -1789,7 +1791,7 @@ namespace
 
         // Long enough for the GPU to have finished the upload and the thread, with nothing else queued, to have seen it;
         // then one frame's end.
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        ms_sleep(100);
         gGL.endFrame();
         LLImageGL::updateClass();
         UNSCOPED_INFO("published at the first frame's end");
@@ -1847,7 +1849,7 @@ namespace
         while (!worker_done && std::chrono::steady_clock::now() < deadline)
         {
             mainloop.runPending();
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            ms_sleep(1);
         }
         mainloop.runPending();
         REQUIRE(worker_done.load());
@@ -1855,7 +1857,7 @@ namespace
         bool completed = false;
         img->afterPublish([&]() { completed = true; });
 
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        ms_sleep(100);
         for (int frame = 0; frame < 3; ++frame)
         {
             gGL.endFrame();
@@ -1869,7 +1871,7 @@ namespace
         {
             gGL.endFrame();
             LLImageGL::updateClass();
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            ms_sleep(1);
         }
         UNSCOPED_INFO("published once its thread has seen it");
         CHECK(completed);
@@ -2089,5 +2091,102 @@ namespace
             INFO("pixel format " << entry.first);
             REQUIRE(LLImageGL::dataFormatComponents(entry.first) == entry.second);
         }
+    }
+
+    // A texture that counts what its GL texture tells it of the mask answer.
+    struct MaskWatcher : public LLGLTexture
+    {
+        MaskWatcher() : LLGLTexture(32, 32, 4, false) {}
+        void onAlphaMaskChanged() override { ++mChanges; }
+        S32  mChanges = 0;
+    };
+
+    // A square RGBA image whose alpha is 0 in its top half and opaque below (a mask), or 128 everywhere (no mask).
+    LLPointer<LLImageRaw> makeAlphaRaw(bool mask, U16 side = 32)
+    {
+        LLPointer<LLImageRaw> raw  = new LLImageRaw(side, side, 4);
+        U8*                   data = raw->getData();
+        for (U32 i = 0; i < (U32)side * side; ++i)
+        {
+            data[i * 4 + 0] = data[i * 4 + 1] = data[i * 4 + 2] = 0x80;
+            data[i * 4 + 3]                                     = mask ? (i < (U32)side * side / 2 ? 0 : 255) : 128;
+        }
+        return raw;
+    }
+
+    // The faces of a texture are built into pools by its mask answer, so the texture hears of every change of it, and
+    // only of a change; once it is gone, the GL texture it made tells nobody.
+    TEST_CASE_METHOD(llimagegl_data, "LLImageGL: the texture it was made for hears each change of its mask answer", "[LLImageGL]")
+    {
+        LLPointer<MaskWatcher> owner = new MaskWatcher();
+        owner->generateGLTexture();
+        LLPointer<LLImageGL> img = owner->getGLTexture();
+        REQUIRE(img->getOwner() == owner.get());
+
+        // Small enough to be analysed as it uploads, not on a worker.
+        REQUIRE(img->createGLTexture(0, makeAlphaRaw(true).get()));
+        CHECK(img->getIsAlphaMask());
+        CHECK(owner->mChanges == 1);
+
+        UNSCOPED_INFO("the same answer again is no change");
+        REQUIRE(img->createGLTexture(0, makeAlphaRaw(true).get()));
+        CHECK(owner->mChanges == 1);
+
+        REQUIRE(img->createGLTexture(0, makeAlphaRaw(false).get()));
+        CHECK_FALSE(img->getIsAlphaMask());
+        CHECK(owner->mChanges == 2);
+
+        owner = nullptr;
+        CHECK(img->getOwner() == nullptr);
+        REQUIRE(img->createGLTexture(0, makeAlphaRaw(true).get()));
+        CHECK(img->getIsAlphaMask());
+    }
+
+    // An image of 64 px or more is analysed on a worker, and counts as no mask until the answer comes back. That
+    // provisional no-mask is no answer: the texture hears of an answer that differs from the last one, or of a mask
+    // answer after the provisional no-mask was read.
+    TEST_CASE_METHOD(llimagegl_data, "LLImageGL: a deferred alpha analysis tells the texture its answer when it comes back", "[LLImageGL]")
+    {
+        // The queues the analysis is posted to and answered on, as the viewer's. The main one has to exist before the
+        // image, which looks it up when built.
+        LL::WorkQueue mainloop("mainloop");
+        LL::WorkQueue general("General");
+        auto          settle = [&]()
+        {
+            for (U32 i = 0; i < 16; ++i)
+            {
+                general.runPending();
+                mainloop.runPending();
+            }
+        };
+
+        LLPointer<MaskWatcher> owner = new MaskWatcher();
+        owner->generateGLTexture();
+        LLPointer<LLImageGL> img = owner->getGLTexture();
+
+        REQUIRE(img->createGLTexture(0, makeAlphaRaw(true, 64).get()));
+        CHECK_FALSE(img->getIsAlphaMask());
+        CHECK(owner->mChanges == 0);
+        settle();
+        CHECK(img->getIsAlphaMask());
+        CHECK(owner->mChanges == 1);
+
+        UNSCOPED_INFO("the same answer after another deferral, its provisional no-mask unread, is no change");
+        REQUIRE(img->createGLTexture(0, makeAlphaRaw(true, 64).get()));
+        settle();
+        CHECK(img->getIsAlphaMask());
+        CHECK(owner->mChanges == 1);
+
+        UNSCOPED_INFO("read meanwhile it is one: a face built by the provisional no-mask went to the blend pass");
+        REQUIRE(img->createGLTexture(0, makeAlphaRaw(true, 64).get()));
+        CHECK_FALSE(img->getIsAlphaMask());
+        settle();
+        CHECK(img->getIsAlphaMask());
+        CHECK(owner->mChanges == 2);
+
+        REQUIRE(img->createGLTexture(0, makeAlphaRaw(false, 64).get()));
+        settle();
+        CHECK_FALSE(img->getIsAlphaMask());
+        CHECK(owner->mChanges == 3);
     }
 }

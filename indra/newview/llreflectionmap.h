@@ -105,6 +105,7 @@ public:
     void clearOcclusion()
     {
         mOccluded       = false;
+        mOutOfView      = false;
         mOcclusionQuery = {};
     }
 
@@ -143,6 +144,9 @@ public:
     // would be treated as one until the manager deletes it.
     bool mOrphaned = false;
 
+    // its influence sphere comes within draw distance of the camera (ALProbeReach), as the manager found this frame
+    bool mInReach = true;
+
     // fade in parameter for this probe
     F32 mFadeIn = 0.f;
 
@@ -177,6 +181,10 @@ public:
     // occlusion culling state: the last query of gGL's pool, and what the last one read said
     ALQueryTicket mOcclusionQuery;
     bool mOccluded = false;
+
+    // outside the main view when its occlusion was last asked, which takes no query: the update scheduler passes it
+    // over as it does an occluded probe, and getReflectionMaps judges the view on its own frame instead
+    bool mOutOfView = false;
 
     ProbeType mType;
 };

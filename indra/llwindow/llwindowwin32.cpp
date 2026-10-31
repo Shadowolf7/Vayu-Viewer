@@ -5477,14 +5477,6 @@ void LLWindowWin32::LLWindowWin32Thread::run()
     LogChange logger("Window");
 #endif
 
-    //as good a place as any to up the MM timer resolution (see ms_sleep)
-    //attempt to set timer resolution to 1ms
-    TIMECAPS tc;
-    if (timeGetDevCaps(&tc, sizeof(TIMECAPS)) == TIMERR_NOERROR)
-    {
-        timeBeginPeriod(llclamp((U32) 1, tc.wPeriodMin, tc.wPeriodMax));
-    }
-
     // Normally won't exist yet, but in case of re-init, make sure it's cleaned up
     resumeTimeout("Window:WindowThread");
 
@@ -5536,14 +5528,27 @@ void LLWindowWin32::LLWindowWin32Thread::run()
             logger.onChange("runPending()");
 #endif
             //process any pending functions
-            getQueue().runPending();
+            if (mWindowHandleThrd == 0)
+            {
+                // With no window there are no messages to pump, and only a
+                // posted function can make one: wait for the next. Nothing
+                // may be posted for longer than the watchdog allows, so it
+                // is paused for the wait.
+                pauseTimeout();
+                getQueue().runNext();
+                resumeTimeout("Window:Queue");
+            }
+            else
+            {
+                getQueue().runPending();
+            }
         }
 
 #if 0
         {
             LL_PROFILE_ZONE_NAMED_CATEGORY_WIN32("w32t - Sleep");
             logger.always("sleep(1)");
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            ms_sleep(1);
         }
 #endif
     }

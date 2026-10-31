@@ -147,6 +147,10 @@ public:
 
     bool isAlive(); // can become false if circuit disconnects
 
+    // Left behind by a teleport and being removed (ALRegionRetirement): its simulator creates no new objects here.
+    bool isRetiring() const { return mRetiring; }
+    void setRetiring(bool retiring) { mRetiring = retiring; }
+
     void setWaterHeight(F32 water_level);
     F32 getWaterHeight() const;
 
@@ -618,6 +622,7 @@ public:
     bool                                    mCacheDirty;
     bool                                    mGLTFOverridesDirty;
     bool    mAlive;                 // can become false if circuit disconnects
+    bool                                    mRetiring = false;
     bool    mSimulatorFeaturesReceived;
     bool    mReleaseNotesRequested;
     bool    mDead;  //if true, this region is in the process of deleting.

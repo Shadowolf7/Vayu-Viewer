@@ -27,7 +27,7 @@
 #ifndef _LLCORE_HTTP_RETRY_QUEUE_H_
 #define _LLCORE_HTTP_RETRY_QUEUE_H_
 
-
+#include <algorithm>
 #include <queue>
 
 #include "_httpoprequest.h"
@@ -47,12 +47,11 @@ namespace LLCore
 /// Threading:  not thread-safe.  Expected to be used entirely by
 /// a single thread, typically a worker thread of some sort.
 
+// The earliest retry at the top: std::priority_queue puts first what
+// compares greatest, so the comparison is reversed.
 struct HttpOpRetryCompare
 {
-    bool operator()(const HttpOpRequest::ptr_t &lhs, const HttpOpRequest::ptr_t &rhs)
-        {
-            return lhs->mPolicyRetryAt < rhs->mPolicyRetryAt;
-        }
+    bool operator()(const HttpOpRequest::ptr_t& lhs, const HttpOpRequest::ptr_t& rhs) { return lhs->mPolicyRetryAt > rhs->mPolicyRetryAt; }
 };
 
 
@@ -84,6 +83,15 @@ public:
         {
             return c;
         }
+
+    /// Remove an element found through @get_container() and
+    /// put the rest back in order: erasing from the middle of
+    /// the container leaves it no longer a heap.
+    void erase(container_type::iterator it)
+    {
+        c.erase(it);
+        std::make_heap(c.begin(), c.end(), comp);
+    }
 
 }; // end class HttpRetryQueue
 

@@ -183,10 +183,15 @@ bool LLWorkerThread::WorkRequest::processRequest()
     LL_PROFILE_ZONE_SCOPED;
     LLWorkerClass* workerclass = getWorkerClass();
     workerclass->setWorking(true);
+    workerclass->mWaitsForWake = false;
     bool complete = workerclass->doWork(getParam());
     workerclass->setWorking(false);
     return complete;
 }
+
+// virtual
+bool LLWorkerThread::WorkRequest::waitsForWake()
+{ return getWorkerClass()->mWaitsForWake; }
 
 // virtual
 void LLWorkerThread::WorkRequest::finishRequest(bool completed)
@@ -325,6 +330,15 @@ void LLWorkerClass::abortWork(bool autocomplete)
         setFlags(WCF_ABORT_REQUESTED);
     }
     mMutex.unlock();
+}
+
+void LLWorkerClass::wakeWork()
+{
+    const handle_t handle(mRequestHandle.load());
+    if (handle != LLWorkerThread::nullHandle())
+    {
+        mWorkerThread->wakeRequest(handle);
+    }
 }
 
 // if doWork is complete or aborted, call endWork() and return true

@@ -62,64 +62,33 @@ static const struct
     bool                        mContentDecoding;
     std::string                 mKey;
     const char *                mUsage;
-} init_data[LLAppCoreHttp::AP_COUNT] =
-{
-    { // AP_DEFAULT
-        8,      8,      8,      0,      false,  true,
-        "",
-        "other"
-    },
-    { // AP_TEXTURE
-        // Binary asset fetch direct from the asset CDN, which is known to
-        // send a bogus Content-Encoding (a MIME type, not a transfer
-        // coding) on every response -- libcurl treats that as a hard
-        // failure once auto-decoding is requested at all, so leave
-        // Content-Encoding alone for this class (see PO_CONTENT_DECODING).
-        8,      1,      12,     0,      true,   false,
-        "TextureFetchConcurrency",
-        "texture fetch"
-    },
-    { // AP_MESH1
-        32,     1,      128,    0,      false,  false,
-        "MeshMaxConcurrentRequests",
-        "mesh fetch"
-    },
-    { // AP_MESH2
-        8,      1,      32,     0,      true,   false,
-        "Mesh2MaxConcurrentRequests",
-        "mesh2 fetch"
-    },
-    { // AP_LARGE_MESH
-        2,      1,      8,      0,      false,  false,
-        "",
-        "large mesh fetch"
-    },
-    { // AP_UPLOADS
-        2,      1,      8,      0,      false,  true,
-        "",
-        "asset upload"
-    },
-    { // AP_LONG_POLL
-        32,     32,     32,     0,      false,  true,
-        "",
-        "long poll"
-    },
-    { // AP_INVENTORY
-        4,      1,      4,      0,      false,  true,
-        "",
-        "inventory"
-    },
-    { // AP_MATERIALS
-        2,      1,      8,      0,      false,  true,
-        "RenderMaterials",
-        "material manager requests"
-    },
-    { // AP_AGENT
-        2,      1,      32,     0,      false,  true,
-        "Agent",
-        "Agent requests"
-    }
-};
+} init_data[LLAppCoreHttp::AP_COUNT] = { { // AP_DEFAULT
+                                           8, 8, 8, 0, false, true, "", "other" },
+                                         { // AP_TEXTURE
+                                           // Binary asset fetch direct from the asset CDN, which is known to
+                                           // send a bogus Content-Encoding (a MIME type, not a transfer
+                                           // coding) on every response -- libcurl treats that as a hard
+                                           // failure once auto-decoding is requested at all, so leave
+                                           // Content-Encoding alone for this class (see PO_CONTENT_DECODING).
+                                           8, 1, 12, 0, true, false, "TextureFetchConcurrency", "texture fetch" },
+                                         { // AP_ASSET
+                                           8, 1, 16, 0, true, "AssetFetchConcurrency", "asset fetch" },
+                                         { // AP_MESH1
+                                           32, 1, 128, 0, false, false, "MeshMaxConcurrentRequests", "mesh fetch" },
+                                         { // AP_MESH2
+                                           8, 1, 32, 0, true, false, "Mesh2MaxConcurrentRequests", "mesh2 fetch" },
+                                         { // AP_LARGE_MESH
+                                           2, 1, 8, 0, false, false, "", "large mesh fetch" },
+                                         { // AP_UPLOADS
+                                           2, 1, 8, 0, false, true, "", "asset upload" },
+                                         { // AP_LONG_POLL
+                                           32, 32, 32, 0, false, true, "", "long poll" },
+                                         { // AP_INVENTORY
+                                           4, 1, 4, 0, false, true, "", "inventory" },
+                                         { // AP_MATERIALS
+                                           2, 1, 8, 0, false, true, "RenderMaterials", "material manager requests" },
+                                         { // AP_AGENT
+                                           2, 1, 32, 0, false, true, "Agent", "Agent requests" } };
 
 static void setting_changed();
 static void ssl_verification_changed();

@@ -177,9 +177,9 @@ public:
     // perform occlusion culling on all active reflection probes
     void doOcclusion();
 
-    // *HACK: "cull" all reflection probes except the default one. Only call
-    // this if you don't intend to call updateUniforms directly. Call again
-    // with false when done.
+    // Leave every reflection probe but the default one out of what the shader samples, and upload
+    // that. Only call this if you don't intend to call updateUniforms directly. Call again with
+    // false when done.
     void forceDefaultProbeAndUpdateUniforms(bool force = true);
 
     U32 probeCount();
@@ -289,6 +289,8 @@ private:
     U32 mReflectionProbeCount;
 
     U32 mDynamicProbeCount;
+    // the probes relevant last frame, the default probe among them, in ALProbeReach's steps, for dynamic allocation
+    U32 mRelevantProbeCount = 0;
 
     // cached settings from gSavedSettings
     S32 mRenderReflectionProbeDetail = -1;
@@ -323,6 +325,9 @@ private:
     // if true, only update the default probe
     bool mPaused = false;
     F64 mResumeTime = 0.0;
+
+    // if true, getReflectionMaps hands the shader the default probe alone (forceDefaultProbeAndUpdateUniforms)
+    bool mForceDefaultProbe = false;
 
     ReflectionProbeData mProbeData;
 };
