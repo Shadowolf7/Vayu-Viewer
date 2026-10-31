@@ -1830,9 +1830,8 @@ void LLViewerObjectList::repartitionObjects()
 void LLViewerObjectList::refreshAllObjects()
 {
     repartitionObjects();
-    for (vobj_list_t::iterator iter = mObjects.begin(); iter != mObjects.end(); ++iter)
+    for (const LLPointer<LLViewerObject>& objectp : mObjects)
     {
-        LLViewerObject* objectp = *iter;
         if (objectp && !objectp->isDead())
         {
             objectp->markForUpdate();

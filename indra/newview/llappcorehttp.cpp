@@ -72,7 +72,7 @@ static const struct
                                            // Content-Encoding alone for this class (see PO_CONTENT_DECODING).
                                            8, 1, 12, 0, true, false, "TextureFetchConcurrency", "texture fetch" },
                                          { // AP_ASSET
-                                           8, 1, 16, 0, true, "AssetFetchConcurrency", "asset fetch" },
+                                           8, 1, 16, 0, true, false, "AssetFetchConcurrency", "asset fetch" },
                                          { // AP_MESH1
                                            32, 1, 128, 0, false, false, "MeshMaxConcurrentRequests", "mesh fetch" },
                                          { // AP_MESH2
