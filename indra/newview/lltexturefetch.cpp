@@ -40,7 +40,6 @@
 #include "llimage.h"
 #include "llimagej2c.h"
 #include "llimageworker.h"
-#include "vayubctexturecache.h"
 #include "vayuimageblockcompressor.h"
 #include "llworkerthread.h"
 #include "message.h"
@@ -1283,20 +1282,22 @@ bool LLTextureFetchWorker::doWork(S32 param)
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_THREAD("tfwdw - LOAD_FROM_TEXTURE_CACHE");
 
-        // Early check: if the texture is already compressed in VayuBCTextureCache,
+        // Early check: if the texture is already compressed in LLTextureCache,
         // we can fulfill the request directly without network fetching or decode thread queuing.
         // mAllowCompression is only ever set for a resolved role, so there is no unclaimed case
         // to guard here and no stale colour/normal entry can be resurrected: the branch below
         // picks the cache name from mTextureJob, which is always a real role by this point.
-        if (!mNeedsAux && mAllowCompression && mID.notNull() && mDesiredDiscard >= 0)
+        if (mFetcher && mFetcher->mTextureCache && !mNeedsAux && mAllowCompression && mID.notNull() && mDesiredDiscard >= 0)
         {
+            LLTextureCache*        cache = mFetcher->mTextureCache;
             VayuBCCacheEntryHeader cache_header;
-            std::vector<U8> cache_buffer;
-            bool cache_hit = false;
+            std::vector<U8>        cache_buffer;
+            bool                   cache_hit = false;
             if (mTextureJob == EVayuTextureJob::PBRNormal)
             {
                 // Dedicated BC5 normal cache entry
-                if (VayuBCTextureCache::instance().readEntry(mID, mDesiredDiscard, cache_header, cache_buffer, ".bc5", VayuBCTextureCache::kFormatBC5, VayuBCTextureCache::kRoleNormal))
+                if (cache->readBCEntry(mID, mDesiredDiscard, cache_header, cache_buffer, ".bc5", LLTextureCache::kFormatBC5,
+                                       LLTextureCache::kRoleNormal))
                 {
                     cache_hit = true;
                 }
@@ -1306,8 +1307,10 @@ bool LLTextureFetchWorker::doWork(S32 param)
                 // Legacy Blinn-Phong normal map: BC7 (fallback BC3). The cache
                 // name carries format + role, so a colour .bc7 entry can never
                 // satisfy this role.
-                if (VayuBCTextureCache::instance().readEntry(mID, mDesiredDiscard, cache_header, cache_buffer, ".bc7", VayuBCTextureCache::kFormatBC7, VayuBCTextureCache::kRoleNormal) ||
-                    VayuBCTextureCache::instance().readEntry(mID, mDesiredDiscard, cache_header, cache_buffer, ".bc3", VayuBCTextureCache::kFormatBC3, VayuBCTextureCache::kRoleNormal))
+                if (cache->readBCEntry(mID, mDesiredDiscard, cache_header, cache_buffer, ".bc7", LLTextureCache::kFormatBC7,
+                                       LLTextureCache::kRoleNormal) ||
+                    cache->readBCEntry(mID, mDesiredDiscard, cache_header, cache_buffer, ".bc3", LLTextureCache::kFormatBC3,
+                                       LLTextureCache::kRoleNormal))
                 {
                     cache_hit = true;
                 }
@@ -1317,15 +1320,17 @@ bool LLTextureFetchWorker::doWork(S32 param)
                 // Legacy Blinn-Phong specular map: BC7 (fallback BC3), role colour.
                 // RGB tint + alpha gloss must survive, so only the 4-channel
                 // formats qualify.
-                if (VayuBCTextureCache::instance().readEntry(mID, mDesiredDiscard, cache_header, cache_buffer, ".bc7", VayuBCTextureCache::kFormatBC7, VayuBCTextureCache::kRoleColor) ||
-                    VayuBCTextureCache::instance().readEntry(mID, mDesiredDiscard, cache_header, cache_buffer, ".bc3", VayuBCTextureCache::kFormatBC3, VayuBCTextureCache::kRoleColor))
+                if (cache->readBCEntry(mID, mDesiredDiscard, cache_header, cache_buffer, ".bc7", LLTextureCache::kFormatBC7,
+                                       LLTextureCache::kRoleColor) ||
+                    cache->readBCEntry(mID, mDesiredDiscard, cache_header, cache_buffer, ".bc3", LLTextureCache::kFormatBC3,
+                                       LLTextureCache::kRoleColor))
                 {
                     cache_hit = true;
                 }
             }
             else
             {
-                if (VayuBCTextureCache::instance().readEntry(mID, mDesiredDiscard, cache_header, cache_buffer, ".bc"))
+                if (cache->readBCEntry(mID, mDesiredDiscard, cache_header, cache_buffer, ".bc"))
                 {
                     cache_hit = true;
                 }
@@ -1363,7 +1368,7 @@ bool LLTextureFetchWorker::doWork(S32 param)
                 setState(DONE);
                 add(LLTextureFetch::sCacheHit, 1.0);
                 record(LLTextureFetch::sCacheHitRate, LLUnits::Ratio::fromValue(1));
-                LL_DEBUGS(LOG_TXT) << mID << ": VayuBCTextureCache early hit! Discard: " << mDecodedDiscard
+                LL_DEBUGS(LOG_TXT) << mID << ": LLTextureCache BC early hit! Discard: " << mDecodedDiscard
                                    << " Size: " << cache_header.mWidth << "x" << cache_header.mHeight
                                    << " Format: " << (int)cache_header.mFormat << LL_ENDL;
                 return doWork(param);
