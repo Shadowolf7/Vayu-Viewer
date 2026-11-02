@@ -38,6 +38,31 @@ class LLImageFormatted;
 class LLTextureCacheWorker;
 class LLImageRaw;
 
+// Mirrors the fields callers need to reconstruct a GL upload without
+// depending on llimage's VayuBlockCompressionResult type directly.
+struct VayuBCCacheEntryHeader
+{
+    U8  mFormat           = 0; // EVayuBlockCompressionFormat
+    U8  mPreset           = 0; // EVayuBlockCompressionPreset
+    U8  mIsMask           = 0; // 1 if alpha mask, 0 if alpha blend / no mask
+    U8  mRole             = 0; // kRoleColor (0) or kRoleNormal (1)
+    U8  mDiscardLevel     = 0; // Discard level (0 = full resolution)
+    S32 mMipLevels        = 0;
+    U32 mWidth            = 0;
+    U32 mHeight           = 0;
+    S32 mComponents       = 0;
+    U32 mGLInternalFormat = 0;
+    U32 mGLPrimaryFormat  = 0;
+};
+
+struct VayuBCCacheFileHeader
+{
+    U32                    mMagic   = 0; // kBCMagic ("VBC1")
+    U32                    mVersion = 0; // kBCFormatVersion
+    VayuBCCacheEntryHeader mMeta;
+    U64                    mBufferSize = 0;
+};
+
 class LLTextureCache : public LLWorkerThread
 {
     friend class LLTextureCacheWorker;
@@ -145,10 +170,36 @@ public:
     bool     isInLocal(const LLUUID& id); // not thread safe at the moment
     LLMutex* getFastCacheMutex() { return &mFastCacheMutex; }
 
+    // Block compression (BC) entry support
+    static constexpr U32 kBCMagic         = 0x31434256; // "VBC1"
+    static constexpr U32 kBCFormatVersion = 12;
+
+    static constexpr U8 kFormatBC1 = 1;
+    static constexpr U8 kFormatBC3 = 2;
+    static constexpr U8 kFormatBC4 = 3;
+    static constexpr U8 kFormatBC5 = 4;
+    static constexpr U8 kFormatBC7 = 5;
+
+    static constexpr U8 kRoleColor  = 0;
+    static constexpr U8 kRoleNormal = 1;
+
+    static std::string formatExtension(U8 format, U8 role = kRoleColor);
+
+    std::filesystem::path getTextureFileName(const LLUUID& id, const std::string& ext = ".texture");
+    bool                  readBCEntry(const LLUUID&           id,
+                                      S32                     discard_level,
+                                      VayuBCCacheEntryHeader& header,
+                                      std::vector<U8>&        buffer,
+                                      const std::string&      ext             = "",
+                                      U8                      expected_format = 0,
+                                      U8                      expected_role   = kRoleColor);
+    bool                  readBCEntryHeader(const LLUUID& id, U8 format, U8 role, VayuBCCacheEntryHeader& header);
+    bool writeBCEntry(const LLUUID& id, S32 discard_level, const VayuBCCacheEntryHeader& header, const U8* data, size_t datasize);
+    void removeSiblingBCFiles(const LLUUID& id);
+
 protected:
     // Accessed by LLTextureCacheWorker
     std::string           getLocalFileName(const LLUUID& id);
-    std::filesystem::path getTextureFileName(const LLUUID& id);
     void                  addCompleted(Responder* responder, bool success);
 
 private:

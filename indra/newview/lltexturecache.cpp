@@ -694,6 +694,33 @@ bool LLTextureCacheRemoteWorker::doWrite()
             done = true;
         }
     }
+
+    if (mRawImage.notNull() && mRawImage->hasBlockCompressionResult())
+    {
+        auto comp_res = mRawImage->getBlockCompressionResult();
+        if (comp_res && !comp_res->mBuffer.empty())
+        {
+            EVayuTextureJob        job        = mRawImage->getTextureJob();
+            const U8               cache_role = (job == EVayuTextureJob::PBRNormal || job == EVayuTextureJob::LegacyMaterialNormal)
+                                                    ? LLTextureCache::kRoleNormal
+                                                    : LLTextureCache::kRoleColor;
+            VayuBCCacheEntryHeader cache_header;
+            cache_header.mFormat           = (U8)comp_res->mFormat;
+            cache_header.mPreset           = (U8)comp_res->mPreset;
+            cache_header.mIsMask           = comp_res->mIsMask ? 1 : 0;
+            cache_header.mRole             = cache_role;
+            cache_header.mDiscardLevel     = (U8)std::clamp(mDiscardLevel, 0, 255);
+            cache_header.mMipLevels        = comp_res->mMipLevels;
+            cache_header.mWidth            = comp_res->mWidth;
+            cache_header.mHeight           = comp_res->mHeight;
+            cache_header.mComponents       = comp_res->mComponents;
+            cache_header.mGLInternalFormat = comp_res->mGLInternalFormat;
+            cache_header.mGLPrimaryFormat  = comp_res->mGLPrimaryFormat;
+
+            mCache->writeBCEntry(mID, mDiscardLevel, cache_header, comp_res->mBuffer.data(), comp_res->mBuffer.size());
+        }
+    }
+
     mRawImage = NULL;
 
     // Clean up and exit
@@ -864,19 +891,213 @@ std::string LLTextureCache::getLocalFileName(const LLUUID& id)
     return filename;
 }
 
-std::filesystem::path LLTextureCache::getTextureFileName(const LLUUID& id)
+std::filesystem::path LLTextureCache::getTextureFileName(const LLUUID& id, const std::string& ext)
 {
 #if LL_WINDOWS
     wchar_t idstr[UUID_STR_LENGTH]{};
     id.to_wchars(idstr);
-    std::wstring filename = fmt::format(L"{:s}\\{:c}\\{:s}.texture", mTexturesDirPath.native(), idstr[0], idstr);
+    std::wstring wext(ext.begin(), ext.end());
+    std::wstring filename = fmt::format(L"{:s}\\{:c}\\{:s}{:s}", mTexturesDirPath.native(), idstr[0], idstr, wext);
     return filename;
 #else
     char idstr[UUID_STR_LENGTH]{};
     id.to_chars(idstr);
-    std::string filename = fmt::format("{:s}/{:c}/{:s}.texture", mTexturesDirPath.native(), idstr[0], idstr);
+    std::string filename = fmt::format("{:s}/{:c}/{:s}{:s}", mTexturesDirPath.native(), idstr[0], idstr, ext);
     return filename;
 #endif
+}
+
+std::string LLTextureCache::formatExtension(U8 format, U8 role)
+{
+    const std::string base = (format == kFormatBC1)   ? ".bc1"
+                             : (format == kFormatBC3) ? ".bc3"
+                             : (format == kFormatBC4) ? ".bc4"
+                             : (format == kFormatBC5) ? ".bc5"
+                             : (format == kFormatBC7) ? ".bc7"
+                                                      : ".bc";
+    return (role == kRoleNormal) ? (base + "n") : base;
+}
+
+void LLTextureCache::removeSiblingBCFiles(const LLUUID& id)
+{
+    static const std::string sExts[] = { ".bc1", ".bc3", ".bc4", ".bc5", ".bc7", ".bc3n", ".bc5n", ".bc7n", ".bc" };
+    for (const auto& ext : sExts)
+    {
+        std::filesystem::path p = getTextureFileName(id, ext);
+        if (LLFile::isfile(p))
+        {
+            LLFile::remove(p);
+        }
+    }
+}
+
+bool LLTextureCache::writeBCEntry(const LLUUID& id, S32 discard_level, const VayuBCCacheEntryHeader& header, const U8* data,
+                                  size_t datasize)
+{
+    if (mReadOnly || !data || datasize == 0)
+    {
+        return false;
+    }
+
+    VayuBCCacheEntryHeader local_header = header;
+    local_header.mDiscardLevel          = static_cast<U8>(std::clamp(discard_level, 0, 255));
+
+    const std::string     ext  = formatExtension(local_header.mFormat, local_header.mRole);
+    std::filesystem::path path = getTextureFileName(id, ext);
+
+    // Finer-wins guard: do not overwrite a finer or equal resolution entry with a coarser one
+    if (LLFile::isfile(path))
+    {
+        llifstream in(path, std::ios::binary);
+        if (in.good())
+        {
+            VayuBCCacheFileHeader existing_fh;
+            in.read(reinterpret_cast<char*>(&existing_fh), sizeof(existing_fh));
+            if (in.good() && existing_fh.mMagic == kBCMagic && existing_fh.mVersion == kBCFormatVersion)
+            {
+                if (existing_fh.mMeta.mDiscardLevel <= local_header.mDiscardLevel)
+                {
+                    return true;
+                }
+            }
+        }
+    }
+
+    VayuBCCacheFileHeader fh;
+    fh.mMagic      = kBCMagic;
+    fh.mVersion    = kBCFormatVersion;
+    fh.mMeta       = local_header;
+    fh.mBufferSize = datasize;
+
+    llofstream out(path, std::ios::binary);
+    if (!out.good())
+    {
+        return false;
+    }
+    out.write(reinterpret_cast<const char*>(&fh), sizeof(fh));
+    out.write(reinterpret_cast<const char*>(data), (std::streamsize)datasize);
+    out.close();
+
+    return out.good();
+}
+
+bool LLTextureCache::readBCEntry(const LLUUID&           id,
+                                 S32                     discard_level,
+                                 VayuBCCacheEntryHeader& header,
+                                 std::vector<U8>&        buffer,
+                                 const std::string&      ext,
+                                 U8                      expected_format,
+                                 U8                      expected_role)
+{
+    std::vector<std::string> candidates;
+    if (expected_format != 0)
+    {
+        candidates.push_back(formatExtension(expected_format, expected_role));
+    }
+    else if (!ext.empty() && ext != ".bc")
+    {
+        candidates.push_back(ext);
+    }
+    else
+    {
+        candidates.push_back(".bc1");
+        candidates.push_back(".bc3");
+        candidates.push_back(".bc4");
+        candidates.push_back(".bc5");
+        candidates.push_back(".bc7");
+    }
+
+    for (const auto& candidate : candidates)
+    {
+        std::filesystem::path path = getTextureFileName(id, candidate);
+        if (!LLFile::isfile(path))
+        {
+            continue;
+        }
+
+        llifstream in(path, std::ios::binary);
+        if (!in.good())
+        {
+            continue;
+        }
+
+        VayuBCCacheFileHeader fh;
+        in.read(reinterpret_cast<char*>(&fh), sizeof(fh));
+        if (!in.good() || fh.mMagic != kBCMagic || fh.mVersion != kBCFormatVersion)
+        {
+            in.close();
+            LLFile::remove(path);
+            continue;
+        }
+
+        const U8 implied_format = (candidate == ".bc1")   ? kFormatBC1
+                                  : (candidate == ".bc3") ? kFormatBC3
+                                  : (candidate == ".bc4") ? kFormatBC4
+                                  : (candidate == ".bc5") ? kFormatBC5
+                                  : (candidate == ".bc7") ? kFormatBC7
+                                                          : 0;
+        if (implied_format != 0 && fh.mMeta.mFormat != implied_format)
+        {
+            continue;
+        }
+
+        const bool suffixed = !candidate.empty() && candidate.back() == 'n';
+        if (suffixed != (fh.mMeta.mRole == kRoleNormal))
+        {
+            continue;
+        }
+
+        if (fh.mMeta.mDiscardLevel == discard_level)
+        {
+            buffer.resize((size_t)fh.mBufferSize);
+            in.read(reinterpret_cast<char*>(buffer.data()), (std::streamsize)fh.mBufferSize);
+            if (static_cast<size_t>(in.gcount()) != fh.mBufferSize)
+            {
+                buffer.clear();
+                continue;
+            }
+            header = fh.mMeta;
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool LLTextureCache::readBCEntryHeader(const LLUUID& id, U8 format, U8 role, VayuBCCacheEntryHeader& header)
+{
+    const std::string     ext  = formatExtension(format, role);
+    std::filesystem::path path = getTextureFileName(id, ext);
+    if (!LLFile::isfile(path))
+    {
+        return false;
+    }
+
+    llifstream in(path, std::ios::binary);
+    if (!in.good())
+    {
+        return false;
+    }
+
+    VayuBCCacheFileHeader fh;
+    in.read(reinterpret_cast<char*>(&fh), sizeof(fh));
+    if (!in.good() || fh.mMagic != kBCMagic || fh.mVersion != kBCFormatVersion)
+    {
+        return false;
+    }
+
+    if (fh.mMeta.mFormat != format)
+    {
+        return false;
+    }
+    const bool suffixed = !ext.empty() && ext.back() == 'n';
+    if (suffixed != (fh.mMeta.mRole == kRoleNormal))
+    {
+        return false;
+    }
+
+    header = fh.mMeta;
+    return true;
 }
 
 // debug
@@ -965,6 +1186,13 @@ void LLTextureCache::purgeCache(ELLPath location, bool remove_dir)
     {
         setDirNames(location);
         llassert_always(mHeaderAPRFile == nullptr);
+
+        // remove legacy bctexturecache dir if exists
+        std::string legacy_bc_dir = gDirUtilp->getExpandedFilename(location, "bctexturecache");
+        if (LLFile::isdir(legacy_bc_dir))
+        {
+            LLFile::remove(legacy_bc_dir);
+        }
 
         // remove the legacy cache if exists
         std::filesystem::path texture_dir = mTexturesDirPath;
@@ -2269,6 +2497,7 @@ void LLTextureCache::removeCachedTexture(const LLUUID& id)
         mHeaderIDMap.erase(id);
     }
     LLFile::remove(getTextureFileName(id));
+    removeSiblingBCFiles(id);
 }
 
 // called after mHeaderMutex is locked.
@@ -2306,6 +2535,10 @@ void LLTextureCache::removeEntry(S32 idx, Entry& entry, const std::filesystem::p
     if (file_maybe_exists)
     {
         LLFile::remove(filename);
+    }
+    if (idx >= 0)
+    {
+        removeSiblingBCFiles(entry.mID);
     }
 }
 
