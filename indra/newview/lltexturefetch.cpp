@@ -1284,13 +1284,28 @@ bool LLTextureFetchWorker::doWork(S32 param)
 
             if (mAllowCompression && mFetcher->mTextureCache)
             {
-                const U8 expected_role = (mTextureJob == EVayuTextureJob::PBRNormal || mTextureJob == EVayuTextureJob::LegacyMaterialNormal)
-                                             ? LLTextureCache::kRoleNormal
-                                             : LLTextureCache::kRoleColor;
-
                 VayuBCCacheEntryHeader cache_header;
                 std::vector<U8>        bc_buffer;
-                if (mFetcher->mTextureCache->readBCEntry(mID, mDesiredDiscard, cache_header, bc_buffer, "", 0, expected_role))
+                bool                   cache_hit = false;
+
+                if (mTextureJob == EVayuTextureJob::PBRNormal)
+                {
+                    cache_hit = mFetcher->mTextureCache->readBCEntry(mID, mDesiredDiscard, cache_header, bc_buffer, ".bc5",
+                                                                     LLTextureCache::kFormatBC5);
+                }
+                else if (mTextureJob == EVayuTextureJob::LegacyMaterialNormal || mTextureJob == EVayuTextureJob::LegacyMaterialSpecular)
+                {
+                    cache_hit = mFetcher->mTextureCache->readBCEntry(mID, mDesiredDiscard, cache_header, bc_buffer, ".bc7",
+                                                                     LLTextureCache::kFormatBC7) ||
+                                mFetcher->mTextureCache->readBCEntry(mID, mDesiredDiscard, cache_header, bc_buffer, ".bc3",
+                                                                     LLTextureCache::kFormatBC3);
+                }
+                else
+                {
+                    cache_hit = mFetcher->mTextureCache->readBCEntry(mID, mDesiredDiscard, cache_header, bc_buffer);
+                }
+
+                if (cache_hit)
                 {
                     LLPointer<LLImageRaw> raw      = new LLImageRaw(cache_header.mWidth, cache_header.mHeight, cache_header.mComponents);
                     auto                  comp_res = std::make_shared<VayuBlockCompressionResult>();

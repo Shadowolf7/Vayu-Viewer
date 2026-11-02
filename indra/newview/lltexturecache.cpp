@@ -701,15 +701,11 @@ bool LLTextureCacheRemoteWorker::doWrite()
         auto comp_res = mRawImage->getBlockCompressionResult();
         if (comp_res && !comp_res->mBuffer.empty())
         {
-            EVayuTextureJob        job        = mRawImage->getTextureJob();
-            const U8               cache_role = (job == EVayuTextureJob::PBRNormal || job == EVayuTextureJob::LegacyMaterialNormal)
-                                                    ? LLTextureCache::kRoleNormal
-                                                    : LLTextureCache::kRoleColor;
             VayuBCCacheEntryHeader cache_header;
             cache_header.mFormat           = (U8)comp_res->mFormat;
             cache_header.mPreset           = (U8)comp_res->mPreset;
             cache_header.mIsMask           = comp_res->mIsMask ? 1 : 0;
-            cache_header.mRole             = cache_role;
+            cache_header.mRole             = 0;
             cache_header.mDiscardLevel     = (U8)std::clamp(mRawDiscardLevel, 0, 255);
             cache_header.mMipLevels        = comp_res->mMipLevels;
             cache_header.mWidth            = comp_res->mWidth;
@@ -908,22 +904,20 @@ std::filesystem::path LLTextureCache::getTextureFileName(const LLUUID& id, const
 #endif
 }
 
-std::string LLTextureCache::formatExtension(U8 format, U8 role)
+std::string LLTextureCache::formatExtension(U8 format)
 {
-    const std::string base = (format == kFormatBC1)   ? ".bc1"
-                             : (format == kFormatBC3) ? ".bc3"
-                             : (format == kFormatBC4) ? ".bc4"
-                             : (format == kFormatBC5) ? ".bc5"
-                             : (format == kFormatBC7) ? ".bc7"
-                                                      : ".bc";
-    return (role == kRoleNormal) ? (base + "n") : base;
+    return (format == kFormatBC1)   ? ".bc1"
+           : (format == kFormatBC3) ? ".bc3"
+           : (format == kFormatBC5) ? ".bc5"
+           : (format == kFormatBC7) ? ".bc7"
+                                    : ".bc";
 }
 
 S64 LLTextureCache::removeSiblingBCFiles(const LLUUID& id)
 {
-    static const std::string sExts[] = {
-        ".bc1", ".bc3", ".bc4", ".bc5", ".bc7", ".bc1n", ".bc3n", ".bc4n", ".bc5n", ".bc7n", ".bc", ".bcn"
-    };
+    static const std::string sExts[] = { ".bc1", ".bc3", ".bc5", ".bc7",
+                                         // Legacy / migration cleanup
+                                         ".bc", ".bc4", ".bc1n", ".bc3n", ".bc4n", ".bc5n", ".bc7n", ".bcn" };
     for (const auto& ext : sExts)
     {
         std::filesystem::path p = getTextureFileName(id, ext);
@@ -954,7 +948,7 @@ bool LLTextureCache::writeBCEntry(const LLUUID& id, S32 discard_level, const Vay
     VayuBCCacheEntryHeader local_header = header;
     local_header.mDiscardLevel          = static_cast<U8>(std::clamp(discard_level, 0, 255));
 
-    const std::string     ext  = formatExtension(local_header.mFormat, local_header.mRole);
+    const std::string     ext  = formatExtension(local_header.mFormat);
     std::filesystem::path path = getTextureFileName(id, ext);
 
     S64 old_file_size = 0;
@@ -1032,18 +1026,47 @@ bool LLTextureCache::writeBCEntry(const LLUUID& id, S32 discard_level, const Vay
     return true;
 }
 
+size_t LLTextureCache::calcSubBufferBytes(U8 format, U32 width, U32 height, S32 num_mips, S32 diff)
+{
+    if (diff <= 0)
+    {
+        diff = 0;
+    }
+    if (diff >= num_mips || num_mips <= 0)
+    {
+        return 0;
+    }
+
+    // BC1 uses 8 bytes per 4x4 block; BC3, BC5, and BC7 use 16 bytes per 4x4 block
+    const U32 block_bytes = (format == kFormatBC1) ? 8 : 16;
+
+    size_t total_bytes = 0;
+    for (S32 m = diff; m < num_mips; ++m)
+    {
+        U32 mw = std::max(1u, width >> m);
+        U32 mh = std::max(1u, height >> m);
+        U32 bw = (mw + 3) / 4;
+        U32 bh = (mh + 3) / 4;
+        if (bw < 1)
+            bw = 1;
+        if (bh < 1)
+            bh = 1;
+        total_bytes += static_cast<size_t>(bw) * bh * block_bytes;
+    }
+    return total_bytes;
+}
+
 bool LLTextureCache::readBCEntry(const LLUUID&           id,
                                  S32                     discard_level,
                                  VayuBCCacheEntryHeader& header,
                                  std::vector<U8>&        buffer,
                                  const std::string&      ext,
-                                 U8                      expected_format,
-                                 U8                      expected_role)
+                                 U8                      expected_format)
 {
     std::vector<std::string> candidates;
     if (expected_format != 0)
     {
-        candidates.push_back(formatExtension(expected_format, expected_role));
+        candidates.push_back(formatExtension(expected_format));
     }
     else if (!ext.empty() && ext != ".bc")
     {
@@ -1052,10 +1075,9 @@ bool LLTextureCache::readBCEntry(const LLUUID&           id,
     else
     {
         candidates.push_back(".bc1");
-        candidates.push_back(".bc3");
-        candidates.push_back(".bc4");
-        candidates.push_back(".bc5");
         candidates.push_back(".bc7");
+        candidates.push_back(".bc3");
+        candidates.push_back(".bc5");
     }
 
     for (const auto& candidate : candidates)
@@ -1083,17 +1105,10 @@ bool LLTextureCache::readBCEntry(const LLUUID&           id,
 
         const U8 implied_format = (candidate == ".bc1")   ? kFormatBC1
                                   : (candidate == ".bc3") ? kFormatBC3
-                                  : (candidate == ".bc4") ? kFormatBC4
                                   : (candidate == ".bc5") ? kFormatBC5
                                   : (candidate == ".bc7") ? kFormatBC7
                                                           : 0;
         if (implied_format != 0 && fh.mMeta.mFormat != implied_format)
-        {
-            continue;
-        }
-
-        const bool suffixed = !candidate.empty() && candidate.back() == 'n';
-        if (suffixed != (fh.mMeta.mRole == kRoleNormal))
         {
             continue;
         }
@@ -1110,14 +1125,43 @@ bool LLTextureCache::readBCEntry(const LLUUID&           id,
             header = fh.mMeta;
             return true;
         }
+        else if (fh.mMeta.mDiscardLevel < discard_level)
+        {
+            S32 diff = discard_level - fh.mMeta.mDiscardLevel;
+            if (diff >= fh.mMeta.mMipLevels)
+            {
+                continue;
+            }
+
+            size_t sub_bytes = calcSubBufferBytes(fh.mMeta.mFormat, fh.mMeta.mWidth, fh.mMeta.mHeight, fh.mMeta.mMipLevels, diff);
+            if (sub_bytes > (size_t)fh.mBufferSize || sub_bytes == 0)
+            {
+                continue;
+            }
+
+            buffer.resize(sub_bytes);
+            in.read(reinterpret_cast<char*>(buffer.data()), (std::streamsize)sub_bytes);
+            if (static_cast<size_t>(in.gcount()) != sub_bytes)
+            {
+                buffer.clear();
+                continue;
+            }
+
+            header         = fh.mMeta;
+            header.mWidth  = std::max(1u, header.mWidth >> diff);
+            header.mHeight = std::max(1u, header.mHeight >> diff);
+            header.mMipLevels -= diff;
+            header.mDiscardLevel = static_cast<U8>(discard_level);
+            return true;
+        }
     }
 
     return false;
 }
 
-bool LLTextureCache::readBCEntryHeader(const LLUUID& id, U8 format, U8 role, VayuBCCacheEntryHeader& header)
+bool LLTextureCache::readBCEntryHeader(const LLUUID& id, U8 format, VayuBCCacheEntryHeader& header)
 {
-    const std::string     ext  = formatExtension(format, role);
+    const std::string     ext  = formatExtension(format);
     std::filesystem::path path = getTextureFileName(id, ext);
     if (!LLFile::isfile(path))
     {
@@ -1138,11 +1182,6 @@ bool LLTextureCache::readBCEntryHeader(const LLUUID& id, U8 format, U8 role, Vay
     }
 
     if (fh.mMeta.mFormat != format)
-    {
-        return false;
-    }
-    const bool suffixed = !ext.empty() && ext.back() == 'n';
-    if (suffixed != (fh.mMeta.mRole == kRoleNormal))
     {
         return false;
     }

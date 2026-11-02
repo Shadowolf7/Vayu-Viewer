@@ -176,14 +176,10 @@ public:
 
     static constexpr U8 kFormatBC1 = 1;
     static constexpr U8 kFormatBC3 = 2;
-    static constexpr U8 kFormatBC4 = 3;
     static constexpr U8 kFormatBC5 = 4;
     static constexpr U8 kFormatBC7 = 5;
 
-    static constexpr U8 kRoleColor  = 0;
-    static constexpr U8 kRoleNormal = 1;
-
-    static std::string formatExtension(U8 format, U8 role = kRoleColor);
+    static std::string formatExtension(U8 format);
 
     std::filesystem::path getTextureFileName(const LLUUID& id, const std::string& ext = ".texture");
     bool                  readBCEntry(const LLUUID&           id,
@@ -191,11 +187,11 @@ public:
                                       VayuBCCacheEntryHeader& header,
                                       std::vector<U8>&        buffer,
                                       const std::string&      ext             = "",
-                                      U8                      expected_format = 0,
-                                      U8                      expected_role   = kRoleColor);
-    bool                  readBCEntryHeader(const LLUUID& id, U8 format, U8 role, VayuBCCacheEntryHeader& header);
+                                      U8                      expected_format = 0);
+    bool                  readBCEntryHeader(const LLUUID& id, U8 format, VayuBCCacheEntryHeader& header);
     bool writeBCEntry(const LLUUID& id, S32 discard_level, const VayuBCCacheEntryHeader& header, const U8* data, size_t datasize);
     S64                   removeSiblingBCFiles(const LLUUID& id);
+    static size_t         calcSubBufferBytes(U8 format, U32 width, U32 height, S32 num_mips, S32 diff);
 
 protected:
     // Accessed by LLTextureCacheWorker
