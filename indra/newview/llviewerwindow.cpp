@@ -6590,6 +6590,7 @@ void LLViewerWindow::stopGL()
         LL_INFOS("Window") << "Shutting down GL..." << LL_ENDL;
 
         // Pause texture decode threads (will get unpaused during main loop)
+        LLAppViewer::getTextureCache()->pause();
         LLAppViewer::getTextureFetch()->pause();
 
         LLManipTranslate::destroyGL() ;
