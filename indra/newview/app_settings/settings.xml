@@ -1616,28 +1616,6 @@
       <key>Value</key>
       <integer>4096</integer>
     </map>
-    <key>VayuBCTextureCacheMaxSize</key>
-    <map>
-      <key>Comment</key>
-      <string>Hard drive space reserved for the pre-encoded block-compressed texture cache, in MB. Separate budget from CacheSize. Configurable in Preferences > Setup > Advanced.</string>
-      <key>Persist</key>
-      <integer>1</integer>
-      <key>Type</key>
-      <string>U32</string>
-      <key>Value</key>
-      <integer>8192</integer>
-    </map>
-    <key>VayuBCTextureCacheVersion</key>
-    <map>
-      <key>Comment</key>
-      <string>Format version of the Vayu BC texture cache (aligned with VayuBCTextureCache::kFormatVersion). Mismatch triggers a one-time purge of both the JPEG2000 and BC texture caches on version bump.</string>
-      <key>Persist</key>
-      <integer>1</integer>
-      <key>Type</key>
-      <string>U32</string>
-      <key>Value</key>
-      <integer>0</integer>
-    </map>
     <key>VayuPerfFrameLog</key>
     <map>
       <key>Comment</key>

@@ -142,7 +142,6 @@
 #include "alscriptstudio.h"
 #include "alxmlmergelog.h"
 #include "lldiriterator.h"
-#include "vayubctexturecache.h"
 #include "llexperiencecache.h"
 #include "vayuimageblockcompressor.h"
 #include "llimagej2c.h"
@@ -1809,10 +1808,6 @@ S32 LLAppViewer::updateTextureThreads(F32 max_time)
         LL_PROFILE_ZONE_NAMED_CATEGORY_APP("Image Fetch");
         work_pending += LLAppViewer::getTextureFetch()->update(max_time); // unpauses the texture fetch thread
     }
-    {
-        LL_PROFILE_ZONE_NAMED_CATEGORY_APP("BC Texture Cache");
-        work_pending += VayuBCTextureCache::instance().update(max_time * 1000.f); // time-sliced purge
-    }
     return static_cast<S32>(work_pending);
 }
 
@@ -2259,14 +2254,6 @@ bool LLAppViewer::cleanup()
     }
     delete sImageDecodeThread;
     sImageDecodeThread = NULL;
-    // VayuBCTextureCache's writer pool must be joined here, at a controlled
-    // point, rather than left to its own destructor: as a function-local
-    // static its destructor only runs during exit()'s static-teardown
-    // chain, by which point global state ThreadPool::close() touches may
-    // already be gone - was fatal in practice (std::terminate on shutdown,
-    // confirmed via gdb). ImageDecode is the only feeder of writeEntry(),
-    // and it's fully torn down above, so nothing can race this.
-    VayuBCTextureCache::instance().shutdown();
     delete mGeneralThreadPool;
     mGeneralThreadPool = NULL;
 
@@ -5063,17 +5050,6 @@ U32 LLAppViewer::getObjectCacheVersion()
     return INDRA_OBJECT_CACHE_VERSION;
 }
 
-void LLAppViewer::applyBCTextureCacheBudgets()
-{
-    static const S64 MB = 1024 * 1024;
-
-    const S64 bc_texture_cache_size = S64(gSavedSettings.getU32("VayuBCTextureCacheMaxSize")) * MB;
-
-    VayuBCTextureCache::instance().initCache(
-        std::filesystem::path(gDirUtilp->getExpandedFilename(LL_PATH_CACHE, "bccache")),
-        bc_texture_cache_size);
-}
-
 bool LLAppViewer::initCache()
 {
     LL_PROFILE_ZONE_SCOPED;
@@ -5149,28 +5125,12 @@ bool LLAppViewer::initCache()
     }
 
     LLDiskCache::init(disk_cache_size, read_only);
-    applyBCTextureCacheBudgets();
 
     if (!read_only)
     {
-        if (gSavedSettings.getU32("VayuBCTextureCacheVersion") != VayuBCTextureCache::kFormatVersion)
-        {
-            LL_INFOS("Texture") << "Vayu cache version mismatch ("
-                                << gSavedSettings.getU32("VayuBCTextureCacheVersion")
-                                << " != " << VayuBCTextureCache::kFormatVersion
-                                << "): invalidating the JPEG2000 and BC texture caches on version bump" << LL_ENDL;
-            // Entire dual-cache invalidation on a single version bump: wipe the
-            // JPEG2000 (j2c) texture cache and the BC texture cache together so
-            // both stay dumb and are rebuilt from scratch after the bump.
-            LLAppViewer::getTextureCache()->purgeCache(LL_PATH_CACHE);
-            VayuBCTextureCache::instance().clear();
-            gSavedSettings.setU32("VayuBCTextureCacheVersion", VayuBCTextureCache::kFormatVersion);
-        }
-
         if (gSavedSettings.getS32("DiskCacheVersion") != LLAppViewer::getDiskCacheVersion())
         {
             LLDiskCache::clear();
-            VayuBCTextureCache::instance().clear();
             gSavedSettings.setS32("DiskCacheVersion", LLAppViewer::getDiskCacheVersion());
         }
 
@@ -5181,13 +5141,11 @@ bool LLAppViewer::initCache()
 
             // clear the local disk cache
             LLDiskCache::clear();
-            VayuBCTextureCache::instance().clear();
         }
         else if (gSavedSettings.getBOOL("PurgeDiskCacheOnStartup"))
         {
             // request background purge without stalling startup
             LLDiskCache::threadedPurge();
-            VayuBCTextureCache::instance().requestPurge();
         }
     }
 
@@ -5305,13 +5263,6 @@ void LLAppViewer::purgeCache()
     LLVOCache::getInstance()->removeCache(LL_PATH_CACHE);
     LLViewerShaderMgr::instance()->clearShaderCache();
     purgeCefStaleCaches();
-    // Align with CoolVL: clear the BC texture cache via VayuBCTextureCache::clear()
-    // rather than destroying the directory tree with deleteDirAndContents().
-    // This removes cached files in subdirectories 0-f while preserving the
-    // directory structure so worker threads can continue writing.
-    const std::string bc_cache_dir = gDirUtilp->getExpandedFilename(LL_PATH_CACHE, "bccache");
-    LL_INFOS("AppCache") << "Clearing BC texture cache at " << bc_cache_dir << LL_ENDL;
-    VayuBCTextureCache::instance().clear();
     gDirUtilp->deleteFilesInDir(gDirUtilp->getExpandedFilename(LL_PATH_CACHE, ""), "*");
 }
 
@@ -5321,7 +5272,6 @@ void LLAppViewer::purgeCacheImmediate()
     LL_INFOS("AppCache") << "Purging Object Cache and Texture Cache immediately..." << LL_ENDL;
     LLAppViewer::getTextureCache()->purgeCache(LL_PATH_CACHE);
     LLDiskCache::clear();
-    VayuBCTextureCache::instance().clear();
     if (LLVOCache::instanceExists())
     {
         LLVOCache::getInstance()->removeCache(LL_PATH_CACHE, true);
