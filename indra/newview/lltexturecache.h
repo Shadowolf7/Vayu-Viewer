@@ -195,7 +195,7 @@ public:
                                       U8                      expected_role   = kRoleColor);
     bool                  readBCEntryHeader(const LLUUID& id, U8 format, U8 role, VayuBCCacheEntryHeader& header);
     bool writeBCEntry(const LLUUID& id, S32 discard_level, const VayuBCCacheEntryHeader& header, const U8* data, size_t datasize);
-    void removeSiblingBCFiles(const LLUUID& id);
+    S64                   removeSiblingBCFiles(const LLUUID& id);
 
 protected:
     // Accessed by LLTextureCacheWorker
@@ -273,6 +273,7 @@ private:
     std::filesystem::path                     mTexturesDirPath;
     typedef boost::unordered_map<LLUUID, S32> size_map_t;
     size_map_t                                mTexturesSizeMap;
+    size_map_t                                mBCSizeMap;
     S64                                       mTexturesSizeTotal;
     LLAtomicBool                              mDoPurge;
 

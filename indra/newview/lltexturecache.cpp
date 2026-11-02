@@ -37,6 +37,7 @@
 // Included to allow LLTextureCache::purgeTextures() to pause watchdog timeout
 #include "llappviewer.h"
 #include "llmemory.h"
+#include "vayuimageblockcompressor.h"
 
 #include <fmt/xchar.h>
 
@@ -709,7 +710,7 @@ bool LLTextureCacheRemoteWorker::doWrite()
             cache_header.mPreset           = (U8)comp_res->mPreset;
             cache_header.mIsMask           = comp_res->mIsMask ? 1 : 0;
             cache_header.mRole             = cache_role;
-            cache_header.mDiscardLevel     = (U8)std::clamp(mDiscardLevel, 0, 255);
+            cache_header.mDiscardLevel     = (U8)std::clamp(mRawDiscardLevel, 0, 255);
             cache_header.mMipLevels        = comp_res->mMipLevels;
             cache_header.mWidth            = comp_res->mWidth;
             cache_header.mHeight           = comp_res->mHeight;
@@ -717,7 +718,7 @@ bool LLTextureCacheRemoteWorker::doWrite()
             cache_header.mGLInternalFormat = comp_res->mGLInternalFormat;
             cache_header.mGLPrimaryFormat  = comp_res->mGLPrimaryFormat;
 
-            mCache->writeBCEntry(mID, mDiscardLevel, cache_header, comp_res->mBuffer.data(), comp_res->mBuffer.size());
+            mCache->writeBCEntry(mID, mRawDiscardLevel, cache_header, comp_res->mBuffer.data(), comp_res->mBuffer.size());
         }
     }
 
@@ -918,9 +919,11 @@ std::string LLTextureCache::formatExtension(U8 format, U8 role)
     return (role == kRoleNormal) ? (base + "n") : base;
 }
 
-void LLTextureCache::removeSiblingBCFiles(const LLUUID& id)
+S64 LLTextureCache::removeSiblingBCFiles(const LLUUID& id)
 {
-    static const std::string sExts[] = { ".bc1", ".bc3", ".bc4", ".bc5", ".bc7", ".bc3n", ".bc5n", ".bc7n", ".bc" };
+    static const std::string sExts[] = {
+        ".bc1", ".bc3", ".bc4", ".bc5", ".bc7", ".bc1n", ".bc3n", ".bc4n", ".bc5n", ".bc7n", ".bc", ".bcn"
+    };
     for (const auto& ext : sExts)
     {
         std::filesystem::path p = getTextureFileName(id, ext);
@@ -929,6 +932,15 @@ void LLTextureCache::removeSiblingBCFiles(const LLUUID& id)
             LLFile::remove(p);
         }
     }
+
+    S64  removed_bytes = 0;
+    auto iter          = mBCSizeMap.find(id);
+    if (iter != mBCSizeMap.end())
+    {
+        removed_bytes = iter->second;
+        mBCSizeMap.erase(iter);
+    }
+    return removed_bytes;
 }
 
 bool LLTextureCache::writeBCEntry(const LLUUID& id, S32 discard_level, const VayuBCCacheEntryHeader& header, const U8* data,
@@ -945,6 +957,7 @@ bool LLTextureCache::writeBCEntry(const LLUUID& id, S32 discard_level, const Vay
     const std::string     ext  = formatExtension(local_header.mFormat, local_header.mRole);
     std::filesystem::path path = getTextureFileName(id, ext);
 
+    S64 old_file_size = 0;
     // Finer-wins guard: do not overwrite a finer or equal resolution entry with a coarser one
     if (LLFile::isfile(path))
     {
@@ -961,6 +974,7 @@ bool LLTextureCache::writeBCEntry(const LLUUID& id, S32 discard_level, const Vay
                 }
             }
         }
+        old_file_size = LLFile::size(path);
     }
 
     VayuBCCacheFileHeader fh;
@@ -969,16 +983,53 @@ bool LLTextureCache::writeBCEntry(const LLUUID& id, S32 discard_level, const Vay
     fh.mMeta       = local_header;
     fh.mBufferSize = datasize;
 
-    llofstream out(path, std::ios::binary);
+    std::filesystem::path tmp_path = path;
+    tmp_path += ".tmp";
+
+    llofstream out(tmp_path, std::ios::binary);
     if (!out.good())
     {
         return false;
     }
     out.write(reinterpret_cast<const char*>(&fh), sizeof(fh));
     out.write(reinterpret_cast<const char*>(data), (std::streamsize)datasize);
+    out.flush();
     out.close();
 
-    return out.good();
+    if (!out.good())
+    {
+        LLFile::remove(tmp_path);
+        return false;
+    }
+
+    if (LLFile::rename(tmp_path, path) != 0)
+    {
+        LLFile::remove(tmp_path);
+        return false;
+    }
+
+    const S32 new_bc_size = static_cast<S32>(sizeof(VayuBCCacheFileHeader) + datasize);
+    {
+        LLMutexLock lock(&mHeaderMutex);
+        const S64   delta = static_cast<S64>(new_bc_size) - old_file_size;
+        mTexturesSizeTotal += delta;
+        auto iter = mBCSizeMap.find(id);
+        if (iter != mBCSizeMap.end())
+        {
+            iter->second = static_cast<S32>(std::max<S64>(0, static_cast<S64>(iter->second) - old_file_size + new_bc_size));
+        }
+        else
+        {
+            mBCSizeMap[id] = new_bc_size;
+        }
+
+        if (mTexturesSizeTotal > sCacheMaxTexturesSize)
+        {
+            mDoPurge = true;
+        }
+    }
+
+    return true;
 }
 
 bool LLTextureCache::readBCEntry(const LLUUID&           id,
@@ -1191,7 +1242,7 @@ void LLTextureCache::purgeCache(ELLPath location, bool remove_dir)
         std::string legacy_bc_dir = gDirUtilp->getExpandedFilename(location, "bctexturecache");
         if (LLFile::isdir(legacy_bc_dir))
         {
-            LLFile::remove(legacy_bc_dir);
+            gDirUtilp->deleteDirAndContents(legacy_bc_dir);
         }
 
         // remove the legacy cache if exists
@@ -1264,6 +1315,44 @@ S64 LLTextureCache::initCache(ELLPath location, S64 max_size, bool texture_cache
             LLFile::mkdir(dirname);
         }
     }
+
+    mBCSizeMap.clear();
+    for (S32 i = 0; i < 16; i++)
+    {
+        std::filesystem::path dirname = mTexturesDirPath / TEXTURE_SUBDIRS.substr(i, 1);
+        std::error_code       ec;
+        if (!std::filesystem::exists(dirname, ec))
+        {
+            continue;
+        }
+        for (const auto& dir_entry : std::filesystem::directory_iterator(dirname, ec))
+        {
+            if (ec)
+            {
+                break;
+            }
+            if (!dir_entry.is_regular_file(ec))
+            {
+                continue;
+            }
+            const auto& path = dir_entry.path();
+            std::string ext  = path.extension().string();
+            if (ext.starts_with(".bc"))
+            {
+                std::string stem = path.stem().string();
+                LLUUID      id;
+                if (LLUUID::parseUUID(stem, &id))
+                {
+                    auto size = dir_entry.file_size(ec);
+                    if (!ec)
+                    {
+                        mBCSizeMap[id] += static_cast<S32>(size);
+                    }
+                }
+            }
+        }
+    }
+
     readHeaderCache();
     purgeTextures(true); // calc mTexturesSize and make some room in the texture cache if we need it
 
@@ -1629,6 +1718,11 @@ U32 LLTextureCache::openAndReadEntries(std::vector<Entry>& entries)
                 mFreeList.insert(idx);
             }
         }
+
+        for (const auto& kv : mBCSizeMap)
+        {
+            mTexturesSizeTotal += kv.second;
+        }
     }
     catch (const std::bad_alloc&)
     {
@@ -1881,9 +1975,9 @@ void LLTextureCache::purgeAllTextures(bool purge_directories)
         mHeaderIDMap.clear();
     }
     mTexturesSizeMap.clear();
+    mBCSizeMap.clear();
     mTexturesSizeTotal = 0;
     mFreeList.clear();
-    mTexturesSizeTotal = 0;
     mUpdatedEntryMap.clear();
 
     // Info with 0 entries
@@ -1947,6 +2041,11 @@ void LLTextureCache::purgeTexturesLazy(F32 time_limit_sec)
             if (cache_size >= purged_cache_size)
             {
                 cache_size -= entries[idx].mBodySize;
+                auto it = mBCSizeMap.find(entries[idx].mID);
+                if (it != mBCSizeMap.end())
+                {
+                    cache_size -= it->second;
+                }
                 mPurgeEntryList.push_back(std::pair<S32, Entry>(idx, entries[idx]));
             }
             else
@@ -2080,6 +2179,11 @@ void LLTextureCache::purgeTextures(bool validate)
             std::filesystem::path filename = getTextureFileName(entries[idx].mID);
             LL_DEBUGS("TextureCache") << "PURGING: " << filename << LL_ENDL;
             cache_size -= entries[idx].mBodySize;
+            auto it = mBCSizeMap.find(entries[idx].mID);
+            if (it != mBCSizeMap.end())
+            {
+                cache_size -= it->second;
+            }
             removeEntry(idx, entries[idx], filename);
         }
     }
@@ -2497,7 +2601,7 @@ void LLTextureCache::removeCachedTexture(const LLUUID& id)
         mHeaderIDMap.erase(id);
     }
     LLFile::remove(getTextureFileName(id));
-    removeSiblingBCFiles(id);
+    mTexturesSizeTotal -= removeSiblingBCFiles(id);
 }
 
 // called after mHeaderMutex is locked.
@@ -2538,7 +2642,7 @@ void LLTextureCache::removeEntry(S32 idx, Entry& entry, const std::filesystem::p
     }
     if (idx >= 0)
     {
-        removeSiblingBCFiles(entry.mID);
+        mTexturesSizeTotal -= removeSiblingBCFiles(entry.mID);
     }
 }
 
