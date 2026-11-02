@@ -29,7 +29,6 @@
 #include "llimageworker.h"
 #include "llimagedxt.h"
 #include "vayuimageblockcompressor.h"
-#include "vayubctexturecache.h"
 #include "threadpool.h"
 
 /*--------------------------------------------------------------------------*/
@@ -203,104 +202,15 @@ bool ImageRequest::processRequest()
             {
                 mFormattedImage->setDiscardLevel(mDiscardLevel);
             }
+            mDecodedImageRaw = new LLImageRaw(mFormattedImage->getWidth(), mFormattedImage->getHeight(), mFormattedImage->getComponents());
         }
+        mDecodedImageRaw->setTextureJob(mTextureJob);
+        done = mFormattedImage->decode(mDecodedImageRaw, decode_time_slice);
+        // some decoders are removing data when task is complete and there were errors
+        mDecodedRaw = done && mDecodedImageRaw->getData();
 
-        const S32 discard = (mDiscardLevel >= 0) ? mDiscardLevel : (S32)mFormattedImage->getDiscardLevel();
-        // mAllowCompression is only ever set for a resolved role (see the decision point in
-        // LLViewerFetchedTexture), so there is no unclaimed state to exclude here: a stale
-        // colour/normal entry can never be resurrected for an uncompressed raw bind.
-        const bool cacheable = !mNeedsAux && mID.notNull() && discard >= 0 && mAllowCompression;
-        bool cache_hit = false;
-
-        // Check VayuBCTextureCache *before* running expensive CPU OpenJPEG decode.
-        // On a hit, we attach the cached compressed blocks and bypass software decode entirely.
-        if (cacheable)
-        {
-            VayuBCCacheEntryHeader cache_header;
-            std::vector<U8> cache_buffer;
-            bool cache_hit_vbc = false;
-            if (mTextureJob == EVayuTextureJob::PBRNormal)
-            {
-                if (VayuBCTextureCache::instance().readEntry(mID, discard, cache_header, cache_buffer, ".bc5", VayuBCTextureCache::kFormatBC5, VayuBCTextureCache::kRoleNormal))
-                {
-                    cache_hit_vbc = true;
-                }
-            }
-            else if (mTextureJob == EVayuTextureJob::LegacyMaterialNormal)
-            {
-                // Legacy Blinn-Phong normal map: BC7 (fallback BC3). The cache
-                // name carries format + role, so a colour .bc7 entry can never
-                // satisfy this role.
-                if (VayuBCTextureCache::instance().readEntry(mID, discard, cache_header, cache_buffer, ".bc7", VayuBCTextureCache::kFormatBC7, VayuBCTextureCache::kRoleNormal) ||
-                    VayuBCTextureCache::instance().readEntry(mID, discard, cache_header, cache_buffer, ".bc3", VayuBCTextureCache::kFormatBC3, VayuBCTextureCache::kRoleNormal))
-                {
-                    cache_hit_vbc = true;
-                }
-            }
-            else if (mTextureJob == EVayuTextureJob::LegacySpecular)
-            {
-                // Legacy Blinn-Phong specular map: BC7 (fallback BC3), role colour.
-                // RGB tint + alpha gloss must survive, so only the 4-channel
-                // formats qualify.
-                if (VayuBCTextureCache::instance().readEntry(mID, discard, cache_header, cache_buffer, ".bc7", VayuBCTextureCache::kFormatBC7, VayuBCTextureCache::kRoleColor) ||
-                    VayuBCTextureCache::instance().readEntry(mID, discard, cache_header, cache_buffer, ".bc3", VayuBCTextureCache::kFormatBC3, VayuBCTextureCache::kRoleColor))
-                {
-                    cache_hit_vbc = true;
-                }
-            }
-            else
-            {
-                if (VayuBCTextureCache::instance().readEntry(mID, discard, cache_header, cache_buffer, ".bc"))
-                {
-                    cache_hit_vbc = true;
-                }
-            }
-
-            if (cache_hit_vbc)
-            {
-                auto comp_res = std::make_shared<VayuBlockCompressionResult>();
-                comp_res->mFormat = (EVayuBlockCompressionFormat)cache_header.mFormat;
-                comp_res->mPreset = (EVayuBlockCompressionPreset)cache_header.mPreset;
-                comp_res->mIsMask = (cache_header.mIsMask != 0);
-                comp_res->mGLInternalFormat = cache_header.mGLInternalFormat;
-                comp_res->mGLPrimaryFormat = cache_header.mGLPrimaryFormat;
-                comp_res->mWidth = cache_header.mWidth;
-                comp_res->mHeight = cache_header.mHeight;
-                comp_res->mMipLevels = cache_header.mMipLevels;
-                comp_res->mComponents = cache_header.mComponents;
-                comp_res->mBuffer = std::move(cache_buffer);
-
-                if (mDecodedImageRaw.isNull())
-                {
-                    mDecodedImageRaw = new LLImageRaw(cache_header.mWidth,
-                                                      cache_header.mHeight,
-                                                      cache_header.mComponents);
-                }
-                mDecodedImageRaw->setTextureJob(mTextureJob);
-                mDecodedImageRaw->setBlockCompressionResult(comp_res);
-                mFormattedImage->setDiscardLevel(discard);
-                mDecodedRaw = true;
-                done = true;
-                cache_hit = true;
-            }
-        }
-
-        if (!cache_hit)
-        {
-            if (mDecodedImageRaw.isNull())
-            {
-                mDecodedImageRaw = new LLImageRaw(mFormattedImage->getWidth(),
-                                                  mFormattedImage->getHeight(),
-                                                  mFormattedImage->getComponents());
-            }
-            mDecodedImageRaw->setTextureJob(mTextureJob);
-            done = mFormattedImage->decode(mDecodedImageRaw, decode_time_slice);
-            // some decoders are removing data when task is complete and there were errors
-            mDecodedRaw = done && mDecodedImageRaw->getData();
-
-            // Pick up errors from decoding
-            mErrorString = LLImage::getLastThreadError();
-        }
+        // Pick up errors from decoding
+        mErrorString = LLImage::getLastThreadError();
     }
     if (done && mNeedsAux && !mDecodedAux && mFormattedImage.notNull())
     {
@@ -323,88 +233,15 @@ bool ImageRequest::processRequest()
         // mAllowCompression is the single source of truth passed from
         // LLViewerFetchedTexture. If true, the request is eligible and authorized
         // for block compression under mTextureJob.
-        if (mAllowCompression &&
-            VayuImageBlockCompressor::isEligible(mDecodedImageRaw->getWidth(),
-                                               mDecodedImageRaw->getHeight(),
-                                               mDecodedImageRaw->getComponents()))
+        if (mAllowCompression && VayuImageBlockCompressor::isEligible(mDecodedImageRaw->getWidth(),
+                                                                      mDecodedImageRaw->getHeight(),
+                                                                      mDecodedImageRaw->getComponents()))
         {
-            const S32 discard = (mDiscardLevel >= 0) ? mDiscardLevel : (S32)mFormattedImage->getDiscardLevel();
-            const bool cacheable = !mNeedsAux && mID.notNull() && discard >= 0;
-
-            // Resolve the cache key (format, role) before encoding so we can check
-            // for an existing entry and avoid re-encoding mips already on disk.
-            const U8 cache_role   = (mTextureJob == EVayuTextureJob::PBRNormal || mTextureJob == EVayuTextureJob::LegacyMaterialNormal)
-                                        ? VayuBCTextureCache::kRoleNormal
-                                        : VayuBCTextureCache::kRoleColor;
-            const U8 cache_format = (U8)VayuImageBlockCompressor::resolveFormat(mDecodedImageRaw->getData(),
-                                                                                mDecodedImageRaw->getWidth(),
-                                                                                mDecodedImageRaw->getHeight(),
-                                                                                mDecodedImageRaw->getComponents(),
-                                                                                mTextureJob,
-                                                                                EVayuBlockCompressionFormat::Auto);
-
-            // Check for an existing cache entry to decide whether this decode needs encoding at all.
-            // resolveFormat() above is the same code path encode() uses, so a hit here
-            // means the on-disk extension genuinely matches what this decode will produce.
-            VayuBCCacheEntryHeader existing_header;
-            const bool             has_existing =
-                cacheable && VayuBCTextureCache::instance().readEntryHeader(mID, cache_format, cache_role, existing_header);
-
-            // The entry already holds this level and every finer one, so there is nothing to
-            // gain by re-encoding: the read path normally serves that from cache before we
-            // get here, and reaching it means the probe disagreed with the real reader, so
-            // the GL upload still needs a result.
-            const bool already_covered = has_existing && existing_header.mDiscardLevel <= discard;
-
-            // The WHOLE chain, every time. A refinement used to encode only the levels the
-            // cached entry lacked and splice the entry's tail in front of them, which is only
-            // sound if a cached level is interchangeable with a freshly made one. It is not:
-            // the cached tail was generated by downsampling a decode of w>>D_e, so for a
-            // texture first seen on a small distant object those levels carry only what a
-            // 64x64 decode of a 2048x2048 texture could express -- four halvings stale, and
-            // every one of them a level the sampler reaches. Sizes and ordering stayed
-            // correct, so nothing complained: the fine levels were real, the coarse ones
-            // were dead, and it rendered as correct up close and flat at distance.
-            //
-            // The decode in hand is finer than the cached entry at every level below this
-            // one, so regenerating them is both correct and cheaper than the fetch that
-            // produced the cached entry was. What this gives up is only work the cache
-            // already covers, which already_covered above skips.
-            //
-            // And the chain has to be whole: LLImageGL::createGLTexture hands GL
-            // mBuffer.data() + getLargestMipOffset() with data_hasmips=true, and setImage()
-            // derives its level count from the DIMENSIONS via calcMipLevelCount() (always
-            // down to 1x1) and walks the buffer backwards by that many levels. It never
-            // consults mMipLevels, so a truncated buffer makes GL read past the front of the
-            // allocation.
             auto comp_res = std::make_shared<VayuBlockCompressionResult>();
             if (VayuImageBlockCompressor::encode(mDecodedImageRaw, *comp_res, EVayuBlockCompressionFormat::Auto, mTextureJob))
             {
-                // If encode() failed there is nothing to upload; the image stays raw and
-                // createGLTexture's uncompressed path handles it.
+                // If encode() succeeded, attach to raw image for GL upload and downstream cache write
                 mDecodedImageRaw->setBlockCompressionResult(comp_res);
-                if (cacheable && !already_covered)
-                {
-                    VayuBCCacheEntryHeader cache_header;
-                    cache_header.mFormat           = (U8)comp_res->mFormat;
-                    cache_header.mPreset           = (U8)comp_res->mPreset;
-                    cache_header.mIsMask           = comp_res->mIsMask ? 1 : 0;
-                    cache_header.mRole             = cache_role;
-                    cache_header.mDiscardLevel     = (U8)discard;
-                    cache_header.mMipLevels        = comp_res->mMipLevels;
-                    cache_header.mWidth            = comp_res->mWidth;
-                    cache_header.mHeight           = comp_res->mHeight;
-                    cache_header.mComponents       = comp_res->mComponents;
-                    cache_header.mGLInternalFormat = comp_res->mGLInternalFormat;
-                    cache_header.mGLPrimaryFormat  = comp_res->mGLPrimaryFormat;
-
-                    // writeEntrySync's finer-wins guard lets this replace a coarser entry,
-                    // which is exactly the refinement case: a refined texture's own chain is
-                    // what survives, rather than a mix of its fine levels and an older
-                    // entry's.
-                    VayuBCTextureCache::instance().writeEntry(mID, discard, cache_header,
-                                                              std::shared_ptr<const std::vector<U8>>(comp_res, &comp_res->mBuffer));
-                }
             }
         }
     }

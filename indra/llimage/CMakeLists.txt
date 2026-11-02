@@ -60,7 +60,6 @@ target_sources(
     llimageworker.cpp
     llpngwrapper.cpp
     vayuimageblockcompressor.cpp
-    vayubctexturecache.cpp
     bc7e/rgbcx.cpp
     ${BC7E_SOURCES}
 )
@@ -112,7 +111,6 @@ target_sources(
         llmapimagetype.h
         llpngwrapper.h
         vayuimageblockcompressor.h
-        vayubctexturecache.h
         bc7e/rgbcx.h
         bc7e/bc7enc.h
         bc7e/bc7e_ispc.h
@@ -151,11 +149,9 @@ if(AL_BUILD_TESTS)
     SOURCES
       tests/llimageworker_test.cpp
       tests/vayuimageblockcompressor_test.cpp
-      tests/vayubctexturecache_test.cpp
     UNIT
       llimageworker.cpp
       vayuimageblockcompressor.cpp
-      vayubctexturecache.cpp
       bc7e/rgbcx.cpp
       ${BC7E_SOURCES}
     LIBRARIES llfilesystem ll::libyuv

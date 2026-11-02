@@ -29,7 +29,6 @@
 #include "linden_common.h"
 // Class to test
 #include "../llimageworker.h"
-#include "../vayubctexturecache.h"
 #include "../vayuimageblockcompressor.h"
 // For timer class
 #include "../llcommon/lltimer.h"
@@ -280,17 +279,10 @@ namespace
     }
 
     TEST_CASE_METHOD(imagedecodethread_test,
-                     "LLImageDecodeThread: a coarse decode attaches its compressed blocks and writes the cache entry",
+                     "LLImageDecodeThread: a coarse decode attaches its compressed blocks in RAM",
                      "[LLImageDecodeThread]")
     {
-        // Test coarse decode (discard > 0) attaches compressed blocks in RAM and writes entry to cache
-        auto test_dir = std::filesystem::temp_directory_path() / "vayu_llimageworker_test_coarse";
-        std::error_code ec;
-        std::filesystem::remove_all(test_dir, ec);
-        std::filesystem::create_directories(test_dir, ec);
-
         VayuImageBlockCompressor::init();
-        VayuBCTextureCache::instance().initCache(test_dir, 1024 * 1024);
 
         mThread = new LLImageDecodeThread(true);
         UNSCOPED_INFO("LLImageDecodeThread: constructor succeeded");
@@ -330,20 +322,5 @@ namespace
         REQUIRE(decoded_raw->getBlockCompressionResult() != nullptr);
         UNSCOPED_INFO("Discard level in RAM block width matches");
         CHECK(decoded_raw->getBlockCompressionResult()->mWidth == 16u);
-
-        // Allow cache writer thread to flush pending write
-        VayuBCTextureCache::instance().shutdown();
-
-        // Verify that valid discard level was passed to cache write
-        VayuBCCacheEntryHeader cache_header;
-        std::vector<U8> cache_buffer;
-        bool cache_hit = VayuBCTextureCache::instance().readEntry(test_id, 2, cache_header, cache_buffer);
-        UNSCOPED_INFO("Cache entry recorded with valid discard level");
-        CHECK(cache_hit);
-        UNSCOPED_INFO("Cache entry header discard matches");
-        CHECK((int)cache_header.mDiscardLevel == 2);
-
-        VayuBCTextureCache::instance().clear();
-        std::filesystem::remove_all(test_dir, ec);
     }
 }
