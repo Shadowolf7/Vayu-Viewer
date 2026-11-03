@@ -138,6 +138,8 @@ public:
     /*virtual*/ size_t update(F32 max_time_ms);
 
     void purgeCache(ELLPath location, bool remove_dir = true);
+    // Removes the cache directories of the retired BC cache implementations.
+    static void purgeLegacyBCDirs(ELLPath location);
     void setReadOnly(bool read_only);
     S64  initCache(ELLPath location, S64 maxsize, bool texture_cache_mismatch);
 
@@ -208,6 +210,7 @@ private:
     void    clearCorruptedCache();
     void    purgeAllTextures(bool purge_directories);
     void    purgeTexturesLazy(F32 time_limit_sec);
+    void    maybePurgeTexturesLazy(); // from the write entry points only: needs the control thread
     void    purgeTextures(bool validate);
     LLFile* openHeaderEntriesFile(bool readonly, S32 offset);
     void    closeHeaderEntriesFile();

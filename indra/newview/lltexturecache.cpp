@@ -275,12 +275,11 @@ public:
 private:
     enum e_state
     {
-        INIT    = 0,
-        LOCAL   = 1,
-        CACHE   = 2,
-        HEADER  = 3,
-        BODY    = 4,
-        BC_ONLY = 5
+        INIT   = 0,
+        LOCAL  = 1,
+        CACHE  = 2,
+        HEADER = 3,
+        BODY   = 4
     };
 
     e_state               mState;
@@ -547,17 +546,14 @@ bool LLTextureCacheRemoteWorker::doWrite()
     // First state / stage : check that what we're trying to cache is in an OK shape
     if (mState == INIT)
     {
-        if (mBCOOnly && mRawDiscardLevel < 0)
+        if (mBCOOnly)
         {
-            // Nothing decoded, so nothing compressed to store. Leave mDataSize alone:
-            // a negative one would take the JPEG2000 entry down with it in endWork().
+            // A block compressed entry stands alone: there is no JPEG2000 header record
+            // or body to validate, size or place in the entry index. Skip the stages
+            // below and go straight to the payload write at the end of this function.
+            // writeBCToCache() has already rejected the arguments those stages would
+            // otherwise be checking.
             done = true;
-        }
-        else if (mBCOOnly)
-        {
-            // A block compressed entry stands alone: there is no JPEG2000 header
-            // record or body to validate, size or place in the entry index.
-            mState = BC_ONLY;
         }
         else if ((mOffset != 0)      // We currently do not support write offsets
                  || (mDataSize <= 0) // Things will go badly wrong if mDataSize is nul or negative...
@@ -573,13 +569,6 @@ bool LLTextureCacheRemoteWorker::doWrite()
         {
             mState = CACHE;
         }
-    }
-
-    // Block compressed only: skip the JPEG2000 stages entirely and fall through to
-    // the block compression payload write at the end of this function.
-    if (!done && (mState == BC_ONLY))
-    {
-        done = true;
     }
 
     // No LOCAL state for write(): because it doesn't make much sense to cache a local file...
@@ -1292,6 +1281,21 @@ void LLTextureCache::setDirNames(ELLPath location)
     mFastCacheFilePath = fsyspath(gDirUtilp->getExpandedFilename(location, textures_dirname, fast_cache_filename));
 }
 
+void LLTextureCache::purgeLegacyBCDirs(ELLPath location)
+{
+    // "bctexturecache" was LLBCTextureCache's directory, "bccache" was
+    // VayuBCTextureCache's. Both classes are gone; their caches are not.
+    static const char* sLegacyDirs[] = { "bctexturecache", "bccache" };
+    for (const char* dirname : sLegacyDirs)
+    {
+        std::string legacy_dir = gDirUtilp->getExpandedFilename(location, dirname);
+        if (LLFile::isdir(legacy_dir))
+        {
+            gDirUtilp->deleteDirAndContents(legacy_dir);
+        }
+    }
+}
+
 void LLTextureCache::purgeCache(ELLPath location, bool remove_dir)
 {
     LLMutexLock lock(&mHeaderMutex);
@@ -1301,12 +1305,7 @@ void LLTextureCache::purgeCache(ELLPath location, bool remove_dir)
         setDirNames(location);
         llassert_always(mHeaderAPRFile == nullptr);
 
-        // remove legacy bctexturecache dir if exists
-        std::string legacy_bc_dir = gDirUtilp->getExpandedFilename(location, "bctexturecache");
-        if (LLFile::isdir(legacy_bc_dir))
-        {
-            gDirUtilp->deleteDirAndContents(legacy_bc_dir);
-        }
+        purgeLegacyBCDirs(location);
 
         // remove the legacy cache if exists
         std::filesystem::path texture_dir = mTexturesDirPath;
@@ -2397,14 +2396,8 @@ bool LLTextureCache::readComplete(handle_t handle, bool abort)
     return (complete || abort);
 }
 
-LLTextureCache::handle_t LLTextureCache::writeBCToCache(const LLUUID& id, LLPointer<LLImageRaw> rawimage, S32 discardlevel,
-                                                        WriteResponder* responder)
+void LLTextureCache::maybePurgeTexturesLazy()
 {
-    if (mReadOnly || rawimage.isNull() || discardlevel < 0)
-    {
-        delete responder;
-        return LLWorkerThread::nullHandle();
-    }
     if (mDoPurge)
     {
         // NOTE: Needs to be done on the control thread
@@ -2412,6 +2405,19 @@ LLTextureCache::handle_t LLTextureCache::writeBCToCache(const LLUUID& id, LLPoin
         purgeTexturesLazy(TEXTURE_LAZY_PURGE_TIME_LIMIT);
         mDoPurge = !mPurgeEntryList.empty();
     }
+}
+
+LLTextureCache::handle_t LLTextureCache::writeBCToCache(const LLUUID& id, LLPointer<LLImageRaw> rawimage, S32 discardlevel,
+                                                        WriteResponder* responder)
+{
+    // The only place these are checked: the worker writes whatever it is handed, and
+    // the JPEG2000 stages that would otherwise validate the rest are skipped for this path.
+    if (mReadOnly || rawimage.isNull() || discardlevel < 0)
+    {
+        delete responder;
+        return LLWorkerThread::nullHandle();
+    }
+    maybePurgeTexturesLazy();
     LLMutexLock           lock(&mWorkersMutex);
     LLTextureCacheWorker* worker = new LLTextureCacheRemoteWorker(this, id, nullptr, 0, 0, 0, rawimage, discardlevel, responder, true);
     handle_t              handle = worker->write();
@@ -2427,13 +2433,7 @@ LLTextureCache::handle_t LLTextureCache::writeToCache(const LLUUID& id, const U8
         delete responder;
         return LLWorkerThread::nullHandle();
     }
-    if (mDoPurge)
-    {
-        // NOTE: Needs to be done on the control thread
-        //  (i.e. here)
-        purgeTexturesLazy(TEXTURE_LAZY_PURGE_TIME_LIMIT);
-        mDoPurge = !mPurgeEntryList.empty();
-    }
+    maybePurgeTexturesLazy();
     LLMutexLock           lock(&mWorkersMutex);
     LLTextureCacheWorker* worker =
         new LLTextureCacheRemoteWorker(this, id, data, datasize, 0, imagesize, rawimage, discardlevel, responder);

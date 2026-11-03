@@ -561,7 +561,8 @@ private:
 
     e_write_to_cache_state mWriteToCacheState;
     // True when the block compressed cache already holds this texture at a resolution
-    // at least as fine as mDesiredDiscard, so a freshly encoded payload need not be stored.
+    // at least as fine as mDesiredDiscard, so a freshly encoded payload need not be stored:
+    // assumed so until the cache probe in LOAD_FROM_TEXTURE_CACHE finds otherwise.
     bool                        mBCEntryAdequate;
     bool                        mAllowCompression;
     EVayuTextureJob             mTextureJob;
@@ -1256,7 +1257,6 @@ bool LLTextureFetchWorker::doWork(S32 param)
         mCacheWriteHandle = LLTextureCache::nullHandle();
         setState(LOAD_FROM_TEXTURE_CACHE);
         mInCache = false;
-        mBCEntryAdequate = !mAllowCompression;
         mDesiredSize = llmax(mDesiredSize, TEXTURE_CACHE_ENTRY_SIZE); // min desired size is TEXTURE_CACHE_ENTRY_SIZE
         LL_DEBUGS(LOG_TXT) << mID << ": Priority: " << llformat("%8.0f",mImagePriority)
                            << " Desired Discard: " << mDesiredDiscard << " Desired Size: " << mDesiredSize << LL_ENDL;
@@ -2072,7 +2072,7 @@ bool LLTextureFetchWorker::doWork(S32 param)
                                                << " layers, all data " << mHaveAllData << ")" << LL_ENDL;
                     }
                 }
-                if (mWriteToCacheState == NOT_WRITE && !mBCEntryAdequate && mRawImage.notNull() && mRawImage->hasBlockCompressionResult())
+                if (mWriteToCacheState == NOT_WRITE && !mBCEntryAdequate && mRawImage->hasBlockCompressionResult())
                 {
                     // The image was served from the JPEG2000 cache, so no write is queued,
                     // but this compressed result is new, or finer than the one on disk.
