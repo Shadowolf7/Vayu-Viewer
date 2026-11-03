@@ -1293,7 +1293,7 @@ bool LLTextureFetchWorker::doWork(S32 param)
                     cache_hit = mFetcher->mTextureCache->readBCEntry(mID, mDesiredDiscard, cache_header, bc_buffer, ".bc5",
                                                                      LLTextureCache::kFormatBC5);
                 }
-                else if (mTextureJob == EVayuTextureJob::LegacyMaterialNormal || mTextureJob == EVayuTextureJob::LegacyMaterialSpecular)
+                else if (mTextureJob == EVayuTextureJob::LegacyMaterialNormal || mTextureJob == EVayuTextureJob::LegacySpecular)
                 {
                     cache_hit = mFetcher->mTextureCache->readBCEntry(mID, mDesiredDiscard, cache_header, bc_buffer, ".bc7",
                                                                      LLTextureCache::kFormatBC7) ||
