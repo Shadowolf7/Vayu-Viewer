@@ -31,6 +31,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <atomic>
 #include <functional>
 #include <string>
@@ -38,331 +39,441 @@
 
 namespace
 {
-// The order requests ran in, from the queue's thread.
-class RunLog
-{
-public:
-    void note(const std::string& what)
+    // The order requests ran in, from the queue's thread.
+    class RunLog
     {
-        LLMutexLock lock(&mMutex);
-        mRuns.push_back(what);
-    }
-
-    std::vector<std::string> runs()
-    {
-        LLMutexLock lock(&mMutex);
-        return mRuns;
-    }
-
-private:
-    LLMutex                  mMutex;
-    std::vector<std::string> mRuns;
-};
-
-class TestQueuedThread : public LLQueuedThread
-{
-public:
-    explicit TestQueuedThread(bool should_pause = false) : LLQueuedThread("llqueuedthread_test", true, should_pause) {}
-
-    using LLQueuedThread::addRequest;
-    using LLQueuedThread::generateHandle;
-    using LLQueuedThread::retryRequest;
-
-    // Runs `work` on the queue's thread, in turn with its requests.
-    void post(std::function<void()> work) { mRequestQueue.post(std::move(work)); }
-};
-
-// A queued thread with an update of its own to run each update().
-class UpdatingQueuedThread : public LLQueuedThread
-{
-public:
-    UpdatingQueuedThread() : LLQueuedThread("llqueuedthread_test updating") {}
-
-    std::atomic<int>            mUpdates{ 0 };
-    std::atomic<LLThread::id_t> mUpdatedOn{};
-
-private:
-    void threadedUpdate() override
-    {
-        mUpdatedOn = LLThread::currentID();
-        ++mUpdates;
-    }
-    bool hasThreadedUpdate() const override { return true; }
-};
-
-// A request that runs `work` each time the queue gives it a turn, and is
-// done when `work` says so.
-class TestRequest : public LLQueuedThread::QueuedRequest
-{
-public:
-    TestRequest(LLQueuedThread::handle_t handle, std::function<bool()> work, bool waits_for_wake = false) :
-        QueuedRequest(handle, LLQueuedThread::FLAG_AUTO_COMPLETE),
-        mWork(std::move(work)),
-        mWaitsForWake(waits_for_wake)
-    {
-    }
-
-protected:
-    bool processRequest() override { return mWork(); }
-    bool waitsForWake() override { return mWaitsForWake; }
-
-private:
-    std::function<bool()> mWork;
-    bool                  mWaitsForWake;
-};
-
-TEST_CASE("llqueuedthread: a request that asks to retry lets one queued after it run first", "[llqueuedthread]")
-{
-    // A asks for a second turn. C, queued behind A, adds B as it runs,
-    // which is after A asked. A's retry is due 16 ms on, so B, due at
-    // once, runs before it, rather than behind a retry that holds the
-    // thread asleep until its time.
-    RunLog           log;
-    TestQueuedThread thread;
-    thread.start();
-
-    LLTimer clock;
-    F64     retry_asked(0.0);
-    F64     b_added(0.0);
-    int     a_turns(0);
-    thread.addRequest(new TestRequest(thread.generateHandle(),
-                                      [&]()
-                                      {
-                                          if (0 == a_turns++)
-                                          {
-                                              log.note("A asks to retry");
-                                              retry_asked = clock.getElapsedTimeF64();
-                                              return false;
-                                          }
-                                          log.note("A again");
-                                          return true;
-                                      }));
-    thread.addRequest(new TestRequest(thread.generateHandle(),
-                                      [&]()
-                                      {
-                                          log.note("C");
-                                          thread.addRequest(new TestRequest(thread.generateHandle(),
-                                                                            [&]()
-                                                                            {
-                                                                                log.note("B");
-                                                                                return true;
-                                                                            }));
-                                          // Read once B is posted, so no earlier than B's time in the
-                                          // schedule. A's retry is due no sooner than 16 ms after
-                                          // retry_asked.
-                                          b_added = clock.getElapsedTimeF64();
-                                          return true;
-                                      }));
-
-    while (log.runs().size() < 4 && clock.getElapsedTimeF64() < 10.0)
-    {
-        ms_sleep(1);
-    }
-    const std::vector<std::string> runs(log.runs());
-    REQUIRE(runs.size() == 4);
-    CHECK(runs[0] == "A asks to retry");
-    CHECK(runs[1] == "C");
-    if (b_added - retry_asked < 0.016)
-    {
-        CHECK(runs[2] == "B");
-        CHECK(runs[3] == "A again");
-    }
-    else
-    {
-        WARN("B was added after A's retry was due; the order says nothing");
-    }
-}
-
-TEST_CASE("llqueuedthread: a woken request runs at once and a stale retry runs nothing", "[llqueuedthread]")
-{
-    // A asks to retry every turn until it is told it is done. Woken
-    // after its first turn, it runs again ahead of the retry due 16 ms
-    // on, so a check posted after the wake finds its second turn run.
-    // That first retry is then stale: run there and then, it does not
-    // run A again.
-    TestQueuedThread thread;
-    thread.start();
-    LLTimer                        clock;
-    std::atomic<int>               turns{ 0 };
-    std::atomic<bool>              done{ false };
-    F64                            first_turn(0.0);
-    const LLQueuedThread::handle_t handle(thread.generateHandle());
-    thread.addRequest(new TestRequest(handle,
-                                      [&]()
-                                      {
-                                          if (0 == turns.load())
-                                          {
-                                              first_turn = clock.getElapsedTimeF64();
-                                          }
-                                          ++turns;
-                                          return done.load();
-                                      }));
-    while (turns.load() < 1 && clock.getElapsedTimeF64() < 10.0)
-    {
-        ms_sleep(1);
-    }
-    REQUIRE(turns.load() == 1);
-
-    const F64 woken(clock.getElapsedTimeF64());
-    thread.wakeRequest(handle);
-    std::atomic<int> after_wake{ -1 };
-    std::atomic<int> after_stale{ -1 };
-    thread.post(
-        [&]()
+    public:
+        void note(const std::string& what)
         {
-            after_wake = turns.load();
-            thread.retryRequest(handle, 1); // the first retry's generation
-            after_stale = turns.load();
-            done        = true;
-        });
-    while (after_stale.load() < 0 && clock.getElapsedTimeF64() < 10.0)
-    {
-        ms_sleep(1);
-    }
-    REQUIRE(after_stale.load() >= 0);
-    CAPTURE(after_wake.load(), after_stale.load());
+            LLMutexLock lock(&mMutex);
+            mRuns.push_back(what);
+        }
 
-    CHECK(after_stale.load() == after_wake.load());
-    if (woken - first_turn < 0.016)
-    {
-        CHECK(after_wake.load() == 2);
-    }
-    else
-    {
-        WARN("A was woken after its retry was due; which ran it says nothing");
-    }
-}
-
-TEST_CASE("llqueuedthread: a request waiting for a wake is retried only as a fallback", "[llqueuedthread]")
-{
-    // A waits for a wake every turn. Over 100 ms, well inside its
-    // fallback, it is not run again; a request retried every 16 ms would
-    // have been several times. Woken, it runs again at once.
-    TestQueuedThread thread;
-    thread.start();
-    LLTimer                        clock;
-    std::atomic<int>               turns{ 0 };
-    std::atomic<bool>              done{ false };
-    const LLQueuedThread::handle_t handle(thread.generateHandle());
-    thread.addRequest(new TestRequest(
-        handle,
-        [&]()
+        std::vector<std::string> runs()
         {
-            ++turns;
-            return done.load();
-        },
-        true));
-    while (turns.load() < 1 && clock.getElapsedTimeF64() < 10.0)
+            LLMutexLock lock(&mMutex);
+            return mRuns;
+        }
+
+    private:
+        LLMutex                  mMutex;
+        std::vector<std::string> mRuns;
+    };
+
+    // When a request's turns began, from the queue's thread.
+    class TurnLog
     {
-        ms_sleep(1);
-    }
-    REQUIRE(turns.load() == 1);
-
-    ms_sleep(100);
-    CHECK(turns.load() == 1);
-
-    thread.wakeRequest(handle);
-    std::atomic<int> after_wake{ -1 };
-    thread.post(
-        [&]()
+    public:
+        void note(F64 began)
         {
-            after_wake = turns.load();
-            done       = true;
-        });
-    while (after_wake.load() < 0 && clock.getElapsedTimeF64() < 10.0)
-    {
-        ms_sleep(1);
-    }
-    CHECK(after_wake.load() == 2);
-}
+            LLMutexLock lock(&mMutex);
+            mTurns.push_back(began);
+        }
 
-TEST_CASE("llqueuedthread: an abort reaches a request waiting for a wake at once", "[llqueuedthread]")
-{
-    // Aborted while waiting for a wake, A is run, sees the abort and is
-    // gone before a check posted after the abort, not at its fallback.
-    TestQueuedThread thread;
-    thread.start();
-    LLTimer                        clock;
-    std::atomic<int>               turns{ 0 };
-    const LLQueuedThread::handle_t handle(thread.generateHandle());
-    thread.addRequest(new TestRequest(
-        handle,
-        [&turns]()
+        std::vector<F64> turns()
         {
-            ++turns;
-            return false;
-        },
-        true));
-    while (turns.load() < 1 && clock.getElapsedTimeF64() < 10.0)
+            LLMutexLock lock(&mMutex);
+            return mTurns;
+        }
+
+    private:
+        LLMutex          mMutex;
+        std::vector<F64> mTurns;
+    };
+
+    class TestQueuedThread : public LLQueuedThread
     {
-        ms_sleep(1);
+    public:
+        explicit TestQueuedThread(bool should_pause = false) : LLQueuedThread("llqueuedthread_test", true, should_pause) {}
+
+        using LLQueuedThread::addRequest;
+        using LLQueuedThread::generateHandle;
+        using LLQueuedThread::retryRequest;
+
+        // Runs `work` on the queue's thread, in turn with its requests.
+        void post(std::function<void()> work) { mRequestQueue.post(std::move(work)); }
+
+        // Set on the queue's thread once its pause, if any, lets it go on to
+        // run its queue.
+        std::atomic<bool> mThreadStarted{ false };
+
+    private:
+        void startThread() override { mThreadStarted = true; }
+    };
+
+    // A queued thread with an update of its own to run each update().
+    class UpdatingQueuedThread : public LLQueuedThread
+    {
+    public:
+        UpdatingQueuedThread() : LLQueuedThread("llqueuedthread_test updating") {}
+
+        std::atomic<int>           mUpdates{ 0 };
+        std::atomic<LLThread::id_t> mUpdatedOn{};
+
+    private:
+        void threadedUpdate() override
+        {
+            mUpdatedOn = LLThread::currentID();
+            ++mUpdates;
+        }
+        bool hasThreadedUpdate() const override { return true; }
+    };
+
+    // A request that runs `work` each time the queue gives it a turn, and is
+    // done when `work` says so.
+    class TestRequest : public LLQueuedThread::QueuedRequest
+    {
+    public:
+        TestRequest(LLQueuedThread::handle_t handle, std::function<bool()> work, bool waits_for_wake = false) :
+            QueuedRequest(handle, LLQueuedThread::FLAG_AUTO_COMPLETE),
+            mWork(std::move(work)),
+            mWaitsForWake(waits_for_wake)
+        {
+        }
+
+    protected:
+        bool processRequest() override { return mWork(); }
+        bool waitsForWake() override { return mWaitsForWake; }
+
+    private:
+        std::function<bool()> mWork;
+        bool                  mWaitsForWake;
+    };
+
+    TEST_CASE("llqueuedthread: a thread started with nothing queued runs a request added after", "[llqueuedthread]")
+    {
+        // Nothing is queued as the thread starts and nothing calls update(),
+        // so nothing but a pause may hold it before it runs its queue, and
+        // only the request's own post can wake it there.
+        TestQueuedThread thread;
+        thread.start();
+        LLTimer clock;
+        while (!thread.mThreadStarted.load() && clock.getElapsedTimeF64() < 10.0)
+        {
+            ms_sleep(1);
+        }
+        REQUIRE(thread.mThreadStarted.load());
+
+        std::atomic<int> runs{ 0 };
+        thread.addRequest(new TestRequest(thread.generateHandle(), [&runs]()
+            {
+                ++runs;
+                return true;
+            }));
+        clock.reset();
+        while (runs.load() < 1 && clock.getElapsedTimeF64() < 10.0)
+        {
+            ms_sleep(1);
+        }
+        CHECK(runs.load() == 1);
     }
-    REQUIRE(turns.load() == 1);
 
-    thread.abortRequest(handle, true);
-    std::atomic<int> status_after{ -100 };
-    thread.post([&]() { status_after = thread.getRequestStatus(handle); });
-    while (-100 == status_after.load() && clock.getElapsedTimeF64() < 10.0)
+    TEST_CASE("llqueuedthread: a paused thread unpaused with nothing queued runs a request added after", "[llqueuedthread]")
     {
-        ms_sleep(1);
+        // Made paused, the thread waits before it runs its queue. Unpaused
+        // with nothing pending, it goes on to run it.
+        TestQueuedThread thread(true);
+        thread.start();
+        ms_sleep(50);
+        CHECK_FALSE(thread.mThreadStarted.load());
+
+        thread.unpause();
+        LLTimer clock;
+        while (!thread.mThreadStarted.load() && clock.getElapsedTimeF64() < 10.0)
+        {
+            ms_sleep(1);
+        }
+        REQUIRE(thread.mThreadStarted.load());
+
+        std::atomic<int> runs{ 0 };
+        thread.addRequest(new TestRequest(thread.generateHandle(), [&runs]()
+            {
+                ++runs;
+                return true;
+            }));
+        clock.reset();
+        while (runs.load() < 1 && clock.getElapsedTimeF64() < 10.0)
+        {
+            ms_sleep(1);
+        }
+        CHECK(runs.load() == 1);
     }
-    CHECK(LLQueuedThread::STATUS_EXPIRED == status_after.load());
-    CHECK(turns.load() == 1);
-}
 
-TEST_CASE("llqueuedthread: shutdown with a request retrying does not wait out its timeout", "[llqueuedthread]")
-{
-    // The request asks for another turn every time, so a retry is always
-    // queued. Shutdown runs it, sees it abort, and stops the thread, well
-    // inside the five seconds it waits for the thread before giving up.
-    TestQueuedThread thread;
-    thread.start();
-    std::atomic<int> turns{ 0 };
-    thread.addRequest(new TestRequest(thread.generateHandle(),
-                                      [&turns]()
-                                      {
-                                          ++turns;
-                                          return false;
-                                      }));
-    LLTimer clock;
-    while (turns.load() < 1 && clock.getElapsedTimeF64() < 10.0)
+    TEST_CASE("llqueuedthread: a request that asks to retry lets one queued after it run first", "[llqueuedthread]")
     {
-        ms_sleep(1);
+        // A asks for a second turn. C, queued behind A, adds B as it runs,
+        // which is after A asked. A's retry is due 16 ms on, so B, due at
+        // once, runs before it, rather than behind a retry that holds the
+        // thread asleep until its time.
+        RunLog           log;
+        TestQueuedThread thread;
+        thread.start();
+
+        LLTimer clock;
+        F64     retry_asked(0.0);
+        F64     b_added(0.0);
+        int     a_turns(0);
+        thread.addRequest(new TestRequest(thread.generateHandle(), [&]()
+            {
+                if (0 == a_turns++)
+                {
+                    log.note("A asks to retry");
+                    retry_asked = clock.getElapsedTimeF64();
+                    return false;
+                }
+                log.note("A again");
+                return true;
+            }));
+        thread.addRequest(new TestRequest(thread.generateHandle(), [&]()
+            {
+                log.note("C");
+                thread.addRequest(new TestRequest(thread.generateHandle(), [&]()
+                    {
+                        log.note("B");
+                        return true;
+                    }));
+                // Read once B is posted, so no earlier than B's time in the
+                // schedule. A's retry is due no sooner than 16 ms after
+                // retry_asked.
+                b_added = clock.getElapsedTimeF64();
+                return true;
+            }));
+
+        while (log.runs().size() < 4 && clock.getElapsedTimeF64() < 10.0)
+        {
+            ms_sleep(1);
+        }
+        const std::vector<std::string> runs(log.runs());
+        REQUIRE(runs.size() == 4);
+        CHECK(runs[0] == "A asks to retry");
+        CHECK(runs[1] == "C");
+        if (b_added - retry_asked < 0.016)
+        {
+            CHECK(runs[2] == "B");
+            CHECK(runs[3] == "A again");
+        }
+        else
+        {
+            WARN("B was added after A's retry was due; the order says nothing");
+        }
     }
-    REQUIRE(turns.load() >= 1);
 
-    clock.reset();
-    thread.shutdown();
-    CHECK(thread.isStopped());
-    CHECK(clock.getElapsedTimeF64() < 2.5);
-}
-
-TEST_CASE("llqueuedthread: update leaves a queue with no update of its own asleep", "[llqueuedthread]")
-{
-    // Made paused, the thread waits until something is pending. A queue
-    // whose threadedUpdate() is the base's empty one has nothing to post,
-    // so update() finds nothing pending and leaves it paused.
-    TestQueuedThread thread(true);
-    thread.start();
-    for (int i(0); i < 3; ++i)
+    TEST_CASE("llqueuedthread: a woken request runs at once and a stale retry runs nothing", "[llqueuedthread]")
     {
+        // A asks to retry every turn until it is told it is done. Woken
+        // after its first turn, it runs again ahead of the retry due 16 ms
+        // on, so a check posted after the wake finds its second turn run.
+        // That first retry is then stale: run there and then, it does not
+        // run A again. The retry is due no sooner than 16 ms after A's first
+        // turn, so a wake posted any later says nothing of which ran it.
+        TestQueuedThread thread;
+        thread.start();
+        LLTimer clock;
+        std::atomic<int> turns{ 0 };
+        std::atomic<bool> done{ false };
+        F64 first_turn(0.0);
+        const LLQueuedThread::handle_t handle(thread.generateHandle());
+        thread.addRequest(new TestRequest(handle, [&]()
+            {
+                if (0 == turns.load())
+                {
+                    first_turn = clock.getElapsedTimeF64();
+                }
+                ++turns;
+                return done.load();
+            }));
+        while (turns.load() < 1 && clock.getElapsedTimeF64() < 10.0)
+        {
+            ms_sleep(1);
+        }
+        REQUIRE(turns.load() >= 1);
+
+        thread.wakeRequest(handle);
+        // Read once the wake is posted, so no earlier than its time in the
+        // schedule.
+        const F64 woken(clock.getElapsedTimeF64());
+        std::atomic<int> after_wake{ -1 };
+        std::atomic<int> after_stale{ -1 };
+        thread.post([&]()
+            {
+                after_wake = turns.load();
+                thread.retryRequest(handle, 1); // the first retry's generation
+                after_stale = turns.load();
+                done = true;
+            });
+        while (after_stale.load() < 0 && clock.getElapsedTimeF64() < 10.0)
+        {
+            ms_sleep(1);
+        }
+        REQUIRE(after_stale.load() >= 0);
+        CAPTURE(after_wake.load(), after_stale.load());
+
+        // Whether or not the retry ran first, the wake runs A again, and the
+        // first retry is stale once it has.
+        CHECK(after_wake.load() >= 2);
+        CHECK(after_stale.load() == after_wake.load());
+        if (woken - first_turn < 0.016)
+        {
+            CHECK(after_wake.load() == 2);
+        }
+        else
+        {
+            WARN("A was woken after its retry was due; which ran it says nothing");
+        }
+    }
+
+    TEST_CASE("llqueuedthread: a request waiting for a wake is retried only as a fallback", "[llqueuedthread]")
+    {
+        // A waits for a wake every turn. Over 100 ms, well inside its
+        // fallback, it is not run again; a request retried every 16 ms would
+        // have been several times. Woken, it runs again at once. The fallback
+        // is due no sooner than 250 ms after A's first turn, so only the
+        // turns begun before then and before the wake are counted, and a wake
+        // posted any later says nothing of which ran A.
+        TestQueuedThread thread;
+        thread.start();
+        LLTimer clock;
+        TurnLog log;
+        std::atomic<int> turns{ 0 };
+        std::atomic<bool> done{ false };
+        const LLQueuedThread::handle_t handle(thread.generateHandle());
+        thread.addRequest(new TestRequest(handle, [&]()
+            {
+                log.note(clock.getElapsedTimeF64());
+                ++turns;
+                return done.load();
+            }, true));
+        while (turns.load() < 1 && clock.getElapsedTimeF64() < 10.0)
+        {
+            ms_sleep(1);
+        }
+        REQUIRE(turns.load() >= 1);
+
+        ms_sleep(100);
+        // Read before the wake is posted, so earlier than any turn it runs.
+        const F64 waking(clock.getElapsedTimeF64());
+        thread.wakeRequest(handle);
+        // Read once the wake is posted, so no earlier than its time in the
+        // schedule.
+        const F64 woken(clock.getElapsedTimeF64());
+        std::atomic<int> after_wake{ -1 };
+        thread.post([&]()
+            {
+                after_wake = turns.load();
+                done = true;
+            });
+        while (after_wake.load() < 0 && clock.getElapsedTimeF64() < 10.0)
+        {
+            ms_sleep(1);
+        }
+
+        // Before the wake, only the fallback runs A again, and not within
+        // 250 ms of its first turn.
+        const std::vector<F64> began(log.turns());
+        REQUIRE(!began.empty());
+        const F64 first_turn(began.front());
+        const F64 counted_until(std::min(first_turn + 0.25, waking));
+        const auto unwoken_turns(std::count_if(began.begin(), began.end(), [counted_until](F64 at) { return at < counted_until; }));
+        CHECK(unwoken_turns == 1);
+
+        // Whether or not the fallback ran first, the wake runs A again.
+        CHECK(after_wake.load() >= 2);
+        if (woken - first_turn < 0.25)
+        {
+            CHECK(after_wake.load() == 2);
+        }
+        else
+        {
+            WARN("A was woken after its fallback was due; which ran it says nothing");
+        }
+    }
+
+    TEST_CASE("llqueuedthread: an abort reaches a request waiting for a wake at once", "[llqueuedthread]")
+    {
+        // Aborted while waiting for a wake, A is run, sees the abort and is
+        // gone before a check posted after the abort, not at its fallback.
+        TestQueuedThread thread;
+        thread.start();
+        LLTimer clock;
+        std::atomic<int> turns{ 0 };
+        const LLQueuedThread::handle_t handle(thread.generateHandle());
+        thread.addRequest(new TestRequest(handle, [&turns]()
+            {
+                ++turns;
+                return false;
+            }, true));
+        while (turns.load() < 1 && clock.getElapsedTimeF64() < 10.0)
+        {
+            ms_sleep(1);
+        }
+        REQUIRE(turns.load() == 1);
+
+        thread.abortRequest(handle, true);
+        std::atomic<int> status_after{ -100 };
+        thread.post([&]()
+            {
+                status_after = thread.getRequestStatus(handle);
+            });
+        while (-100 == status_after.load() && clock.getElapsedTimeF64() < 10.0)
+        {
+            ms_sleep(1);
+        }
+        CHECK(LLQueuedThread::STATUS_EXPIRED == status_after.load());
+        CHECK(turns.load() == 1);
+    }
+
+    TEST_CASE("llqueuedthread: shutdown with a request retrying does not wait out its timeout", "[llqueuedthread]")
+    {
+        // The request asks for another turn every time, so a retry is always
+        // queued. Shutdown runs it, sees it abort, and stops the thread, well
+        // inside the five seconds it waits for the thread before giving up.
+        TestQueuedThread thread;
+        thread.start();
+        std::atomic<int> turns{ 0 };
+        thread.addRequest(new TestRequest(thread.generateHandle(), [&turns]()
+            {
+                ++turns;
+                return false;
+            }));
+        LLTimer clock;
+        while (turns.load() < 1 && clock.getElapsedTimeF64() < 10.0)
+        {
+            ms_sleep(1);
+        }
+        REQUIRE(turns.load() >= 1);
+
+        clock.reset();
+        thread.shutdown();
+        CHECK(thread.isStopped());
+        CHECK(clock.getElapsedTimeF64() < 2.5);
+    }
+
+    TEST_CASE("llqueuedthread: update leaves a queue with no update of its own asleep", "[llqueuedthread]")
+    {
+        // Made paused, the thread waits until something is pending. A queue
+        // whose threadedUpdate() is the base's empty one has nothing to post,
+        // so update() finds nothing pending and leaves it paused.
+        TestQueuedThread thread(true);
+        thread.start();
+        for (int i(0); i < 3; ++i)
+        {
+            thread.update(0.f);
+        }
+        CHECK(thread.getPending() == 0);
+        CHECK(thread.isPaused());
+    }
+
+    TEST_CASE("llqueuedthread: update runs a queue's own update on its thread", "[llqueuedthread]")
+    {
+        UpdatingQueuedThread thread;
+        thread.start();
+        LLTimer clock;
         thread.update(0.f);
+        while (thread.mUpdates.load() < 1 && clock.getElapsedTimeF64() < 10.0)
+        {
+            ms_sleep(1);
+        }
+        CHECK(thread.mUpdates.load() == 1);
+        CHECK(thread.mUpdatedOn.load() != LLThread::currentID());
     }
-    CHECK(thread.getPending() == 0);
-    CHECK(thread.isPaused());
 }
-
-TEST_CASE("llqueuedthread: update runs a queue's own update on its thread", "[llqueuedthread]")
-{
-    UpdatingQueuedThread thread;
-    thread.start();
-    LLTimer clock;
-    thread.update(0.f);
-    while (thread.mUpdates.load() < 1 && clock.getElapsedTimeF64() < 10.0)
-    {
-        ms_sleep(1);
-    }
-    CHECK(thread.mUpdates.load() == 1);
-    CHECK(thread.mUpdatedOn.load() != LLThread::currentID());
-}
-} // namespace

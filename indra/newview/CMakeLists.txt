@@ -135,6 +135,7 @@ if(AL_BUILD_VIEWER)
     ao.cpp
     aoengine.cpp
     aoset.cpp
+    alapplinks.cpp
     alassetblocklist.cpp
     alavataractions.cpp
     alavatargroups.cpp
@@ -1014,6 +1015,7 @@ if(AL_BUILD_VIEWER)
     ao.h
     aoengine.h
     aoset.h
+    alapplinks.h
     alassetblocklist.h
     alavataractions.h
     alavatargroups.h
@@ -1960,6 +1962,12 @@ if(AL_BUILD_VIEWER)
     list(APPEND viewer_SOURCES alcrashreporter_native.cpp)
   endif()
 
+  # The session recording's start and its snapshots of objects.
+  if(AL_SESSION_CAPTURE)
+    list(APPEND viewer_SOURCES alobjectcapture.cpp)
+    list(APPEND viewer_HEADERS alobjectcapture.h)
+  endif()
+
   if(WINDOWS)
     list(APPEND viewer_SOURCES llappviewerwin32.cpp llvelopack.cpp llwindebug.cpp)
 
@@ -2560,6 +2568,7 @@ if(AL_BUILD_TESTS)
     PROJECT ${test_project}
     SOURCES
       tests/alagentlocationformat_test.cpp
+      tests/alapplinks_test.cpp
       tests/albakeproxies_test.cpp
       tests/alchattimestamp_test.cpp
       tests/alcolorwheelmodel_test.cpp
@@ -2638,6 +2647,7 @@ if(AL_BUILD_TESTS)
       tests/noise_test.cpp
     UNIT
       alagentlocationformat.cpp
+      alapplinks.cpp
       albakeproxies.cpp
       alchattimestamp.cpp
       alcolorwheelmodel.cpp
