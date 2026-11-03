@@ -107,7 +107,7 @@ private:
 public:
     LLTextureCacheWorker(LLTextureCache* cache, const LLUUID& id, const U8* data, S32 datasize, S32 offset,
                          S32                        imagesize, // for writes
-                         LLTextureCache::Responder* responder) :
+                         LLTextureCache::Responder* responder, bool bc_only = false) :
         LLWorkerClass(cache, "LLTextureCacheWorker"),
         mID(id),
         mCache(cache),
@@ -118,6 +118,7 @@ public:
         mImageSize(imagesize),
         mImageFormat(IMG_CODEC_J2C),
         mImageLocal(false),
+        mBCOOnly(bc_only),
         mResponder(responder),
         mFileHandle(LLLFSThread::nullHandle()),
         mBytesToRead(0),
@@ -165,6 +166,9 @@ protected:
     S32                                  mImageSize;
     EImageCodec                          mImageFormat;
     bool                                 mImageLocal;
+    // Set when only the block compressed payload is stored, with no JPEG2000
+    // header record or body behind it.
+    bool                                 mBCOOnly;
     LLPointer<LLTextureCache::Responder> mResponder;
     LLLFSThread::handle_t                mFileHandle;
     S32                                  mBytesToRead;
@@ -257,8 +261,8 @@ class LLTextureCacheRemoteWorker final : public LLTextureCacheWorker
 public:
     LLTextureCacheRemoteWorker(LLTextureCache* cache, const LLUUID& id, const U8* data, S32 datasize, S32 offset,
                                S32                   imagesize, // for writes
-                               LLPointer<LLImageRaw> raw, S32 discardlevel, LLTextureCache::Responder* responder) :
-        LLTextureCacheWorker(cache, id, data, datasize, offset, imagesize, responder),
+                               LLPointer<LLImageRaw> raw, S32 discardlevel, LLTextureCache::Responder* responder, bool bc_only = false) :
+        LLTextureCacheWorker(cache, id, data, datasize, offset, imagesize, responder, bc_only),
         mState(INIT),
         mRawImage(raw),
         mRawDiscardLevel(discardlevel)
@@ -271,11 +275,12 @@ public:
 private:
     enum e_state
     {
-        INIT   = 0,
-        LOCAL  = 1,
-        CACHE  = 2,
-        HEADER = 3,
-        BODY   = 4
+        INIT    = 0,
+        LOCAL   = 1,
+        CACHE   = 2,
+        HEADER  = 3,
+        BODY    = 4,
+        BC_ONLY = 5
     };
 
     e_state               mState;
@@ -542,10 +547,22 @@ bool LLTextureCacheRemoteWorker::doWrite()
     // First state / stage : check that what we're trying to cache is in an OK shape
     if (mState == INIT)
     {
-        if ((mOffset != 0)      // We currently do not support write offsets
-            || (mDataSize <= 0) // Things will go badly wrong if mDataSize is nul or negative...
-            || (mImageSize < mDataSize) || (mRawDiscardLevel < 0) ||
-            (mRawImage->isBufferInvalid())) // decode failed or malfunctioned, don't write
+        if (mBCOOnly && mRawDiscardLevel < 0)
+        {
+            // Nothing decoded, so nothing compressed to store. Leave mDataSize alone:
+            // a negative one would take the JPEG2000 entry down with it in endWork().
+            done = true;
+        }
+        else if (mBCOOnly)
+        {
+            // A block compressed entry stands alone: there is no JPEG2000 header
+            // record or body to validate, size or place in the entry index.
+            mState = BC_ONLY;
+        }
+        else if ((mOffset != 0)      // We currently do not support write offsets
+                 || (mDataSize <= 0) // Things will go badly wrong if mDataSize is nul or negative...
+                 || (mImageSize < mDataSize) || (mRawDiscardLevel < 0) ||
+                 (mRawImage->isBufferInvalid())) // decode failed or malfunctioned, don't write
         {
             LL_WARNS() << "INIT state check failed for image: " << mID << " Size: " << mImageSize << " DataSize: " << mDataSize
                        << " Discard:" << mRawDiscardLevel << LL_ENDL;
@@ -556,6 +573,13 @@ bool LLTextureCacheRemoteWorker::doWrite()
         {
             mState = CACHE;
         }
+    }
+
+    // Block compressed only: skip the JPEG2000 stages entirely and fall through to
+    // the block compression payload write at the end of this function.
+    if (!done && (mState == BC_ONLY))
+    {
+        done = true;
     }
 
     // No LOCAL state for write(): because it doesn't make much sense to cache a local file...
@@ -775,7 +799,7 @@ void LLTextureCacheWorker::finishWork(S32 param, bool completed)
             mWriteData = NULL; // we never owned data
             mDataSize  = 0;
         }
-        mCache->addCompleted(mResponder, success);
+        mCache->addCompleted(mResponder, mBCOOnly ? completed : success);
     }
 }
 
@@ -2371,6 +2395,28 @@ bool LLTextureCache::readComplete(handle_t handle, bool abort)
         unlockWorkers();
     }
     return (complete || abort);
+}
+
+LLTextureCache::handle_t LLTextureCache::writeBCToCache(const LLUUID& id, LLPointer<LLImageRaw> rawimage, S32 discardlevel,
+                                                        WriteResponder* responder)
+{
+    if (mReadOnly || rawimage.isNull() || discardlevel < 0)
+    {
+        delete responder;
+        return LLWorkerThread::nullHandle();
+    }
+    if (mDoPurge)
+    {
+        // NOTE: Needs to be done on the control thread
+        //  (i.e. here)
+        purgeTexturesLazy(TEXTURE_LAZY_PURGE_TIME_LIMIT);
+        mDoPurge = !mPurgeEntryList.empty();
+    }
+    LLMutexLock           lock(&mWorkersMutex);
+    LLTextureCacheWorker* worker = new LLTextureCacheRemoteWorker(this, id, nullptr, 0, 0, 0, rawimage, discardlevel, responder, true);
+    handle_t              handle = worker->write();
+    mWriters[handle]             = worker;
+    return handle;
 }
 
 LLTextureCache::handle_t LLTextureCache::writeToCache(const LLUUID& id, const U8* data, S32 datasize, S32 imagesize,

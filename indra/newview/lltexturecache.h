@@ -147,6 +147,10 @@ public:
     bool     readComplete(handle_t handle, bool abort);
     handle_t writeToCache(const LLUUID& id, const U8* data, S32 datasize, S32 imagesize, LLPointer<LLImageRaw> rawimage, S32 discardlevel,
                           WriteResponder* responder);
+    // Stores only the block compressed payload, leaving the JPEG2000 header record,
+    // body and entry index untouched: the counterpart of a readFromCache that already
+    // found the JPEG2000 data and did not need to download it again.
+    handle_t              writeBCToCache(const LLUUID& id, LLPointer<LLImageRaw> rawimage, S32 discardlevel, WriteResponder* responder);
     LLPointer<LLImageRaw> readFromFastCache(const LLUUID& id, S32& discardlevel);
     bool                  writeComplete(handle_t handle, bool abort = false);
     void                  prioritizeWrite(handle_t handle);

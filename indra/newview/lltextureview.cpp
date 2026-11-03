@@ -416,27 +416,31 @@ void LLTextureBar::draw()
 
     // State
     // Hack: mirrored from lltexturefetch.cpp
-    struct { const std::string desc; LLColor4 color; } fetch_state_desc[] = {
-        { "---", LLColor4::red },   // INVALID
-        { "INI", LLColor4::white }, // INIT
-        { "DSK", LLColor4::cyan },  // LOAD_FROM_TEXTURE_CACHE
-        { "DSK", LLColor4::blue },  // CACHE_POST
-        { "NET", LLColor4::green }, // LOAD_FROM_NETWORK
-        { "HTW", LLColor4::green }, // WAIT_HTTP_RESOURCE
-        { "HTW", LLColor4::green }, // WAIT_HTTP_RESOURCE2
-        { "REQ", LLColor4::yellow },// SEND_HTTP_REQ
-        { "HTP", LLColor4::green }, // WAIT_HTTP_REQ
-        { "DEC", LLColor4::yellow },// DECODE_IMAGE
-        { "DEU", LLColor4::green }, // DECODE_IMAGE_UPDATE
-        { "WRT", LLColor4::purple },// WRITE_TO_CACHE
-        { "WWT", LLColor4::orange },// WAIT_ON_WRITE
-        { "END", LLColor4::red },   // DONE
-#define LAST_STATE 14
+    struct
+    {
+        const std::string desc;
+        LLColor4          color;
+    } fetch_state_desc[] = {
+        { "---", LLColor4::red },    // INVALID
+        { "INI", LLColor4::white },  // INIT
+        { "DSK", LLColor4::cyan },   // LOAD_FROM_TEXTURE_CACHE
+        { "DSK", LLColor4::blue },   // CACHE_POST
+        { "NET", LLColor4::green },  // LOAD_FROM_NETWORK
+        { "HTW", LLColor4::green },  // WAIT_HTTP_RESOURCE
+        { "HTW", LLColor4::green },  // WAIT_HTTP_RESOURCE2
+        { "REQ", LLColor4::yellow }, // SEND_HTTP_REQ
+        { "HTP", LLColor4::green },  // WAIT_HTTP_REQ
+        { "DEC", LLColor4::yellow }, // DECODE_IMAGE
+        { "DEU", LLColor4::green },  // DECODE_IMAGE_UPDATE
+        { "WRT", LLColor4::purple }, // WRITE_TO_CACHE
+        { "WWT", LLColor4::orange }, // WAIT_ON_WRITE
+        { "END", LLColor4::red },    // DONE
+#define LAST_STATE 13
         { "CRE", LLColor4::magenta }, // LAST_STATE+1
-        { "FUL", LLColor4::green }, // LAST_STATE+2
-        { "BAD", LLColor4::red }, // LAST_STATE+3
-        { "MIS", LLColor4::red }, // LAST_STATE+4
-        { "---", LLColor4::white }, // LAST_STATE+5
+        { "FUL", LLColor4::green },   // LAST_STATE+2
+        { "BAD", LLColor4::red },     // LAST_STATE+3
+        { "MIS", LLColor4::red },     // LAST_STATE+4
+        { "---", LLColor4::white },   // LAST_STATE+5
     };
     const S32 fetch_state_desc_size = (S32)LL_ARRAY_SIZE(fetch_state_desc);
     S32 state =

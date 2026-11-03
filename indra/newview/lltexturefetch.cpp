@@ -549,7 +549,9 @@ private:
     {
         NOT_WRITE = 0,
         CAN_WRITE = 1,
-        SHOULD_WRITE = 2
+        SHOULD_WRITE = 2,
+        // The JPEG2000 data needs no write, but the block compressed payload does.
+        SHOULD_WRITE_BC = 3
     };
 
     // Changed under the work mutex; read without it by getRequestFinished and the debugger.
@@ -558,6 +560,9 @@ private:
     LLViewerRegion* getRegion();
 
     e_write_to_cache_state mWriteToCacheState;
+    // True when the block compressed cache already holds this texture at a resolution
+    // at least as fine as mDesiredDiscard, so a freshly encoded payload need not be stored.
+    bool                        mBCEntryAdequate;
     bool                        mAllowCompression;
     EVayuTextureJob             mTextureJob;
     LLTextureFetch* mFetcher;
@@ -910,6 +915,7 @@ LLTextureFetchWorker::LLTextureFetchWorker(LLTextureFetch*    fetcher,
     LLCore::HttpHandler(),
     mState(INIT),
     mWriteToCacheState(NOT_WRITE),
+    mBCEntryAdequate(true),
     mFetcher(fetcher),
     mFTType(f_type),
     mID(id),
@@ -1250,6 +1256,7 @@ bool LLTextureFetchWorker::doWork(S32 param)
         mCacheWriteHandle = LLTextureCache::nullHandle();
         setState(LOAD_FROM_TEXTURE_CACHE);
         mInCache = false;
+        mBCEntryAdequate = !mAllowCompression;
         mDesiredSize = llmax(mDesiredSize, TEXTURE_CACHE_ENTRY_SIZE); // min desired size is TEXTURE_CACHE_ENTRY_SIZE
         LL_DEBUGS(LOG_TXT) << mID << ": Priority: " << llformat("%8.0f",mImagePriority)
                            << " Desired Discard: " << mDesiredDiscard << " Desired Size: " << mDesiredSize << LL_ENDL;
@@ -1304,6 +1311,8 @@ bool LLTextureFetchWorker::doWork(S32 param)
                 {
                     cache_hit = mFetcher->mTextureCache->readBCEntry(mID, mDesiredDiscard, cache_header, bc_buffer);
                 }
+
+                mBCEntryAdequate = cache_hit;
 
                 if (cache_hit)
                 {
@@ -2063,6 +2072,14 @@ bool LLTextureFetchWorker::doWork(S32 param)
                                                << " layers, all data " << mHaveAllData << ")" << LL_ENDL;
                     }
                 }
+                if (mWriteToCacheState == NOT_WRITE && !mBCEntryAdequate && mRawImage.notNull() && mRawImage->hasBlockCompressionResult())
+                {
+                    // The image was served from the JPEG2000 cache, so no write is queued,
+                    // but this compressed result is new, or finer than the one on disk.
+                    // Store it: otherwise this texture decodes, encodes and discards the
+                    // result on every request, forever.
+                    mWriteToCacheState = SHOULD_WRITE_BC;
+                }
                 setState(WRITE_TO_CACHE);
             }
             // fall through
@@ -2078,6 +2095,19 @@ bool LLTextureFetchWorker::doWork(S32 param)
     if (mState == WRITE_TO_CACHE)
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_THREAD("tfwdw - WRITE_TO_CACHE");
+        if (mWriteToCacheState == SHOULD_WRITE_BC)
+        {
+            // The JPEG2000 entry is already on disk and needs no rewrite, so only the
+            // compressed payload is handed to the cache.
+            mWritten = false;
+            setState(WAIT_ON_WRITE);
+            ++mCacheWriteCount;
+            mCacheWriteTimer.reset();
+            mCacheWriteHandle =
+                mFetcher->mTextureCache->writeBCToCache(mID, mRawImage, mDecodedDiscard, new CacheWriteResponder(mFetcher, mID));
+            // Re-enter to wait on that write rather than walking the JPEG2000 path below.
+            return doWork(param);
+        }
         if (mWriteToCacheState != SHOULD_WRITE || mFormattedImage.isNull())
         {
             // If we're in a local cache or we didn't actually receive any new data,
