@@ -1007,11 +1007,11 @@ LLTextureFetchWorker::~LLTextureFetchWorker()
         // Issue a cancel on a live request...
         mFetcher->getHttpRequest().requestCancel(mHttpHandle, LLCore::HttpHandler::ptr_t());
     }
-    if (mCacheReadHandle != LLTextureCache::nullHandle() && mFetcher->mTextureCache)
+    if (mCacheReadHandle != LLTextureCache::nullHandle())
     {
         mFetcher->mTextureCache->readComplete(mCacheReadHandle, true);
     }
-    if (mCacheWriteHandle != LLTextureCache::nullHandle() && mFetcher->mTextureCache)
+    if (mCacheWriteHandle != LLTextureCache::nullHandle())
     {
         mFetcher->mTextureCache->writeComplete(mCacheWriteHandle, true);
     }
@@ -1289,7 +1289,7 @@ bool LLTextureFetchWorker::doWork(S32 param)
 
             add(LLTextureFetch::sCacheAttempt, 1.0);
 
-            if (mAllowCompression && mFetcher->mTextureCache)
+            if (mAllowCompression)
             {
                 VayuBCCacheEntryHeader cache_header;
                 std::vector<U8>        bc_buffer;
@@ -2072,7 +2072,7 @@ bool LLTextureFetchWorker::doWork(S32 param)
                                                << " layers, all data " << mHaveAllData << ")" << LL_ENDL;
                     }
                 }
-                if (mWriteToCacheState == NOT_WRITE && !mBCEntryAdequate && mRawImage.notNull() && mRawImage->hasBlockCompressionResult())
+                if (mWriteToCacheState == NOT_WRITE && !mBCEntryAdequate && mRawImage->hasBlockCompressionResult())
                 {
                     // The image was served from the JPEG2000 cache, so no write is queued,
                     // but this compressed result is new, or finer than the one on disk.

@@ -1,0 +1,8 @@
+id: no-redundant-cache-guards
+message: "Redundant defensive guards in LLTextureCache: BC write states and raw image results are guaranteed by contract. Do not write defensive null checks."
+severity: error
+language: cpp
+rule:
+  any:
+    - pattern: "if (comp_res && !comp_res->mBuffer.empty()) { $$$BODY }"
+    - pattern: "if (mBCOOnly && mRawDiscardLevel < 0) { $$$BODY }"

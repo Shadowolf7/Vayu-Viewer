@@ -547,13 +547,7 @@ bool LLTextureCacheRemoteWorker::doWrite()
     // First state / stage : check that what we're trying to cache is in an OK shape
     if (mState == INIT)
     {
-        if (mBCOOnly && mRawDiscardLevel < 0)
-        {
-            // Nothing decoded, so nothing compressed to store. Leave mDataSize alone:
-            // a negative one would take the JPEG2000 entry down with it in endWork().
-            done = true;
-        }
-        else if (mBCOOnly)
+        if (mBCOOnly)
         {
             // A block compressed entry stands alone: there is no JPEG2000 header
             // record or body to validate, size or place in the entry index.
@@ -720,26 +714,23 @@ bool LLTextureCacheRemoteWorker::doWrite()
         }
     }
 
-    if (mRawImage.notNull() && mRawImage->hasBlockCompressionResult())
+    if (mRawImage && mRawImage->hasBlockCompressionResult())
     {
         auto comp_res = mRawImage->getBlockCompressionResult();
-        if (comp_res && !comp_res->mBuffer.empty())
-        {
-            VayuBCCacheEntryHeader cache_header;
-            cache_header.mFormat           = (U8)comp_res->mFormat;
-            cache_header.mPreset           = (U8)comp_res->mPreset;
-            cache_header.mIsMask           = comp_res->mIsMask ? 1 : 0;
-            cache_header.mRole             = 0;
-            cache_header.mDiscardLevel     = (U8)std::clamp(mRawDiscardLevel, 0, 255);
-            cache_header.mMipLevels        = comp_res->mMipLevels;
-            cache_header.mWidth            = comp_res->mWidth;
-            cache_header.mHeight           = comp_res->mHeight;
-            cache_header.mComponents       = comp_res->mComponents;
-            cache_header.mGLInternalFormat = comp_res->mGLInternalFormat;
-            cache_header.mGLPrimaryFormat  = comp_res->mGLPrimaryFormat;
+        VayuBCCacheEntryHeader cache_header;
+        cache_header.mFormat           = (U8)comp_res->mFormat;
+        cache_header.mPreset           = (U8)comp_res->mPreset;
+        cache_header.mIsMask           = comp_res->mIsMask ? 1 : 0;
+        cache_header.mRole             = 0;
+        cache_header.mDiscardLevel     = (U8)std::clamp(mRawDiscardLevel, 0, 255);
+        cache_header.mMipLevels        = comp_res->mMipLevels;
+        cache_header.mWidth            = comp_res->mWidth;
+        cache_header.mHeight           = comp_res->mHeight;
+        cache_header.mComponents       = comp_res->mComponents;
+        cache_header.mGLInternalFormat = comp_res->mGLInternalFormat;
+        cache_header.mGLPrimaryFormat  = comp_res->mGLPrimaryFormat;
 
-            mCache->writeBCEntry(mID, mRawDiscardLevel, cache_header, comp_res->mBuffer.data(), comp_res->mBuffer.size());
-        }
+        mCache->writeBCEntry(mID, mRawDiscardLevel, cache_header, comp_res->mBuffer.data(), comp_res->mBuffer.size());
     }
 
     mRawImage = NULL;
@@ -2400,7 +2391,7 @@ bool LLTextureCache::readComplete(handle_t handle, bool abort)
 LLTextureCache::handle_t LLTextureCache::writeBCToCache(const LLUUID& id, LLPointer<LLImageRaw> rawimage, S32 discardlevel,
                                                         WriteResponder* responder)
 {
-    if (mReadOnly || rawimage.isNull() || discardlevel < 0)
+    if (mReadOnly)
     {
         delete responder;
         return LLWorkerThread::nullHandle();

@@ -1,0 +1,14 @@
+id: no-compound-notnull-query
+message: "Redundant guard: Do not chain $P.notNull() with a state query on internal objects. The lifecycle must establish validity upstream."
+severity: error
+language: cpp
+rule:
+  any:
+    - pattern: "if ($$$PRE && $P.notNull() && $P->hasBlockCompressionResult()) { $$$BODY }"
+    - pattern: "if ($$$PRE && $P.notNull() && $P->hasBlockCompressionResult() && $$$POST) { $$$BODY }"
+    - pattern: "if ($P.notNull() && $P->hasBlockCompressionResult() && $$$POST) { $$$BODY }"
+    - pattern: "if ($P.notNull() && $P->hasBlockCompressionResult()) { $$$BODY }"
+    - pattern: "if ($$$PRE && $P.notNull() && $P->isDead()) { $$$BODY }"
+    - pattern: "if ($$$PRE && $P.notNull() && $P->isDead() && $$$POST) { $$$BODY }"
+    - pattern: "if ($P.notNull() && $P->isDead() && $$$POST) { $$$BODY }"
+    - pattern: "if ($P.notNull() && $P->isDead()) { $$$BODY }"

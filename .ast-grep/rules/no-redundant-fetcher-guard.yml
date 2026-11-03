@@ -1,0 +1,11 @@
+id: no-redundant-fetcher-guard
+message: "mFetcher and its subsystems (mTextureCache) are engine invariants guaranteed by worker construction. Do not write defensive null checks on mFetcher or mFetcher->mTextureCache."
+severity: error
+language: cpp
+rule:
+  any:
+    - pattern: "mFetcher && mFetcher->$MEMBER"
+    - pattern: "if ($$$PRE && mFetcher->mTextureCache && $$$POST) { $$$BODY }"
+    - pattern: "if ($$$PRE && mFetcher->mTextureCache) { $$$BODY }"
+    - pattern: "if (mFetcher->mTextureCache && $$$POST) { $$$BODY }"
+    - pattern: "if (mFetcher->mTextureCache) { $$$BODY }"

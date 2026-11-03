@@ -1,0 +1,21 @@
+id: no-redundant-delete-guard
+message: "Redundant null guard: In C++, 'delete' is guaranteed to be a no-op on null pointers. Remove the outer 'if' check."
+severity: error
+language: cpp
+rule:
+  any:
+    - pattern: "if ($P) delete $P;"
+    - pattern: |
+        if ($P) {
+          delete $P;
+        }
+    - pattern: "if ($P != nullptr) delete $P;"
+    - pattern: |
+        if ($P != nullptr) {
+          delete $P;
+        }
+    - pattern: "if ($P != NULL) delete $P;"
+    - pattern: |
+        if ($P != NULL) {
+          delete $P;
+        }
