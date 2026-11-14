@@ -1765,6 +1765,35 @@ bool LLTextureFetchWorker::doWork(S32 param)
                         }
                     }
                 }
+                else if (http_forbidden == mGetStatus)
+                {
+                    LL_INFOS_ONCE(LOG_TXT) << "Texture server forbidden (403): " << mUrl << LL_ENDL;
+                    if (mCanUseHTTP && !mUrl.empty() && cur_size <= 0)
+                    {
+                        LLViewerRegion* region = getRegion();
+                        if (!region || mLastRegionId != region->getRegionID() || mRetryAttempt == 0)
+                        {
+                            if (mFTType != FTT_MAP_TILE)
+                            {
+                                LL_INFOS(LOG_TXT) << "Texture capability expired or forbidden (403), retrying: " << mUrl
+                                                  << " mRetryAttempt " << mRetryAttempt << LL_ENDL;
+                            }
+                            // Release HTTP semaphore so we do not hold a global slot while waiting in INIT
+                            releaseHttpSemaphore();
+
+                            // Preserve URL for URL-backed types (server bakes and map tiles).
+                            // Only clear capability-backed default textures to force re-resolving the cap URL.
+                            if (mFTType != FTT_SERVER_BAKE && mFTType != FTT_MAP_TILE)
+                            {
+                                mUrl.clear();
+                            }
+                            ++mRetryAttempt;
+                            mLastRegionId.setNull();
+                            setState(INIT);
+                            return false;
+                        }
+                    }
+                }
                 else if (http_not_sat == mGetStatus)
                 {
                     // Allowed, we'll accept whatever data we have as complete.
