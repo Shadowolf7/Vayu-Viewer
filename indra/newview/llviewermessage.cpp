@@ -30,6 +30,8 @@
 #include "alscriptstudio.h"
 #include "alscripttypes.h"
 #include "alnotecarditems.h"
+#include "alobjectupdate.h"
+#include "alteleportprogress.h"
 
 // Linden libraries
 #include "llanimationstates.h"
@@ -172,19 +174,23 @@ const U8 AU_FLAGS_NONE              = 0x00;
 const U8 AU_FLAGS_HIDETITLE         = 0x01;
 const U8 AU_FLAGS_CLIENT_AUTOPILOT  = 0x02;
 
+// The resident whose offer the agent accepted is a friend once the server says so: the capability answers success,
+// or the simulator acknowledges AcceptFriendship.
 void accept_friendship_coro(std::string url, LLSD notification)
 {
     LLCore::HttpRequest::policy_t httpPolicy(LLCore::HttpRequest::DEFAULT_POLICY_ID);
     LLCoreHttpUtil::HttpCoroutineAdapter::ptr_t
         httpAdapter = std::make_shared<LLCoreHttpUtil::HttpCoroutineAdapter>("friendshipResponceErrorProcessing", httpPolicy);
     LLCore::HttpRequest::ptr_t httpRequest = std::make_shared<LLCore::HttpRequest>();
+    LLSD payload = notification["payload"];
+    const LLUUID from_id = payload["from_id"].asUUID();
     if (url.empty())
     {
         LL_WARNS("Friendship") << "Empty capability!" << LL_ENDL;
+        LLAvatarTracker::instance().friendshipRefused(from_id);
         return;
     }
 
-    LLSD payload = notification["payload"];
     url += "?from=" + payload["from_id"].asString();
     url += "&agent_name=\"" + LLURI::escape(gAgentAvatarp->getFullname()) + "\"";
 
@@ -198,22 +204,40 @@ void accept_friendship_coro(std::string url, LLSD notification)
     {
         LL_WARNS("Friendship") << "HTTP status, " << status.toTerseString() <<
             ". friendship offer accept failed." << LL_ENDL;
+        LLAvatarTracker::instance().friendshipRefused(from_id);
     }
     else
     {
         if (!result.has("success") || !result["success"].asBoolean())
         {
             LL_WARNS("Friendship") << "Server failed to process accepted friendship. " << httpResults << LL_ENDL;
+            LLAvatarTracker::instance().friendshipRefused(from_id);
         }
         else
         {
             LL_DEBUGS("Friendship") << "Adding friend to list" << httpResults << LL_ENDL;
+            LLAvatarTracker::formFriendship(from_id);
             // add friend to recent people list
             LLRecentPeople::instance().add(payload["from_id"]);
 
             LLNotificationsUtil::add("FriendshipAcceptedByMe",
                 notification["substitutions"], payload);
         }
+    }
+}
+
+// The simulator acknowledged AcceptFriendship, or the circuit gave it up.
+static void on_accept_friendship_acked(void** user_data, S32 result)
+{
+    const std::unique_ptr<LLUUID> from_id(reinterpret_cast<LLUUID*>(user_data));
+    if (result == LL_ERR_NOERR)
+    {
+        LLAvatarTracker::formFriendship(*from_id);
+    }
+    else
+    {
+        LL_WARNS("Friendship") << "AcceptFriendship was not acknowledged, error " << result << LL_ENDL;
+        LLAvatarTracker::instance().friendshipRefused(*from_id);
     }
 }
 
@@ -280,8 +304,7 @@ bool friendship_offer_callback(const LLSD& notification, const LLSD& response)
         case 0:
         {
             // accept
-            LLAvatarTracker::formFriendship(payload["from_id"]);
-
+            const LLUUID from_id = payload["from_id"].asUUID();
             const LLUUID fid = gInventory.findCategoryUUIDForType(LLFolderType::FT_CALLINGCARD);
 
             // This will also trigger an onlinenotification if the user is online
@@ -290,12 +313,14 @@ bool friendship_offer_callback(const LLSD& notification, const LLSD& response)
             if (!url.empty() && payload.has("online") && !payload["online"].asBoolean())
             {
                 LL_DEBUGS("Friendship") << "Accepting friendship via capability" << LL_ENDL;
+                LLAvatarTracker::instance().expectFriendship(from_id);
                 LLCoros::instance().launch("LLMessageSystem::acceptFriendshipOffer",
                     boost::bind(accept_friendship_coro, url, notification));
             }
             else if (payload.has("session_id") && payload["session_id"].asUUID().notNull())
             {
                 LL_DEBUGS("Friendship") << "Accepting friendship via viewer message" << LL_ENDL;
+                LLAvatarTracker::instance().expectFriendship(from_id);
                 msg->newMessageFast(_PREHASH_AcceptFriendship);
                 msg->nextBlockFast(_PREHASH_AgentData);
                 msg->addUUIDFast(_PREHASH_AgentID, gAgent.getID());
@@ -304,7 +329,16 @@ bool friendship_offer_callback(const LLSD& notification, const LLSD& response)
                 msg->addUUIDFast(_PREHASH_TransactionID, payload["session_id"]);
                 msg->nextBlockFast(_PREHASH_FolderData);
                 msg->addUUIDFast(_PREHASH_FolderID, fid);
-                msg->sendReliable(LLHost(payload["sender"].asString()));
+                // The callback owns the id once the message is queued; a message that isn't never calls it.
+                LLUUID* acked_id = new LLUUID(from_id);
+                if (!msg->sendReliable(LLHost(payload["sender"].asString()), LL_DEFAULT_RELIABLE_RETRIES, true,
+                                       LL_PING_BASED_TIMEOUT_DUMMY, on_accept_friendship_acked,
+                                       reinterpret_cast<void**>(acked_id)))
+                {
+                    LL_WARNS("Friendship") << "AcceptFriendship could not be sent" << LL_ENDL;
+                    delete acked_id;
+                    LLAvatarTracker::instance().friendshipRefused(from_id);
+                }
 
                 // add friend to recent people list
                 LLRecentPeople::instance().add(payload["from_id"]);
@@ -742,9 +776,11 @@ void send_join_group_response(LLUUID group_id, LLUUID transaction_id, bool accep
 
         EInstantMessage type = accept_invite ? IM_GROUP_INVITATION_ACCEPT : IM_GROUP_INVITATION_DECLINE;
 
+        std::string my_name;
+        LLAgentUI::buildFullname(my_name);
         send_improved_im(group_id,
-            std::string("name"),
-            std::string("message"),
+            my_name,
+            LLStringUtil::null,
             IM_ONLINE,
             type,
             transaction_id);
@@ -816,10 +852,7 @@ bool join_group_response(const LLSD& notification, const LLSD& response)
     if(option == 0 && !group_id.isNull())
     {
         // check for promotion or demotion.
-        S32 max_groups = LLAgentBenefitsMgr::current().getGroupMembershipLimit();
-        if(gAgent.isInGroup(group_id)) ++max_groups;
-
-        if(gAgent.mGroups.size() < max_groups)
+        if (LLAgentBenefitsMgr::current().hasRoomForGroup(gAgent.mGroups.size(), gAgent.isInGroup(group_id)))
         {
             accept_invite = true;
         }
@@ -2313,7 +2346,9 @@ void process_improved_im(LLMessageSystem *msg, void **user_data)
     msg->getUUIDFast(_PREHASH_MessageBlock, _PREHASH_RegionID, region_id);
     msg->getVector3Fast(_PREHASH_MessageBlock, _PREHASH_Position, position);
     msg->getBinaryDataFast(_PREHASH_MessageBlock, _PREHASH_BinaryBucket, binary_bucket, 0, 0, MTUBYTES);
-    binary_bucket_size = msg->getSizeFast(_PREHASH_MessageBlock, _PREHASH_BinaryBucket);
+    // A zero-coded bucket can expand past the buffer, which holds only what
+    // fit in it.
+    binary_bucket_size = llmin(msg->getSizeFast(_PREHASH_MessageBlock, _PREHASH_BinaryBucket), MTUBYTES);
     EInstantMessage dialog = (EInstantMessage)d;
     LLHost sender = msg->getSender();
 
@@ -3067,17 +3102,7 @@ void process_teleport_progress(LLMessageSystem* msg, void**)
     msg->getStringFast(_PREHASH_Info, _PREHASH_Message, buffer);
     LL_DEBUGS("Messaging") << "teleport progress: " << buffer << " flags: " << teleport_flags << LL_ENDL;
 
-    //Sorta hacky...default to using simulator raw messages
-    //if we don't find the coresponding mapping in our progress mappings
-    std::string message = buffer;
-
-    if (LLAgent::sTeleportProgressMessages.find(buffer) !=
-        LLAgent::sTeleportProgressMessages.end() )
-    {
-        message = LLAgent::sTeleportProgressMessages[buffer];
-    }
-
-    gAgent.setTeleportMessage(LLAgent::sTeleportProgressMessages[message]);
+    gAgent.setTeleportMessage(ALTeleportProgress::text(LLAgent::sTeleportProgressMessages, buffer));
 }
 
 class LLFetchInWelcomeArea : public LLInventoryFetchDescendentsObserver
@@ -3761,43 +3786,51 @@ void send_agent_update(bool force_send, bool send_reliable)
     msg->addVector3Fast(_PREHASH_CameraLeftAxis, LLViewerCamera::getInstance()->getLeftAxis());
     msg->addVector3Fast(_PREHASH_CameraUpAxis, LLViewerCamera::getInstance()->getUpAxis());
 
-    static F32 last_draw_disatance_step = 1024;
-    F32 memory_limited_draw_distance = gAgentCamera.mDrawDistance;
-    const F32 mem_factor = LLMemory::getSystemMemoryBudgetFactor();
-    if (mem_factor > 1.f)
+    static LLCachedControl<bool> limit_draw_distance(gSavedSettings, "ALLimitDrawDistance", false);
+    if (limit_draw_distance)
     {
-        // We are critically low on memory or recovering,
-        // limit requested draw distance
-        memory_limited_draw_distance = llmax(gAgentCamera.mDrawDistance / mem_factor, gAgentCamera.mDrawDistance / 2.f);
-    }
-
-    if (tp_state == LLAgent::TELEPORT_ARRIVING || LLStartUp::getStartupState() < STATE_MISC)
-    {
-        // Inform interest list, prioritize closer area.
-        // Reason: currently server doesn't distance sort attachments, by restricting range
-        // we reduce the number of attachments sent to the viewer, thus prioritizing
-        // closer ones.
-        // Todo: revise and remove once server gets distance sorting.
-        last_draw_disatance_step = llmax((F32)(gAgentCamera.mDrawDistance / 2.f), 50.f);
-        last_draw_disatance_step = llmin(last_draw_disatance_step, memory_limited_draw_distance);
-        msg->addF32Fast(_PREHASH_Far, last_draw_disatance_step);
-    }
-    else if (last_draw_disatance_step < memory_limited_draw_distance)
-    {
-        static LLFrameTimer last_step_time;
-        if (last_step_time.getElapsedTimeF32() > 1.f)
+        static F32 last_draw_disatance_step     = 1024;
+        F32        memory_limited_draw_distance = gAgentCamera.mDrawDistance;
+        const F32  mem_factor                   = LLMemory::getSystemMemoryBudgetFactor();
+        if (mem_factor > 1.f)
         {
-            // gradually increase draw distance
-            last_step_time.reset();
-            F32 step = memory_limited_draw_distance * 0.1f;
-            last_draw_disatance_step = llmin(last_draw_disatance_step + step, memory_limited_draw_distance);
+            // We are critically low on memory or recovering,
+            // limit requested draw distance
+            memory_limited_draw_distance = llmax(gAgentCamera.mDrawDistance / mem_factor, gAgentCamera.mDrawDistance / 2.f);
         }
-        msg->addF32Fast(_PREHASH_Far, last_draw_disatance_step);
+
+        if (tp_state == LLAgent::TELEPORT_ARRIVING || LLStartUp::getStartupState() < STATE_MISC)
+        {
+            // Inform interest list, prioritize closer area.
+            // Reason: currently server doesn't distance sort attachments, by restricting range
+            // we reduce the number of attachments sent to the viewer, thus prioritizing
+            // closer ones.
+            // Todo: revise and remove once server gets distance sorting.
+            last_draw_disatance_step = llmax((F32)(gAgentCamera.mDrawDistance / 2.f), 50.f);
+            last_draw_disatance_step = llmin(last_draw_disatance_step, memory_limited_draw_distance);
+            msg->addF32Fast(_PREHASH_Far, last_draw_disatance_step);
+        }
+        else if (last_draw_disatance_step < memory_limited_draw_distance)
+        {
+            static LLFrameTimer last_step_time;
+            if (last_step_time.getElapsedTimeF32() > 1.f)
+            {
+                // gradually increase draw distance
+                last_step_time.reset();
+                F32 step                 = memory_limited_draw_distance * 0.1f;
+                last_draw_disatance_step = llmin(last_draw_disatance_step + step, memory_limited_draw_distance);
+            }
+            msg->addF32Fast(_PREHASH_Far, last_draw_disatance_step);
+        }
+        else
+        {
+            last_draw_disatance_step = memory_limited_draw_distance;
+            msg->addF32Fast(_PREHASH_Far, memory_limited_draw_distance);
+        }
     }
     else
     {
-        last_draw_disatance_step = memory_limited_draw_distance;
-        msg->addF32Fast(_PREHASH_Far, memory_limited_draw_distance);
+        msg->addF32Fast(_PREHASH_Far, gAgentCamera.mDrawDistance);
     }
 
     msg->addU32Fast(_PREHASH_ControlFlags, control_flags);
@@ -4069,7 +4102,6 @@ void process_kill_object(LLMessageSystem *mesgsys, void **user_data)
         if (id == LLUUID::null)
         {
             LL_DEBUGS("Messaging") << "Unknown kill for local " << local_id << LL_ENDL;
-            continue;
         }
         else
         {
@@ -4086,8 +4118,7 @@ void process_kill_object(LLMessageSystem *mesgsys, void **user_data)
         if (objectp)
         {
 // [SL:KB] - Patch: Appearance-TeleportAttachKill | Checked: Catznip-4.0
-                if ( (objectp->isAttachment()) && (!objectp->isTempAttachment()) && (LLAgent::TELEPORT_NONE != gAgent.getTeleportState()) &&
-                     (gAgentAvatarp) && (objectp->permYouOwner()) && (gSavedSettings.getBOOL("BlockAttachmentKillsOnTeleport")) )
+                if (LLViewerObjectList::killHeldForTeleport(objectp))
                 {
                     //gAgentAvatarp->addPendingDetach(objectp->getRootEdit()->getID());
                     continue;
@@ -4120,7 +4151,7 @@ void process_kill_object(LLMessageSystem *mesgsys, void **user_data)
             gObjectList.killObject(objectp);
         }
 
-        if(delete_object && regionp)
+        if (regionp && ALObjectUpdate::killReachesCache(id, gAgentID, delete_object))
         {
             regionp->killCacheEntry(local_id);
         }
@@ -4128,7 +4159,10 @@ void process_kill_object(LLMessageSystem *mesgsys, void **user_data)
         // We should remove the object from selection after it is marked dead by gObjectList to make LLToolGrab,
         // which is using the object, release the mouse capture correctly when the object dies.
         // See LLToolGrab::handleHoverActive() and LLToolGrab::handleHoverNonPhysical().
-        LLSelectMgr::getInstance()->removeObjectFromSelections(id);
+        if (id.notNull())
+        {
+            LLSelectMgr::getInstance()->removeObjectFromSelections(id);
+        }
 
     }   // end for loop
 

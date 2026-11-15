@@ -28,6 +28,7 @@
 #define LL_LLAGENT_H
 
 #include "indra_constants.h"
+#include "almaturitypreference.h"
 #include "llevent.h"                // LLObservable base class
 #include "llagentdata.h"            // gAgentID, gAgentSessionID
 #include "llcharacter.h"
@@ -73,14 +74,15 @@ enum EAnimRequest
     ANIM_REQUEST_STOP
 };
 
+// A field a message about the group leaves out reads as nothing: AgentGroupDataUpdate has no ListInProfile.
 struct LLGroupData
 {
     LLUUID mID;
     LLUUID mInsigniaID;
-    U64 mPowers;
-    bool mAcceptNotices;
-    bool mListInProfile;
-    S32 mContribution;
+    U64 mPowers = 0;
+    bool mAcceptNotices = false;
+    bool mListInProfile = false;
+    S32 mContribution = 0;
     std::string mName;
 };
 
@@ -843,11 +845,8 @@ public:
 
 private:
     bool                            mIsDoSendMaturityPreferenceToServer;
-    unsigned int                    mMaturityPreferenceRequestId;
-    unsigned int                    mMaturityPreferenceResponseId;
-    unsigned int                    mMaturityPreferenceNumRetries;
-    U8                              mLastKnownRequestMaturity;
-    U8                              mLastKnownResponseMaturity;
+    // the preference as asked of the server and as it answered
+    ALMaturityPreference            mMaturityPreference;
     LLCore::HttpRequest::policy_t   mHttpPolicy;
 
     bool            isMaturityPreferenceSyncedWithServer() const;
@@ -856,6 +855,7 @@ private:
 
     void            handlePreferredMaturityResult(U8 pServerMaturity);
     void            handlePreferredMaturityError();
+    void            handleMaturityPreferenceOutcome(ALMaturityPreference::Outcome outcome);
     void            reportPreferredMaturitySuccess();
     void            reportPreferredMaturityError();
 

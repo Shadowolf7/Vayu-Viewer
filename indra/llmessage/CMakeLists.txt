@@ -215,6 +215,7 @@ if(AL_BUILD_TESTS)
       tests/alnetimpairment_test.cpp
       ${session_capture_test}
       tests/io_test.cpp
+      tests/layerpatch_test.cpp
       tests/llavatarnamecache_test.cpp
       tests/llbuffer_test.cpp
       tests/llcorehttputil_test.cpp
@@ -233,6 +234,7 @@ if(AL_BUILD_TESTS)
       tests/llxorcipher_test.cpp
       tests/llzerocode_test.cpp
       tests/message_test.cpp
+      tests/patch_code_test.cpp
     LIBRARIES llfilesystem llmath llcorehttp llmessage llcommon
     SUPPORT llmessage_test_checks llmessage_test_pipes
   )
