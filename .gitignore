@@ -118,5 +118,9 @@ indra/newview/app_settings/syntax_default/
 AGENTS.md
 GEMINI.md
 CLAUDE.md
+.memfs/
+.opencode/
+.specify/
+skills-lock.json
 
 compile_commands.json
