@@ -418,7 +418,8 @@ void LLViewerTextureManager::init()
     LLViewerFetchedTexture::sDefaultImagep = LLViewerTextureManager::getFetchedTexture(IMG_DEFAULT, true, LLGLTexture::BOOST_UI);
 #endif
     LLViewerFetchedTexture::sDefaultImagep->dontDiscard();
-    LLViewerFetchedTexture::sDefaultImagep->setCategory(LLGLTexture::OTHER);
+    LLViewerFetchedTexture::sDefaultImagep->setBoostLevel(LLGLTexture::BOOST_UI);
+    LLViewerFetchedTexture::sDefaultImagep->setCategory(LLGLTexture::BOOST_UI);
 
     image_raw = new LLImageRaw(32,32,3);
     data = image_raw->getData();

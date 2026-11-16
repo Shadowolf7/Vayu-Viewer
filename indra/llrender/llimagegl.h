@@ -280,6 +280,16 @@ public:
     // two stay in lockstep instead of drifting into two different lists.
     static bool categoryAllowsCompression(S32 category);
 
+    // Whether a primary format is a block-compressed one. Said of a format, not of this
+    // image: the source format the members resolved never is one, and a compressed upload
+    // says so in its UploadFormat.
+    static bool isCompressedFormat(LLGLenum primary);
+
+    // Single source of truth for whether an OpenGL internal or primary format
+    // carries an alpha channel (covering uncompressed RGBA/Alpha and compressed
+    // BC1-alpha, BC2, BC3, and BC7 formats).
+    static bool formatHasAlpha(LLGLenum format);
+
     // The format one upload's data is in, when that is not the source format its component
     // count resolved (which the members hold, and which a raw upload uses). A
     // block-compressed pyramid carries its format here, on the call, rather than installing
@@ -507,10 +517,6 @@ private:
     bool storageFits(S32 width, S32 height, S32 intformat) const;
 
     void freePickMask();
-    // Whether a primary format is a block-compressed one. Said of a format, not of this
-    // image: the source format the members resolved never is one, and a compressed upload
-    // says so in its UploadFormat.
-    static bool isCompressedFormat(LLGLenum primary);
 
     // Bytes of one level at this size, as getBytes counts it: an integer level by its pixel format AND
     // type -- an R32UI texel is four bytes, which GL_RED_INTEGER alone cannot say -- and any other by dataFormatBytes

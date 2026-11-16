@@ -2215,6 +2215,7 @@ bool LLImageGL::categoryAllowsCompression(S32 category)
     case LLGLTexture::DYNAMIC_TEX:
     case LLGLTexture::MEDIA:
     case LLGLTexture::LOCAL:
+    case LLGLTexture::OTHER:
         return false;
     default:
         return true;
@@ -3674,6 +3675,29 @@ bool LLImageGL::isCompressedFormat(LLGLenum primary)
         break;
     }
     return is_compressed;
+}
+
+// static
+bool LLImageGL::formatHasAlpha(LLGLenum format)
+{
+    switch (format)
+    {
+        case GL_RGBA:
+        case GL_ALPHA:
+        case GL_SRGB_ALPHA:
+        case GL_LUMINANCE_ALPHA:
+        case GL_COMPRESSED_RGBA_BPTC_UNORM:
+        case GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM:
+        case GL_COMPRESSED_RGBA_S3TC_DXT5_EXT:
+        case GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT:
+        case GL_COMPRESSED_RGBA_S3TC_DXT3_EXT:
+        case GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT3_EXT:
+        case GL_COMPRESSED_RGBA_S3TC_DXT1_EXT:
+        case GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT1_EXT:
+            return true;
+        default:
+            return false;
+    }
 }
 
 //----------------------------------------------------------------------------

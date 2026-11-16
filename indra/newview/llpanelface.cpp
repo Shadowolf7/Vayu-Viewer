@@ -82,8 +82,7 @@
 #include "lluictrlfactory.h"
 #include "llpluginclassmedia.h"
 #include "llviewertexturelist.h"// Update sel manager as to which channel we're editing so it can reflect the correct overlay UI
-
-
+#include "llimagegl.h"
 
 #include "llagent.h"
 #include "llfilesystem.h"
@@ -1257,12 +1256,18 @@ void LLPanelFace::updateUI(bool force_set_values /*false*/)
                 {
                     case GL_RGBA:
                     case GL_ALPHA:
+                    case GL_SRGB_ALPHA:
                     case GL_RED:
+                    case GL_RG:
                     case GL_RGB:
+                    case GL_SRGB:
                         break;
                     default:
                     {
-                        LL_WARNS() << "Unexpected tex format in LLPanelFace..." << LL_ENDL;
+                        if (!LLImageGL::isCompressedFormat(image_format))
+                        {
+                            LL_WARNS() << "Unexpected tex format in LLPanelFace: 0x" << std::hex << image_format << std::dec << LL_ENDL;
+                        }
                     }
                     break;
                 }
@@ -3381,11 +3386,17 @@ void LLPanelFace::onSelectTexture()
         {
         case GL_RGBA:
         case GL_ALPHA:
+        case GL_SRGB_ALPHA:
         case GL_RED:
+        case GL_RG:
         case GL_RGB:
+        case GL_SRGB:
             break;
         default:
-            LL_WARNS() << "Unexpected tex format in LLPanelFace..." << LL_ENDL;
+            if (!LLImageGL::isCompressedFormat(image_format))
+            {
+                LL_WARNS() << "Unexpected tex format in LLPanelFace: 0x" << std::hex << image_format << std::dec << LL_ENDL;
+            }
             break;
         }
 
@@ -5359,7 +5370,7 @@ void LLPanelFace::LLSelectedTE::getImageFormat(LLGLenum& image_format_to_return,
             {
                 format = image->getPrimaryFormat();
                 missing = image->isMissingAsset();
-                if (format == GL_RGBA || image->isAlphaOnly())
+                if (LLImageGL::formatHasAlpha(format) || image->isAlphaOnly())
                 {
                     mHasAlpha = true;
                 }
@@ -5417,17 +5428,13 @@ void LLPanelFace::LLSelectedTE::getTexId(LLUUID& id, bool& identical)
 
             if (!id.isNull() && LLViewerMedia::getInstance()->textureHasMedia(id))
             {
-                if (te)
+                if (te && te->getID().notNull())
                 {
-                    LLViewerTexture* tex = te->getID().notNull() ? gTextureList.findImage(te->getID(), TEX_LIST_STANDARD) : NULL;
-                    if(!tex)
-                    {
-                        tex = LLViewerFetchedTexture::sDefaultImagep;
-                    }
-                    if (tex)
-                    {
-                        id = tex->getID();
-                    }
+                    id = te->getID();
+                }
+                else if (LLViewerFetchedTexture::sDefaultImagep)
+                {
+                    id = LLViewerFetchedTexture::sDefaultImagep->getID();
                 }
             }
             return id;
@@ -5592,7 +5599,7 @@ void LLPanelFace::LLSelectedTEMaterial::getCurrentDiffuseAlphaMode(U8& diffuse_a
             LLViewerTexture* image = object->getTEImage(face);
             if (image)
             {
-                if (image->getPrimaryFormat() == GL_RGBA || image->isAlphaOnly())
+                if (LLImageGL::formatHasAlpha(image->getPrimaryFormat()) || image->isAlphaOnly())
                 {
                     has_alpha = true;
                 }

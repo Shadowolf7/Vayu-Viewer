@@ -2189,4 +2189,53 @@ namespace
         CHECK_FALSE(img->getIsAlphaMask());
         CHECK(owner->mChanges == 3);
     }
+
+    TEST_CASE("LLImageGL: formatHasAlpha distinguishes alpha from non-alpha formats", "[LLImageGL]")
+    {
+        // Uncompressed alpha formats
+        CHECK(LLImageGL::formatHasAlpha(GL_RGBA));
+        CHECK(LLImageGL::formatHasAlpha(GL_ALPHA));
+        CHECK(LLImageGL::formatHasAlpha(GL_SRGB_ALPHA));
+        CHECK(LLImageGL::formatHasAlpha(GL_LUMINANCE_ALPHA));
+
+        // Block-compressed alpha formats
+        CHECK(LLImageGL::formatHasAlpha(GL_COMPRESSED_RGBA_BPTC_UNORM));
+        CHECK(LLImageGL::formatHasAlpha(GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM));
+        CHECK(LLImageGL::formatHasAlpha(GL_COMPRESSED_RGBA_S3TC_DXT5_EXT));
+        CHECK(LLImageGL::formatHasAlpha(GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT));
+        CHECK(LLImageGL::formatHasAlpha(GL_COMPRESSED_RGBA_S3TC_DXT3_EXT));
+        CHECK(LLImageGL::formatHasAlpha(GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT3_EXT));
+        CHECK(LLImageGL::formatHasAlpha(GL_COMPRESSED_RGBA_S3TC_DXT1_EXT));
+        CHECK(LLImageGL::formatHasAlpha(GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT1_EXT));
+
+        // Non-alpha formats
+        CHECK_FALSE(LLImageGL::formatHasAlpha(GL_RGB));
+        CHECK_FALSE(LLImageGL::formatHasAlpha(GL_SRGB));
+        CHECK_FALSE(LLImageGL::formatHasAlpha(GL_RED));
+        CHECK_FALSE(LLImageGL::formatHasAlpha(GL_RG));
+        CHECK_FALSE(LLImageGL::formatHasAlpha(GL_COMPRESSED_RED_RGTC1));
+        CHECK_FALSE(LLImageGL::formatHasAlpha(GL_COMPRESSED_SIGNED_RED_RGTC1));
+        CHECK_FALSE(LLImageGL::formatHasAlpha(GL_COMPRESSED_RG_RGTC2));
+        CHECK_FALSE(LLImageGL::formatHasAlpha(GL_COMPRESSED_SIGNED_RG_RGTC2));
+        CHECK_FALSE(LLImageGL::formatHasAlpha(GL_COMPRESSED_RGB_BPTC_SIGNED_FLOAT));
+        CHECK_FALSE(LLImageGL::formatHasAlpha(GL_COMPRESSED_RGB_BPTC_UNSIGNED_FLOAT));
+    }
+
+    TEST_CASE("LLImageGL: categoryAllowsCompression excludes UI, local, media, and other categories", "[LLImageGL]")
+    {
+        CHECK_FALSE(LLImageGL::categoryAllowsCompression(LLGLTexture::BOOST_UI));
+        CHECK_FALSE(LLImageGL::categoryAllowsCompression(LLGLTexture::BOOST_ICON));
+        CHECK_FALSE(LLImageGL::categoryAllowsCompression(LLGLTexture::BOOST_THUMBNAIL));
+        CHECK_FALSE(LLImageGL::categoryAllowsCompression(LLGLTexture::BOOST_PREVIEW));
+        CHECK_FALSE(LLImageGL::categoryAllowsCompression(LLGLTexture::BOOST_HUD));
+        CHECK_FALSE(LLImageGL::categoryAllowsCompression(LLGLTexture::DYNAMIC_TEX));
+        CHECK_FALSE(LLImageGL::categoryAllowsCompression(LLGLTexture::MEDIA));
+        CHECK_FALSE(LLImageGL::categoryAllowsCompression(LLGLTexture::LOCAL));
+        CHECK_FALSE(LLImageGL::categoryAllowsCompression(LLGLTexture::OTHER));
+
+        // In-world texture categories that should allow compression
+        CHECK(LLImageGL::categoryAllowsCompression(LLGLTexture::BOOST_NONE));
+        CHECK(LLImageGL::categoryAllowsCompression(LLGLTexture::BOOST_HIGH));
+        CHECK(LLImageGL::categoryAllowsCompression(LLGLTexture::BOOST_SUPER_HIGH));
+    }
 }

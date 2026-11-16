@@ -111,6 +111,7 @@
 #include "llmeshrepository.h"
 #include "llgltfmateriallist.h"
 #include "llgl.h"
+#include "llimagegl.h"
 #include "gltf/asset.h"
 // [RLVa:KB] - Checked: 2011-05-22 (RLVa-1.3.1a)
 #include "rlvactions.h"
@@ -6213,20 +6214,27 @@ bool LLViewerObject::isImageAlphaBlended(const U8 te) const
         return true;
     }
     LLGLenum format = image ? image->getPrimaryFormat() : GL_RGB;
+    if (LLImageGL::formatHasAlpha(format))
+    {
+        return true;
+    }
+    if (LLImageGL::isCompressedFormat(format))
+    {
+        // Block-compressed formats without alpha (BC4, BC5, BC6H) never alpha blend
+        return false;
+    }
     switch (format)
     {
-        case GL_RGBA:
-        {
-            return true;
-        }
-        break;
-
-        // a luminance source is R8 too, and has no alpha
+        // uncompressed sources without alpha
         case GL_RGB:
-        case GL_RED: break;
+        case GL_SRGB:
+        case GL_RED:
+        case GL_RG:
+            break;
         default:
         {
-            LL_WARNS() << "Unexpected tex format in LLViewerObject::isImageAlphaBlended...returning no alpha." << LL_ENDL;
+            LL_WARNS() << "Unexpected tex format in LLViewerObject::isImageAlphaBlended: 0x" << std::hex << format << std::dec
+                       << "...returning no alpha." << LL_ENDL;
         }
         break;
     }
