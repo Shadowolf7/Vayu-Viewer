@@ -6214,32 +6214,7 @@ bool LLViewerObject::isImageAlphaBlended(const U8 te) const
         return true;
     }
     LLGLenum format = image ? image->getPrimaryFormat() : GL_RGB;
-    if (LLImageGL::formatHasAlpha(format))
-    {
-        return true;
-    }
-    if (LLImageGL::isCompressedFormat(format))
-    {
-        // Block-compressed formats without alpha (BC4, BC5, BC6H) never alpha blend
-        return false;
-    }
-    switch (format)
-    {
-        // uncompressed sources without alpha
-        case GL_RGB:
-        case GL_SRGB:
-        case GL_RED:
-        case GL_RG:
-            break;
-        default:
-        {
-            LL_WARNS() << "Unexpected tex format in LLViewerObject::isImageAlphaBlended: 0x" << std::hex << format << std::dec
-                       << "...returning no alpha." << LL_ENDL;
-        }
-        break;
-    }
-
-    return false;
+    return LLImageGL::formatHasAlpha(format);
 }
 
 LLViewerTexture *LLViewerObject::getTENormalMap(const U8 face) const

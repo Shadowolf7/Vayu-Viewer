@@ -2221,7 +2221,7 @@ namespace
         CHECK_FALSE(LLImageGL::formatHasAlpha(GL_COMPRESSED_RGB_BPTC_UNSIGNED_FLOAT));
     }
 
-    TEST_CASE("LLImageGL: categoryAllowsCompression excludes UI, local, media, and other categories", "[LLImageGL]")
+    TEST_CASE("LLImageGL: categoryAllowsCompression excludes UI, local, and media categories", "[LLImageGL]")
     {
         CHECK_FALSE(LLImageGL::categoryAllowsCompression(LLGLTexture::BOOST_UI));
         CHECK_FALSE(LLImageGL::categoryAllowsCompression(LLGLTexture::BOOST_ICON));
@@ -2231,9 +2231,9 @@ namespace
         CHECK_FALSE(LLImageGL::categoryAllowsCompression(LLGLTexture::DYNAMIC_TEX));
         CHECK_FALSE(LLImageGL::categoryAllowsCompression(LLGLTexture::MEDIA));
         CHECK_FALSE(LLImageGL::categoryAllowsCompression(LLGLTexture::LOCAL));
-        CHECK_FALSE(LLImageGL::categoryAllowsCompression(LLGLTexture::OTHER));
 
-        // In-world texture categories that should allow compression
+        // In-world and default texture categories that should allow compression
+        CHECK(LLImageGL::categoryAllowsCompression(LLGLTexture::OTHER));
         CHECK(LLImageGL::categoryAllowsCompression(LLGLTexture::BOOST_NONE));
         CHECK(LLImageGL::categoryAllowsCompression(LLGLTexture::BOOST_HIGH));
         CHECK(LLImageGL::categoryAllowsCompression(LLGLTexture::BOOST_SUPER_HIGH));

@@ -2215,7 +2215,6 @@ bool LLImageGL::categoryAllowsCompression(S32 category)
     case LLGLTexture::DYNAMIC_TEX:
     case LLGLTexture::MEDIA:
     case LLGLTexture::LOCAL:
-    case LLGLTexture::OTHER:
         return false;
     default:
         return true;

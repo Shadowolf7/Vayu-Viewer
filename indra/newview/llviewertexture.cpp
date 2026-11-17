@@ -2525,11 +2525,10 @@ bool LLViewerFetchedTexture::updateFetch()
         S32 fetch_request_response = -1;
         S32 worker_discard = -1;
         // Single source of truth for block-compression eligibility:
-        // Requires global compression enabled, GL texture support, an eligible
-        // category, and a resolved material slot role (EVayuTextureJob != Unknown).
+        // Requires global compression enabled, GL texture support, and an eligible category.
         // Once decided, allow_compression is passed to LLTextureFetch and trusted downstream.
-        const bool allow_compression = LLImageGL::sCompressTextures && mGLTexturep->getAllowCompression() &&
-                                       LLImageGL::categoryAllowsCompression(getCategory()) && mTextureJob != EVayuTextureJob::Unknown;
+        const bool allow_compression =
+            LLImageGL::sCompressTextures && mGLTexturep->getAllowCompression() && LLImageGL::categoryAllowsCompression(getCategory());
         LLTextureFetch::FetchStatus status;
         fetch_request_response = LLAppViewer::getTextureFetch()->createRequest(mFTType, mUrl, getID(), getTargetHost(), decode_priority,
             w, h, c, desired_discard, needsAux(), mCanUseHTTP, allow_compression, status, mTextureJob);

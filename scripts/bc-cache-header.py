@@ -48,16 +48,19 @@ def cache_root():
 
 def entries(root):
     """Yield (uuid, extension, path) for every entry under the cache root."""
-    bccache = os.path.join(root, "bccache")
-    if not os.path.isdir(bccache):
-        sys.exit("no bccache directory under %s" % root)
-    for shard in sorted(os.listdir(bccache)):
-        shard_dir = os.path.join(bccache, shard)
+    cachedir = os.path.join(root, "texturecache")
+    if not os.path.isdir(cachedir):
+        cachedir = os.path.join(root, "bccache")
+    if not os.path.isdir(cachedir):
+        sys.exit("no texturecache or bccache directory under %s" % root)
+    for shard in sorted(os.listdir(cachedir)):
+        shard_dir = os.path.join(cachedir, shard)
         if not os.path.isdir(shard_dir):
             continue
         for name in sorted(os.listdir(shard_dir)):
             stem, _, ext = name.partition(".")
-            yield stem, ext, os.path.join(shard_dir, name)
+            if ext in ("bc1", "bc3", "bc4", "bc5", "bc7"):
+                yield stem, ext, os.path.join(shard_dir, name)
 
 
 def read_header(path):
@@ -115,11 +118,15 @@ def main():
 
     wanted = {u.lower() for u in args.uuids}
     found = set()
-    for uuid, ext, path in entries(root):
-        if not args.all and uuid.lower() not in wanted:
-            continue
-        found.add(uuid.lower())
-        print(describe(uuid, ext, path, read_header(path)))
+    try:
+        for uuid, ext, path in entries(root):
+            if not args.all and uuid.lower() not in wanted:
+                continue
+            found.add(uuid.lower())
+            print(describe(uuid, ext, path, read_header(path)))
+    except BrokenPipeError:
+        sys.stderr.close()
+        return 0
 
     for missing in sorted(wanted - found):
         print("%-46s  not in cache" % missing, file=sys.stderr)

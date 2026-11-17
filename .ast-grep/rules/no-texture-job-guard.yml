@@ -1,0 +1,12 @@
+id: no-texture-job-guard
+message: "Do not write defensive guards on mTextureJob ==/!= EVayuTextureJob::Unknown. Internal contracts and cache headers self-describe texture eligibility; middle-pipeline gating causes silent BC cache bypass."
+severity: error
+language: cpp
+files:
+  - "indra/newview/**"
+rule:
+  any:
+    - pattern: "$$$PRE && mTextureJob != EVayuTextureJob::Unknown"
+    - pattern: "mTextureJob != EVayuTextureJob::Unknown && $$$POST"
+    - pattern: "if (mTextureJob != EVayuTextureJob::Unknown) { $$$BODY }"
+    - pattern: "if (mTextureJob == EVayuTextureJob::Unknown) { $$$BODY }"

@@ -3,10 +3,13 @@ message: "Ranged-for loop copies elements by value. Use 'const auto&' or 'auto&'
 severity: warning
 language: cpp
 rule:
-  pattern: "for (auto $VAR : $CONTAINER) { $$$BODY }"
-  not:
-    any:
-      - pattern: "for (auto& $VAR : $CONTAINER) { $$$BODY }"
-      - pattern: "for (const auto& $VAR : $CONTAINER) { $$$BODY }"
-      - pattern: "for (auto&& $VAR : $CONTAINER) { $$$BODY }"
-      - pattern: "for (const auto $VAR : $CONTAINER) { $$$BODY }"
+  kind: for_range_loop
+  all:
+    - has:
+        field: declarator
+        kind: identifier
+    - has:
+        field: type
+        any:
+          - kind: placeholder_type_specifier
+          - pattern: "const auto"
