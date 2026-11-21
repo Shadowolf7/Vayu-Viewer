@@ -230,7 +230,7 @@ public:
     LLVOCacheEntry::vocache_entry_set_t   mVisibleEntries; //must-be-created visible entries wait for objects creation.
     std::vector<LLVOCacheEntry*>          mWaitingList; //transient list of the visible entries waiting for object creation, sorted by createVisibleObjects()
     const LLViewerOctreeGroup*            mLastWalkedGroup = nullptr; // where updateVisibleEntries' walk of the visible groups stopped, compared only
-    std::set<U32>                          mNonCacheableCreatedList; //list of local ids of all non-cacheable objects
+    std::set<U32>                          mNonCacheableCreatedList; //list of local ids of all objects made in this region, from the cache or not
     LLVOCacheEntry::vocache_gltf_overrides_map_t mGLTFOverridesLLSD; // for materials
 
     // time?
@@ -1223,12 +1223,14 @@ void LLViewerRegion::dirtyAllPatches()
 //physically delete the cache entry
 void LLViewerRegion::killCacheEntry(LLVOCacheEntry* entry, bool for_rendering)
 {
-    if(!entry || !entry->isValid())
+    // An entry refused, invalid until the region sends its object again, is killed all the same: it holds its
+    // children, which an object given the local ID later would load.
+    if(!entry || !entry->isKillable())
     {
         return;
     }
 
-    if(for_rendering && !entry->isState(LLVOCacheEntry::ACTIVE))
+    if(for_rendering && entry->isValid() && !entry->isState(LLVOCacheEntry::ACTIVE))
     {
         addNewObject(entry); //force to add to rendering pipeline
     }
@@ -1252,14 +1254,10 @@ void LLViewerRegion::killCacheEntry(LLVOCacheEntry* entry, bool for_rendering)
     //remove from the forced visible list
     mImpl->mVisibleEntries.erase(entry);
 
-    //disconnect from parent if it is a child
+    //disconnect from parent if it is a child, a refused parent's entry among those that hold children
     if(entry->getParentID() > 0)
     {
-        LLVOCacheEntry* parent = getCacheEntry(entry->getParentID());
-        if(parent)
-        {
-            parent->removeChild(entry);
-        }
+        entry->leaveParent(mImpl->mCacheMap);
     }
     else if(entry->getNumOfChildren() > 0)//remove children from cache if has any
     {
@@ -1279,6 +1277,7 @@ void LLViewerRegion::killCacheEntry(LLVOCacheEntry* entry, bool for_rendering)
     entry->setState(LLVOCacheEntry::INACTIVE);
     entry->removeOctreeEntry();
     entry->setValid(false);
+    entry->forgetRefusal();
 
 }
 
@@ -1290,6 +1289,26 @@ void LLViewerRegion::killCacheEntry(U32 local_id)
     {
         mGLTFOverridesDirty = true;
     }
+}
+
+// Held at WAITING, the entry would wait for an object that is gone; valid under the CRC it was cached with, the region's
+// update for it would be taken for the bytes refused (cacheFullUpdate), and the object made in neither this session nor
+// the next. Its children stay with it, for the object the region's update makes to load, through the entry made valid
+// again (LLDrawable::init) or through findOrphans while it is not; a kill takes them with it (killCacheEntry).
+void LLViewerRegion::refuseCachedUpdate(LLVOCacheEntry* entry)
+{
+    if (mDead || !entry)
+    {
+        return;
+    }
+
+    mImpl->mVisibleEntries.erase(entry);
+    mImpl->mWaitingSet.erase(entry);
+    removeFromVOCacheTree(entry);
+    entry->setState(LLVOCacheEntry::INACTIVE);
+    entry->setValid(false);
+    entry->refuseUpdate();
+    mCacheDirty = true;
 }
 
 U32 LLViewerRegion::getNumOfActiveCachedObjects() const
@@ -1732,22 +1751,30 @@ void LLViewerRegion::createVisibleObjects()
     // And for no more than AlchemyObjectCreationTime a frame, every region's together, a few at the least: a fast
     // camera that brings a crowd of cached objects into view would otherwise make the count's worth in one frame, and
     // build them all in the next. Not while the login or teleport screen lifts the count (-2); the count turned off
-    // (-1) leaves the time.
+    // (-1) leaves the time. Each region makes one at the least, past the frame's few: the agent's region updates first,
+    // and the others in an order that is the same frame after frame while every one is updated (LLWorld::updateRegions),
+    // so one could spend the time every frame, and a region that made nothing was taken for a quiet one, its cull slowed
+    // to every few frames with its objects still waiting (LLVOCachePartition::cull).
     const bool timed = throttle > -2 && sObjectCreationSeconds > 0.f;
     LLTimer    creation_timer;
-    bool has_new_obj = false;
+    U32  created = 0;
     for (LLVOCacheEntry* vo_entry : waiting)
     {
         if(vo_entry->getState() < LLVOCacheEntry::WAITING)
         {
-            if (timed && sObjectsCreated >= MIN_OBJECTS_CREATED
+            if (timed && created >= MIN_REGION_OBJECTS_CREATED && sObjectsCreated >= MIN_OBJECTS_CREATED
                 && sObjectCreationSpent + creation_timer.getElapsedTimeF32() >= sObjectCreationSeconds)
             {
                 break;
             }
-            addNewObject(vo_entry);
-            has_new_obj = true;
-            ++sObjectsCreated;
+            // Only an object made counts toward either: an entry that makes none, its object in two regions at once
+            // (addNewObject), is tried again next frame, and would stand for the region's one, and some of the frame's
+            // few, every frame. The setting's count goes on counting tries, the work it bounds.
+            if (addNewObject(vo_entry))
+            {
+                ++created;
+                ++sObjectsCreated;
+            }
             if(throttle > 0 && --throttle == 0)
             {
                 break;
@@ -1756,7 +1783,7 @@ void LLViewerRegion::createVisibleObjects()
     }
     sObjectCreationSpent += creation_timer.getElapsedTimeF32();
 
-    mImpl->mVOCachePartition->setCullHistory(has_new_obj);
+    mImpl->mVOCachePartition->setCullHistory(created > 0);
 
     return;
 }
@@ -2802,7 +2829,8 @@ void LLViewerRegion::setSimulatorFeatures(const LLSD& sim_features)
     LLAppViewer::instance()->postToMainCoro(work);
 }
 
-//this is called when the parent is not cacheable.
+//this is called when an object is made from the region's update rather than its cache entry: the parent is not
+//cacheable, or its entry's update was refused.
 //move all orphan children out of cache and insert to rendering octree.
 void LLViewerRegion::findOrphans(U32 parent_id)
 {
@@ -2817,6 +2845,19 @@ void LLViewerRegion::findOrphans(U32 parent_id)
         }
         children->clear();
         mOrphanMap.erase(parent_id);
+    }
+
+    // And those a refused entry holds (refuseCachedUpdate). An object made from its entry takes the entry, which loads
+    // them (LLDrawable::init), but only a valid one: this object was made from the region's update, and the entry stays
+    // invalid until the region sends its bytes again, or for good where it sent them refused twice.
+    LLVOCacheEntry* refused = getCacheEntry(parent_id, false);
+    if (refused && !refused->isValid() && refused->wasRefused())
+    {
+        while (LLVOCacheEntry* child = refused->getChild())
+        {
+            //parent is visible, so is the child.
+            addVisibleChildCacheEntry(NULL, child);
+        }
     }
 }
 
@@ -2883,77 +2924,50 @@ void LLViewerRegion::decodeBoundingInfo(LLVOCacheEntry* entry)
     U32 parent_id = entry->getDP() ? LLViewerObject::extractSpatialExtents(entry->getDP(), pos, scale, rot) : entry->getParentID();
 
     U32 old_parent_id = entry->getParentID();
-    bool same_old_parent = false;
     if(parent_id != old_parent_id) //parent changed.
     {
-        if(old_parent_id > 0) //has an old parent, disconnect it
+        if(old_parent_id > 0) //has an old parent, disconnect it, a refused one as a valid one
         {
-            LLVOCacheEntry* old_parent = getCacheEntry(old_parent_id);
-            if(old_parent)
+            LLVOCacheEntry* old_parent = entry->leaveParent(mImpl->mCacheMap);
+            if(old_parent && !old_parent->isState(LLVOCacheEntry::INACTIVE))
             {
-                old_parent->removeChild(entry);
-                if(!old_parent->isState(LLVOCacheEntry::INACTIVE))
-                {
-                    mImpl->mVisibleEntries.erase(entry);
-                    entry->setState(LLVOCacheEntry::INACTIVE);
-                }
+                mImpl->mVisibleEntries.erase(entry);
+                entry->setState(LLVOCacheEntry::INACTIVE);
             }
         }
-        entry->setParentID(parent_id);
-    }
-    else
-    {
-        same_old_parent = true;
     }
 
-    if(parent_id > 0) //has a new parent
+    //the new parent, where it has a valid entry in the cache
+    LLVOCacheEntry* parent = parent_id > 0 ? getCacheEntry(parent_id) : NULL;
+    switch(entry->takeParent(parent_id, parent, isNonCacheableObjectCreated(parent_id)))
     {
-        //1, find the parent in cache
-        LLVOCacheEntry* parent = getCacheEntry(parent_id);
-
-        //2, parent is not in the cache, put into the orphan list.
-        if(!parent)
-        {
-            if(!same_old_parent)
-            {
-                //check if parent is non-cacheable and already created
-                if(isNonCacheableObjectCreated(parent_id))
-                {
-                    //parent is visible, so is the child.
-                    addVisibleChildCacheEntry(NULL, entry);
-                }
-                else
-                {
-                    entry->setBoundingInfo(pos, scale);
-                    mOrphanMap[parent_id].push_back(entry->getLocalID());
-                }
-            }
-            else
-            {
-                entry->setBoundingInfo(pos, scale);
-            }
-        }
-        else //parent in cache.
-        {
-            if(!parent->isState(LLVOCacheEntry::INACTIVE))
-            {
-                //parent is visible, so is the child.
-                addVisibleChildCacheEntry(parent, entry);
-            }
-            else
-            {
-                entry->setBoundingInfo(pos, scale);
-                parent->addChild(entry);
-
-                if(parent->getGroup()) //re-insert parent to vo-cache tree because its bounding info changed.
-                {
-                    removeFromVOCacheTree(parent);
-                    addToVOCacheTree(parent);
-                }
-            }
-        }
-
+    case LLVOCacheEntry::EChildPlace::ROOT:
+        break;
+    case LLVOCacheEntry::EChildPlace::MADE:
+        //parent is visible, so is the child.
+        addVisibleChildCacheEntry(parent, entry);
         return;
+    case LLVOCacheEntry::EChildPlace::WITH_PARENT:
+        entry->setBoundingInfo(pos, scale);
+        parent->addChild(entry);
+
+        if(parent->getGroup()) //re-insert parent to vo-cache tree because its bounding info changed.
+        {
+            removeFromVOCacheTree(parent);
+            addToVOCacheTree(parent);
+        }
+        return;
+    case LLVOCacheEntry::EChildPlace::ORPHAN:
+    {
+        entry->setBoundingInfo(pos, scale);
+        //one naming the parent it named before may be waiting already
+        std::vector<U32>& orphans = mOrphanMap[parent_id];
+        if(std::find(orphans.begin(), orphans.end(), entry->getLocalID()) == orphans.end())
+        {
+            orphans.push_back(entry->getLocalID());
+        }
+        return;
+    }
     }
 
     //
@@ -3006,6 +3020,11 @@ LLViewerRegion::eCacheUpdateResult LLViewerRegion::cacheFullUpdate(LLDataPackerB
     }
 
     LLVOCacheEntry* entry = getCacheEntry(local_id, false);
+
+    if (entry && entry->isRefused(crc))
+    {   // the region sent bytes already refused, and asked for again: they wait for the object to change
+        return CACHE_UPDATE_DUPE;
+    }
 
     if (entry)
     {
@@ -3162,6 +3181,12 @@ bool LLViewerRegion::probeCache(U32 local_id, U32 crc, U32 flags, U8 &cache_miss
     }
 
     LLVOCacheEntry* entry = getCacheEntry(local_id, false);
+
+    if (entry && entry->isRefused(crc))
+    {   // nothing to ask for: what the region would send has been refused
+        cache_miss_type = CACHE_MISS_TYPE_NONE;
+        return true;
+    }
 
     if (entry)
     {

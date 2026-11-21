@@ -260,6 +260,9 @@ public:
     void addActiveCacheEntry(LLVOCacheEntry* entry);
     void removeActiveCacheEntry(LLVOCacheEntry* entry, LLDrawable* drawablep);
     void killCacheEntry(U32 local_id); //physically delete the cache entry
+    // The update made from `entry` was refused and its object killed (LLViewerObject::processUpdateMessage): the entry
+    // leaves the cache's tree and every list of what to make, invalid until the region sends the object again.
+    void refuseCachedUpdate(LLVOCacheEntry* entry);
 
     // Like idleUpdate, but forces everything to complete regardless of
     // how long it takes.
@@ -571,6 +574,8 @@ public:
     static U32  sObjectsCreated;
     // The objects a frame makes whatever they take, so that the caches empty however slowly each is made.
     static constexpr U32 MIN_OBJECTS_CREATED = 8;
+    // And those each region with objects waiting to be made makes, past the frame's.
+    static constexpr U32 MIN_REGION_OBJECTS_CREATED = 1;
     // How near the camera a visible group of the cache's must come, in metres past its bounds, for updateVisibleEntries
     // to walk it every frame; the farther ones take turns in the time the update has.
     static constexpr F32 WALK_NEAR_RADIUS = 64.f;

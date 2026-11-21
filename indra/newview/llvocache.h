@@ -147,6 +147,30 @@ public:
     U32  getParentID() const {return mParentID;}
     bool isChild() const {return mParentID > 0;}
 
+    // Where an entry goes once a full update or a probe has decoded it.
+    enum class EChildPlace
+    {
+        // Not a child: its data names no parent.
+        ROOT,
+        // Queued to be made, its parent made: from its entry, where it has a
+        // valid one, and the parent's drawable made (ACTIVE).
+        MADE,
+        // On its parent's entry, which is not made yet, though it may be
+        // queued or waiting for its drawable, to be made as the parent's
+        // drawable is (LLDrawable::init).
+        WITH_PARENT,
+        // Among the region's orphans, until its parent comes.
+        ORPHAN
+    };
+    // This entry takes parent_id, which its data names, 0 for none, as its
+    // parent, the caller having taken it off the entry of the one it named
+    // before, and says where it goes. parent is the parent's valid entry, null
+    // where it has none, and parent_made, where it has none, whether an object
+    // is made under the parent's local ID. A child goes where it would whether
+    // or not it named the parent before: one an update or a probe makes valid
+    // again names the parent it named, and may be waiting nowhere.
+    EChildPlace takeParent(U32 parent_id, const LLVOCacheEntry* parent, bool parent_made);
+
     void addChild(LLVOCacheEntry* entry);
     void removeChild(LLVOCacheEntry* entry);
     void removeAllChildren();
@@ -159,6 +183,21 @@ public:
 
     void setValid(bool valid = true) {mValid = valid;}
     bool isValid() const {return mValid;}
+
+    // The update made from the entry's bytes was refused, cut short (LLViewerObject::processUpdateMessage), and the
+    // object asked for whole again. The first refusal at a CRC sets the entry's CRC apart from the region's, so that
+    // the update the region sends replaces the bytes rather than being taken for them; a second, of the bytes the
+    // region sent, leaves the entry refused at that CRC (isRefused) until its object changes, rather than asked for
+    // and refused again for as long as it is in view.
+    void refuseUpdate();
+    bool isRefused(U32 crc) const { return mRefusals > 1 && crc == mRefusedCRC; }
+    // Whether an update made from the entry was refused since it was last killed. Refused and not yet sent again, the
+    // entry is invalid, and holds its children for the object the region's update makes (LLViewerRegion::findOrphans).
+    bool wasRefused() const { return mRefusals > 0; }
+    // Whether a kill of the entry's local ID reaches it: a valid entry, or one invalid only for a refused update.
+    bool isKillable() const { return mValid || wasRefused(); }
+    // A kill lets the refused update go with the object it was of.
+    void forgetRefusal() { mRefusals = 0; }
 
     void setUpdateFlags(U32 flags) {mUpdateFlags = flags;}
     U32  getUpdateFlags() const    {return mUpdateFlags;}
@@ -222,11 +261,17 @@ public:
     static void releaseAll(vocache_entry_map_t& entries, std::initializer_list<vocache_entry_set_t*> sets,
                            const std::function<void(LLVOCacheEntry*)>& leave_tree, std::vector<LLPointer<LLVOCacheEntry>>& keep);
 
-    // What a kill of local_id takes from a region's cache: its entry, through `kill_entry`, where it has a valid one,
-    // and its glTF overrides whether or not it has, since an object given the local ID later would take them. True
-    // where it took any overrides.
+    // What a kill of local_id takes from a region's cache: its entry, through `kill_entry`, where it has one a kill
+    // reaches (isKillable), and its glTF overrides whether or not it has, since an object given the local ID later
+    // would take them. True where it took any overrides.
     static bool killLocalID(U32 local_id, vocache_entry_map_t& entries, vocache_gltf_overrides_map_t& overrides,
                             const std::function<void(LLVOCacheEntry*)>& kill_entry);
+
+    // Takes this entry off the entry of the parent it names in `entries`, where that entry holds its children: a
+    // valid one, or one invalid for a refused update (wasRefused), which keeps them for the object the region's update
+    // makes. Returns that entry, null where there is none, this entry then naming its parent still: a killed entry
+    // holds no children.
+    LLVOCacheEntry* leaveParent(const vocache_entry_map_t& entries);
 
 // [SL:KB] - Patch: World-Derender | Checked: 2014-08-10 (Catznip-3.7)
     vocache_entry_set_t::const_iterator getChildrenBegin() const { return mChildrenList.begin(); }
@@ -241,6 +286,8 @@ protected:
     U32                         mUpdateFlags; //receive from sim
     S32                         mHitCount;
     S32                         mCRCChangeCount;    // in memory only, for dumpCache
+    U32                         mRefusedCRC = 0;    // the CRC refuseUpdate last refused at, in memory only
+    U8                          mRefusals   = 0;    // and how often, to 2
     mutable LLDataPackerBinaryBuffer    mDP;
     U8                          *mBuffer;
 
@@ -296,6 +343,43 @@ public:
 
     bool isFrontCull() const {return mFrontCull;}
 
+    // Whether the front cull runs on `frame` while the partition is quiet and the camera rests. Each block of
+    // max(period / 2, 4) frames runs it on the one frame `idle_hash` picks, and moves `idle_hash` on at its first frame,
+    // so the culls fall one more than a block apart, and two fall together once the hash wraps.
+    static bool quietFrontCullDue(U32 frame, U32 period, U32& idle_hash);
+
+    // What the front cull knows of a group in view whose objects are large enough to make, with occlusion on. The
+    // frames are the octree's counter: the group was last in view to the world camera at mGroupSeenFrame, and the
+    // partition's front cull before this one ran at mLastFrontCull, 0 for none.
+    struct GroupCullFacts
+    {
+        S32  mCurrentFrame   = 0;
+        S32  mLastFrontCull  = 0;
+        S32  mGroupSeenFrame = 0;
+        U32  mPeriod         = 0;     // the partition's update period, mLODPeriod
+        bool mNeedsUpdate    = false; // the group's frame to be asked again (LLOcclusionCullingGroup::needsUpdate)
+        bool mHoldsCamera    = false; // its box holds the camera, so no query will ask it (doOcclusion)
+        bool mAnswerAwaited  = false; // a query is out, or one was asked this frame
+        bool mOccluded       = false; // its last answer found it hidden
+        bool mRetestDue      = false; // no query is out and its last is a period old (isOcclusionRetestDue)
+    };
+    struct GroupCullAction
+    {
+        bool mAsk     = false; // ask an occlusion query (addOccluders)
+        bool mVisible = false; // add it to the region's visible groups, whose cached objects are then made
+    };
+    // A group is asked when it is new to the view (not seen at the last front cull), on its needsUpdate() frame, and
+    // while it is hidden and due a retest: a retest the query pool refused, its target held, leaves a group seen and
+    // still hidden, and while the camera rests half the groups' needsUpdate() frames never fall on a front cull. It
+    // is added, and its objects made, where it was seen at the last front cull too, is not hidden and awaits no answer,
+    // and at once where its box holds the camera. The last front cull counts only within a period of this one.
+    static GroupCullAction cullGroup(const GroupCullFacts& facts);
+
+    // Whether the front cull passes over a group its last answer found hidden, on a frame that is not its needsUpdate()
+    // frame: until its retest is due, unless its box holds the camera, which can step into a box a query found hidden
+    // from outside.
+    static bool culledAsHidden(bool retest_due, bool holds_camera) { return !retest_due && !holds_camera; }
+
 private:
     void selectBackObjects(LLCamera &camera, F32 projection_area_cutoff, bool use_occlusion); //select objects behind camera.
 
@@ -310,6 +394,7 @@ private:
 
     S32   mBackSlectionEnabled; //enable to select back objects if > 0.
     U32   mIdleHash;
+    U32   mLastFrontCull; // the frame of the last front cull, 0 before the first
 };
 
 //

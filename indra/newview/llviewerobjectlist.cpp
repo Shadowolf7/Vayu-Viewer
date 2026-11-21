@@ -413,12 +413,22 @@ LLViewerObject* LLViewerObjectList::processObjectUpdateFromCache(LLVOCacheEntry*
         mNumNewObjects++;
     }
 
+    // Nothing is made from the entry for a dead object, nor is the entry held at WAITING for one (addNewObject): an
+    // object killed and not yet let go of is made afresh the next time the entry is listed, and an update that kills its
+    // object was refused, and waits for the region to send it again.
     if (objectp->isDead())
     {
         LL_WARNS() << "Dead object " << objectp->mID << " in UUID map 1!" << LL_ENDL;
+        return NULL;
     }
 
     processUpdateCore(objectp, NULL, 0, OUT_FULL_CACHED, cached_dpp, justCreated, true);
+    if (objectp->isDead())
+    {
+        regionp->refuseCachedUpdate(entry);
+        recorder.objectUpdateFailure();
+        return NULL;
+    }
     objectp->loadFlags(entry->getUpdateFlags()); //just in case, reload update flags from cache.
 
     if(entry->getHitCount() > 0)
@@ -2180,6 +2190,7 @@ LLViewerObject *LLViewerObjectList::createObjectFromCache(const LLPCode pcode, L
     }
 
     objectp->mLocalID = local_id;
+    regionp->addToCreatedList(local_id);
     mUUIDObjectMap[uuid] = objectp;
     mPresenceSignal(uuid, true);
     setUUIDAndLocal(uuid,
