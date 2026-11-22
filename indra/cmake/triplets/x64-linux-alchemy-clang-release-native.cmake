@@ -3,7 +3,7 @@ set(VCPKG_CMAKE_SYSTEM_NAME Linux)
 set(VCPKG_BUILD_TYPE release)
 
 set(ALCHEMY_ISA_TIER baseline)
-set(ALCHEMY_TRIPLET_REVISION 7)
+set(ALCHEMY_TRIPLET_REVISION 8)
 include("${CMAKE_CURRENT_LIST_DIR}/alchemy-base.cmake")
 
 # Match the viewer's own -march (USE_MARCH_NATIVE) with Clang chainload
