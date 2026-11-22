@@ -45,6 +45,7 @@
 #include "llframetimer.h"
 #include "llreflectionmap.h"
 #include "llpointer.h"
+#include "algltfoverridestate.h"
 
 // Surface id's
 #define LAND  1
@@ -378,6 +379,11 @@ public:
 
     bool avatarHoverHeightEnabled() const;
 
+    bool groupChatPostLinksEnabled() const;
+
+    // does the simulator accept GameControlData messages?
+    bool gameControlEnabled() const;
+
     typedef enum
     {
         CACHE_MISS_TYPE_TOTAL = 0,  // total cache miss - object not in cache
@@ -398,6 +404,17 @@ public:
     eCacheUpdateResult cacheFullUpdate(LLViewerObject* objectp, LLDataPackerBinaryBuffer &dp, U32 flags);
 
     void cacheFullUpdateGLTFOverride(LLGLTFOverrideCacheEntry override_data);
+    // An update put the object object_id under local_id: the overrides kept there for another object go, before
+    // anything of them reaches it.
+    void dropGLTFOverridesOfAnother(U32 local_id, const LLUUID& object_id);
+    // The viewer sent an edit of face `side`'s override: the face keeps what the edit gave it until the region
+    // answers, or LLGLTFOverrideCacheEntry::HOLD_SECONDS pass.
+    void holdGLTFOverride(U32 local_id, S32 side);
+    // Whether the overrides the region sent for the object name one for face `side` itself.
+    bool namesGLTFOverride(U32 local_id, S32 side) const;
+    // How face `te` of the object stands against the overrides the region sent for it.
+    ALGLTFOverrideFaceState gltfOverrideState(const LLViewerObject* obj, S32 te);
+    ALGLTFOverrideCounts& gltfOverrideCounts() { return mGLTFOverrideCounts; }
 
     LLVOCacheEntry* getCacheEntryForOctree(U32 local_id);
     LLVOCacheEntry* getCacheEntry(U32 local_id, bool valid = true);
@@ -477,7 +494,9 @@ private:
     LLViewerObject* addNewObject(LLVOCacheEntry* entry);
     void killObject(LLVOCacheEntry* entry, std::vector<LLDrawable*>& delete_list); //adds entry into list if it is safe to move into cache
     void removeFromVOCacheTree(LLVOCacheEntry* entry);
-    void killCacheEntry(LLVOCacheEntry* entry, bool for_rendering = false); //physically delete the cache entry
+    // Physically delete the cache entry. One deleted for rendering, its object made from the region's update, keeps
+    // the object's glTF overrides; one deleted because its object is gone takes them.
+    void killCacheEntry(LLVOCacheEntry* entry, bool for_rendering = false);
     void killInvisibleObjects(F32 max_time);
     void createVisibleObjects();
     void updateVisibleEntries(F32 max_time); //update visible entries
@@ -490,7 +509,9 @@ private:
     bool cacheRemovalRequested() const;
 
 public:
-    void applyCacheMiscExtras(LLViewerObject* obj);
+    // Gives the object's faces, or face `te`, the glTF overrides the region last sent for the object, a face it left
+    // out taking none. An object it has sent none for, and a face whose edit it has yet to answer, keep what they have.
+    void applyCacheMiscExtras(LLViewerObject* obj, S32 te = -1);
 
     struct CompareDistance
     {
@@ -631,6 +652,7 @@ public:
     bool                                    mCacheLoaded;
     bool                                    mCacheDirty;
     bool                                    mGLTFOverridesDirty;
+    ALGLTFOverrideCounts                    mGLTFOverrideCounts;
     bool    mAlive;                 // can become false if circuit disconnects
     bool                                    mRetiring = false;
     bool    mSimulatorFeaturesReceived;

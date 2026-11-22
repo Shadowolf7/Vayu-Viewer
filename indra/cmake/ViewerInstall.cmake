@@ -443,6 +443,7 @@ install(
   PATTERN "*.ini"
   PATTERN "*.xml"
   PATTERN "*logo.png"
+  PATTERN "gamecontrollerdb.txt"
   PATTERN "shaders" EXCLUDE
   PATTERN "camera" EXCLUDE
   PATTERN "windlight" EXCLUDE

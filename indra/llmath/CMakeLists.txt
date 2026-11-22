@@ -37,6 +37,7 @@ endif()
 target_sources(
   llmath
   PRIVATE
+    almeshfacepack.cpp
     almeshsimplifier.cpp
     alplaneset.cpp
     alprojection.cpp
@@ -80,6 +81,7 @@ target_sources(
   PUBLIC
     FILE_SET HEADERS
       FILES
+        almeshfacepack.h
         almeshsimplifier.h
         alplaneset.h
         alprojection.h
@@ -167,6 +169,7 @@ if(AL_BUILD_TESTS)
     PROJECT llmath
     SOURCES
       tests/alignment_test.cpp
+      tests/almeshfacepack_test.cpp
       tests/almeshsimplifier_test.cpp
       tests/alplaneset_test.cpp
       tests/alsimdkernels_test.cpp
@@ -195,8 +198,14 @@ if(AL_BUILD_TESTS)
     # Nanoseconds per element for the SIMD math the geometry rebuild spends
     # its time in, and for the choices the SIMD series makes by a number;
     # what generating prims, sculpts and their tangents, a flexible frame,
-    # a mesh LOD's cacheOptimize and each index order cost.
-    BENCH_SOURCES tests/llsimd_bench.cpp tests/llvolume_bench.cpp
+    # a mesh LOD's cacheOptimize and each index order cost; and a mesh LOD
+    # block's bytes, charge and time zipped for upload, and repacked, over
+    # the real corpus.
+    BENCH_SOURCES
+      tests/almeshrepack_bench.cpp
+      tests/almeshzip_bench.cpp
+      tests/llsimd_bench.cpp
+      tests/llvolume_bench.cpp
     LIBRARIES llmath llcommon
   )
 

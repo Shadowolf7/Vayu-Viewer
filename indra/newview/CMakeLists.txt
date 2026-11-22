@@ -366,6 +366,8 @@ if(AL_BUILD_VIEWER)
     llchannelmanager.cpp
     #llchatbar.cpp
     llchathistory.cpp
+    llchatservicehistory.cpp
+    llchatservicehistorycore.cpp
     llchatitemscontainerctrl.cpp
     llchatmsgbox.cpp
     llchiclet.cpp
@@ -493,6 +495,7 @@ if(AL_BUILD_VIEWER)
     llfloaterinspect.cpp
     llfloaterinventorysettings.cpp
     llfloaterinventorythumbnailshelper.cpp
+    llfloaterjoin.cpp
     llfloaterjoystick.cpp
     llfloaterlagmeter.cpp
     llfloaterland.cpp
@@ -561,12 +564,14 @@ if(AL_BUILD_VIEWER)
     llfloaterurlentry.cpp
     llfloatervoicevolume.cpp
     llfloaterwebcontent.cpp
+    llfloaterwebmodal.cpp
     llfloaterwhitelistentry.cpp
     llfloaterwindowsize.cpp
     llfloaterworldmap.cpp
     llfolderviewmodelinventory.cpp
     llfollowcam.cpp
     llfriendcard.cpp
+    llflycam.cpp
     llflyoutcombobtn.cpp
     llgesturelistener.cpp
     llgesturemgr.cpp
@@ -745,6 +750,7 @@ if(AL_BUILD_VIEWER)
     llpanelplaceprofile.cpp
     llpanelplaces.cpp
     llpanelplacestab.cpp
+    llpanelpreferencegamecontrol.cpp
     llpanelpresetscamerapulldown.cpp
     llpanelpresetspulldown.cpp
     llpanelprimmediacontrols.cpp
@@ -1154,6 +1160,8 @@ if(AL_BUILD_VIEWER)
     alfloaterxuilibrary.h
     alfloaterxuistudio.h
     alviewcapture.h
+    algltfmaterialretry.h
+    algltfoverridestate.h
     algradehistory.h
     algroupchanges.h
     algroupmembers.h
@@ -1161,6 +1169,7 @@ if(AL_BUILD_VIEWER)
     allegacynotificationwellwindow.h
     allightboxdirectory.h
     almaturitypreference.h
+    almeshuploadassets.h
     almotionpredictor.h
     almutelookup.h
     alobjectproperties.h
@@ -1264,6 +1273,8 @@ if(AL_BUILD_VIEWER)
     llchannelmanager.h
     #llchatbar.h
     llchathistory.h
+    llchatservicehistory.h
+    llchatservicehistorycore.h
     llchatitemscontainerctrl.h
     llchatmsgbox.h
     llchiclet.h
@@ -1395,6 +1406,7 @@ if(AL_BUILD_VIEWER)
     llfloaterinspect.h
     llfloaterinventorysettings.h
     llfloaterinventorythumbnailshelper.h
+    llfloaterjoin.h
     llfloaterjoystick.h
     llfloaterlagmeter.h
     llfloaterland.h
@@ -1464,12 +1476,14 @@ if(AL_BUILD_VIEWER)
     llfloaterurlentry.h
     llfloatervoicevolume.h
     llfloaterwebcontent.h
+    llfloaterwebmodal.h
     llfloaterwhitelistentry.h
     llfloaterwindowsize.h
     llfloaterworldmap.h
     llfolderviewmodelinventory.h
     llfollowcam.h
     llfriendcard.h
+    llflycam.h
     llflyoutcombobtn.h
     llgesturelistener.h
     llgesturemgr.h
@@ -1637,6 +1651,7 @@ if(AL_BUILD_VIEWER)
     llpanelplaceprofile.h
     llpanelplaces.h
     llpanelplacestab.h
+    llpanelpreferencegamecontrol.h
     llpanelpresetscamerapulldown.h
     llpanelpresetspulldown.h
     llpanelprimmediacontrols.h
@@ -2084,6 +2099,7 @@ if(AL_BUILD_VIEWER)
     app_settings/cmd_line.xml
     app_settings/commands.xml
     app_settings/emoji_groups.xml
+    app_settings/gamecontrollerdb.txt
     app_settings/grass.xml
     app_settings/ignorable_dialogs.xml
     app_settings/key_bindings.xml
@@ -2591,6 +2607,7 @@ if(AL_BUILD_TESTS)
       tests/alfeedback_test.cpp
       tests/alfeedbackoutbox_test.cpp
       tests/alfriendbacklog_test.cpp
+      tests/algltfmaterialretry_test.cpp
       tests/algradehistory_test.cpp
       tests/algroupchanges_test.cpp
       tests/algroupmembers_test.cpp
@@ -2658,6 +2675,7 @@ if(AL_BUILD_TESTS)
       tests/llagentaccess_test.cpp
       tests/llagentbenefits_test.cpp
       tests/llautoreplace_test.cpp
+      tests/llchatservicehistorycore_test.cpp
       tests/llgroupdata_test.cpp
       tests/llhttpretrypolicy_test.cpp
       tests/llversioninfo_test.cpp
@@ -2739,6 +2757,7 @@ if(AL_BUILD_TESTS)
       llagentaccess.cpp
       llagentbenefits.cpp
       llautoreplace.cpp
+      llchatservicehistorycore.cpp
       llhttpretrypolicy.cpp
       llversioninfo.cpp
       llviewerassetstats.cpp
@@ -2815,6 +2834,16 @@ if(AL_BUILD_TESTS)
     UNIT llremoteparcelrequest.cpp
     LIBRARIES llui ${test_libs}
     SUPPORT newview_test_fakes
+  )
+  # The conversation log's rows from the chat service's archives: llui for the
+  # floater and strings it reaches, the IM model and the tracker stubbed.
+  al_add_test_binary(
+    llconversationlog_test
+    PROJECT ${test_project}
+    SOURCES tests/llconversationlog_test.cpp
+    UNIT llconversationlog.cpp
+    LIBRARIES llui llxml ${test_libs}
+    SUPPORT newview_test_fakes newview_test_settings
   )
   al_add_test_binary(
     llsecapi_test
