@@ -293,7 +293,7 @@ void LLFollowCam::update()
 
     LLVector3 simulated_pos_agent = gAgent.getPosAgentFromGlobal(mSimulatedPositionGlobal);
     LLVector3 vectorFromCameraToSubject = offsetSubjectPosition - simulated_pos_agent;
-    // F32 distanceFromCameraToSubject = vectorFromCameraToSubject.magVec();
+    const F32 distanceFromCameraToSubject = vectorFromCameraToSubject.magVec();
 
     LLVector3 whereFocusWantsToBe = mFocus;
     LLVector3 focus_pt_agent = gAgent.getPosAgentFromGlobal(mSimulatedFocusGlobal);
