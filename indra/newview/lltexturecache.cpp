@@ -2195,7 +2195,7 @@ void LLTextureCache::purgeBCTexturesLazy(F32 time_limit_sec)
             {
                 LLMutexLock id_lock(&mHeaderIDMapMutex);
                 auto        it = mHeaderIDMap.find(id);
-                if (it != mHeaderIDMap.end() && it->second >= 0 && it->second < static_cast<S32>(entries.size()))
+                if (it != mHeaderIDMap.end())
                 {
                     entry_time = entries[it->second].mTime;
                 }
@@ -2210,12 +2210,8 @@ void LLTextureCache::purgeBCTexturesLazy(F32 time_limit_sec)
             {
                 break;
             }
-            auto it = mBCSizeMap.find(item.second);
-            if (it != mBCSizeMap.end())
-            {
-                simulated_size -= it->second;
-                mBCPurgeEntryList.push_back(item.second);
-            }
+            simulated_size -= mBCSizeMap[item.second];
+            mBCPurgeEntryList.push_back(item.second);
         }
         std::reverse(mBCPurgeEntryList.begin(), mBCPurgeEntryList.end());
     }

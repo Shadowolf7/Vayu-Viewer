@@ -1272,24 +1272,7 @@ bool LLTextureFetchWorker::doWork(S32 param)
         {
             VayuBCCacheEntryHeader cache_header;
             std::vector<U8>        bc_buffer;
-            bool                   cache_hit = false;
-
-            if (mTextureJob == EVayuTextureJob::PBRNormal)
-            {
-                cache_hit =
-                    mFetcher->mTextureCache->readBCEntry(mID, mDesiredDiscard, cache_header, bc_buffer, ".bc5", LLTextureCache::kFormatBC5);
-            }
-            else if (mTextureJob == EVayuTextureJob::LegacyMaterialNormal || mTextureJob == EVayuTextureJob::LegacySpecular)
-            {
-                cache_hit =
-                    mFetcher->mTextureCache->readBCEntry(mID, mDesiredDiscard, cache_header, bc_buffer, ".bc7",
-                                                         LLTextureCache::kFormatBC7) ||
-                    mFetcher->mTextureCache->readBCEntry(mID, mDesiredDiscard, cache_header, bc_buffer, ".bc3", LLTextureCache::kFormatBC3);
-            }
-            else
-            {
-                cache_hit = mFetcher->mTextureCache->readBCEntry(mID, mDesiredDiscard, cache_header, bc_buffer);
-            }
+            const bool             cache_hit = mFetcher->mTextureCache->readBCEntry(mID, mDesiredDiscard, cache_header, bc_buffer);
 
             mBCEntryAdequate = cache_hit;
 
