@@ -1171,8 +1171,6 @@ bool LLTextureCache::readBCEntry(const LLUUID&           id,
                 continue;
             }
 
-            const size_t skip_bytes = static_cast<size_t>(fh.mBufferSize) - sub_bytes;
-            in.seekg(static_cast<std::streamoff>(sizeof(VayuBCCacheFileHeader) + skip_bytes), std::ios::beg);
             buffer.resize(sub_bytes);
             in.read(reinterpret_cast<char*>(buffer.data()), (std::streamsize)sub_bytes);
             if (static_cast<size_t>(in.gcount()) != sub_bytes)
