@@ -1267,6 +1267,60 @@ bool LLTextureFetchWorker::doWork(S32 param)
     if (mState == LOAD_FROM_TEXTURE_CACHE)
     {
         LL_PROFILE_ZONE_NAMED_CATEGORY_THREAD("tfwdw - LOAD_FROM_TEXTURE_CACHE");
+
+        if (mAllowCompression)
+        {
+            VayuBCCacheEntryHeader cache_header;
+            std::vector<U8>        bc_buffer;
+            bool                   cache_hit = false;
+
+            if (mTextureJob == EVayuTextureJob::PBRNormal)
+            {
+                cache_hit =
+                    mFetcher->mTextureCache->readBCEntry(mID, mDesiredDiscard, cache_header, bc_buffer, ".bc5", LLTextureCache::kFormatBC5);
+            }
+            else if (mTextureJob == EVayuTextureJob::LegacyMaterialNormal || mTextureJob == EVayuTextureJob::LegacySpecular)
+            {
+                cache_hit =
+                    mFetcher->mTextureCache->readBCEntry(mID, mDesiredDiscard, cache_header, bc_buffer, ".bc7",
+                                                         LLTextureCache::kFormatBC7) ||
+                    mFetcher->mTextureCache->readBCEntry(mID, mDesiredDiscard, cache_header, bc_buffer, ".bc3", LLTextureCache::kFormatBC3);
+            }
+            else
+            {
+                cache_hit = mFetcher->mTextureCache->readBCEntry(mID, mDesiredDiscard, cache_header, bc_buffer);
+            }
+
+            mBCEntryAdequate = cache_hit;
+
+            if (cache_hit)
+            {
+                LLPointer<LLImageRaw> raw      = new LLImageRaw(cache_header.mWidth, cache_header.mHeight, cache_header.mComponents);
+                auto                  comp_res = std::make_shared<VayuBlockCompressionResult>();
+                comp_res->mFormat              = (EVayuBlockCompressionFormat)cache_header.mFormat;
+                comp_res->mPreset              = (EVayuBlockCompressionPreset)cache_header.mPreset;
+                comp_res->mIsMask              = (cache_header.mIsMask != 0);
+                comp_res->mMipLevels           = cache_header.mMipLevels;
+                comp_res->mWidth               = cache_header.mWidth;
+                comp_res->mHeight              = cache_header.mHeight;
+                comp_res->mComponents          = cache_header.mComponents;
+                comp_res->mGLInternalFormat    = cache_header.mGLInternalFormat;
+                comp_res->mGLPrimaryFormat     = cache_header.mGLPrimaryFormat;
+                comp_res->mBuffer              = std::move(bc_buffer);
+                raw->setBlockCompressionResult(comp_res);
+
+                mRawImage       = raw;
+                mDecodedDiscard = cache_header.mDiscardLevel;
+                mLoadedDiscard  = cache_header.mDiscardLevel;
+                mLoaded         = true;
+                mDecoded        = true;
+                setState(DECODE_IMAGE_UPDATE);
+                add(LLTextureFetch::sCacheHit, 1.0);
+                record(LLTextureFetch::sCacheHitRate, LLUnits::Ratio::fromValue(1));
+                return doWork(param);
+            }
+        }
+
         if (mCacheReadHandle == LLTextureCache::nullHandle())
         {
             S32 offset = mFormattedImage.notNull() ? mFormattedImage->getDataSize() : 0;
@@ -1288,56 +1342,6 @@ bool LLTextureFetchWorker::doWork(S32 param)
             mLoaded = false;
 
             add(LLTextureFetch::sCacheAttempt, 1.0);
-
-            if (mAllowCompression)
-            {
-                VayuBCCacheEntryHeader cache_header;
-                std::vector<U8>        bc_buffer;
-                bool                   cache_hit = false;
-
-                if (mTextureJob == EVayuTextureJob::PBRNormal)
-                {
-                    cache_hit = mFetcher->mTextureCache->readBCEntry(mID, mDesiredDiscard, cache_header, bc_buffer, ".bc5",
-                                                                     LLTextureCache::kFormatBC5);
-                }
-                else if (mTextureJob == EVayuTextureJob::LegacyMaterialNormal || mTextureJob == EVayuTextureJob::LegacySpecular)
-                {
-                    cache_hit = mFetcher->mTextureCache->readBCEntry(mID, mDesiredDiscard, cache_header, bc_buffer, ".bc7",
-                                                                     LLTextureCache::kFormatBC7) ||
-                                mFetcher->mTextureCache->readBCEntry(mID, mDesiredDiscard, cache_header, bc_buffer, ".bc3",
-                                                                     LLTextureCache::kFormatBC3);
-                }
-                else
-                {
-                    cache_hit = mFetcher->mTextureCache->readBCEntry(mID, mDesiredDiscard, cache_header, bc_buffer);
-                }
-
-                mBCEntryAdequate = cache_hit;
-
-                if (cache_hit)
-                {
-                    LLPointer<LLImageRaw> raw      = new LLImageRaw(cache_header.mWidth, cache_header.mHeight, cache_header.mComponents);
-                    auto                  comp_res = std::make_shared<VayuBlockCompressionResult>();
-                    comp_res->mFormat              = (EVayuBlockCompressionFormat)cache_header.mFormat;
-                    comp_res->mPreset              = (EVayuBlockCompressionPreset)cache_header.mPreset;
-                    comp_res->mIsMask              = (cache_header.mIsMask != 0);
-                    comp_res->mMipLevels           = cache_header.mMipLevels;
-                    comp_res->mWidth               = cache_header.mWidth;
-                    comp_res->mHeight              = cache_header.mHeight;
-                    comp_res->mComponents          = cache_header.mComponents;
-                    comp_res->mGLInternalFormat    = cache_header.mGLInternalFormat;
-                    comp_res->mGLPrimaryFormat     = cache_header.mGLPrimaryFormat;
-                    comp_res->mBuffer              = std::move(bc_buffer);
-                    raw->setBlockCompressionResult(comp_res);
-
-                    mRawImage       = raw;
-                    mDecodedDiscard = cache_header.mDiscardLevel;
-                    mLoaded         = true;
-                    mDecoded        = true;
-                    setState(DECODE_IMAGE_UPDATE);
-                    return doWork(param);
-                }
-            }
 
             if (mUrl.compare(0, 7, "file://") == 0)
             {
