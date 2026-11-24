@@ -288,6 +288,7 @@ private:
     idx_entry_map_t                            mUpdatedEntryMap;
     typedef std::vector<std::pair<S32, Entry>> idx_entry_vector_t;
     idx_entry_vector_t                         mPurgeEntryList;
+    std::vector<LLUUID>                        mBCPurgeEntryList;
 
     // Statics
     static F32         sHeaderCacheVersion;
