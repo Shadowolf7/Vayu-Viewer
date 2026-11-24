@@ -211,6 +211,7 @@ private:
     void    clearCorruptedCache();
     void    purgeAllTextures(bool purge_directories);
     void    purgeTexturesLazy(F32 time_limit_sec);
+    void    purgeBCTexturesLazy(F32 time_limit_sec);
     void    maybePurgeTexturesLazy(); // from the write entry points only: needs the control thread
     void    purgeTextures(bool validate);
     LLFile* openHeaderEntriesFile(bool readonly, S32 offset);
@@ -225,7 +226,7 @@ private:
     void    writeEntriesAndClose(const std::vector<Entry>& entries);
     void    readEntryFromHeaderImmediately(S32& idx, Entry& entry);
     void    writeEntryToHeaderImmediately(S32& idx, Entry& entry, bool write_header = false);
-    void    removeEntry(S32 idx, Entry& entry, const std::filesystem::path& filename);
+    void    removeEntry(S32 idx, Entry& entry, const std::filesystem::path& filename, bool remove_sibling_bc = false);
     void    removeCachedTexture(const LLUUID& id);
     S32     getHeaderCacheEntry(const LLUUID& id, Entry& entry);
     S32     setHeaderCacheEntry(const LLUUID& id, Entry& entry, S32 imagesize, S32 datasize);
@@ -279,7 +280,9 @@ private:
     size_map_t                                mTexturesSizeMap;
     size_map_t                                mBCSizeMap;
     S64                                       mTexturesSizeTotal;
+    S64                                       mBCSizeTotal;
     LLAtomicBool                              mDoPurge;
+    LLAtomicBool                              mDoBCPurge;
 
     typedef std::map<S32, Entry>               idx_entry_map_t;
     idx_entry_map_t                            mUpdatedEntryMap;
@@ -292,6 +295,7 @@ private:
     static std::string sHeaderCacheEncoderVersion;
     static U32         sCacheMaxEntries;
     static S64         sCacheMaxTexturesSize;
+    static S64         sCacheMaxBCSize;
 };
 
 extern const S32 TEXTURE_CACHE_ENTRY_SIZE;
