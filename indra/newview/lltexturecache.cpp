@@ -1033,6 +1033,7 @@ bool LLTextureCache::writeBCEntry(const LLUUID& id, S32 discard_level, const Vay
         }
     }
 
+    touchCacheEntry(id);
     return true;
 }
 
@@ -1064,6 +1065,23 @@ size_t LLTextureCache::calcSubBufferBytes(U8 format, U32 width, U32 height, S32 
         total_bytes += static_cast<size_t>(bw) * bh * block_bytes;
     }
     return total_bytes;
+}
+
+void LLTextureCache::touchCacheEntry(const LLUUID& id)
+{
+    LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
+    if (mReadOnly || id.isNull())
+    {
+        return;
+    }
+    LLMutexLock lock(&mHeaderMutex);
+    Entry       entry;
+    S32         idx = openAndReadEntry(id, entry, false);
+    if (idx >= 0)
+    {
+        entry.mTime           = static_cast<U32>(time(nullptr));
+        mUpdatedEntryMap[idx] = entry;
+    }
 }
 
 bool LLTextureCache::readBCEntry(const LLUUID&           id,
@@ -1133,6 +1151,7 @@ bool LLTextureCache::readBCEntry(const LLUUID&           id,
                 continue;
             }
             header = fh.mMeta;
+            touchCacheEntry(id);
             return true;
         }
         else if (fh.mMeta.mDiscardLevel < discard_level)
@@ -1164,6 +1183,7 @@ bool LLTextureCache::readBCEntry(const LLUUID&           id,
             header.mHeight = std::max(1u, header.mHeight >> diff);
             header.mMipLevels -= diff;
             header.mDiscardLevel = static_cast<U8>(discard_level);
+            touchCacheEntry(id);
             return true;
         }
     }

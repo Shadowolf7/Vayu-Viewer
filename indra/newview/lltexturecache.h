@@ -198,6 +198,7 @@ public:
     bool writeBCEntry(const LLUUID& id, S32 discard_level, const VayuBCCacheEntryHeader& header, const U8* data, size_t datasize);
     S64                   removeSiblingBCFiles(const LLUUID& id);
     static size_t         calcSubBufferBytes(U8 format, U32 width, U32 height, S32 num_mips, S32 diff);
+    void                  touchCacheEntry(const LLUUID& id);
 
 protected:
     // Accessed by LLTextureCacheWorker
