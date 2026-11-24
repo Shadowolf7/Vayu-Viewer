@@ -1073,7 +1073,7 @@ size_t LLTextureCache::calcSubBufferBytes(U8 format, U32 width, U32 height, S32 
 void LLTextureCache::touchCacheEntry(const LLUUID& id)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
-    if (mReadOnly || id.isNull())
+    if (mReadOnly)
     {
         return;
     }
