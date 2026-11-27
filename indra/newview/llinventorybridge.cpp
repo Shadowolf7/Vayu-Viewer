@@ -7387,8 +7387,7 @@ void LLObjectBridge::performAction(LLInventoryModel* model, std::string action)
         item = (LLViewerInventoryItem*)gInventory.getItem(object_id);
         if(item && gInventory.isObjectDescendentOf(object_id, gInventory.getRootFolderID()))
         {
-            static LLCachedControl<U32> add_attachment_behavior(gSavedSettings, "InventoryAddAttachmentBehavior", 0);
-            rez_attachment(item, NULL, ("attach" == action) ? (add_attachment_behavior() == 1) : true); // Replace if "Wear"ing.
+            rez_attachment(item, NULL, ("attach" == action) ? get_open_item_replaces_worn(item) : true); // Replace if "Wear"ing.
         }
         else if(item && item->isFinished())
         {
@@ -7819,8 +7818,14 @@ void LLWearableBridge::performAction(LLInventoryModel* model, std::string action
 
 void LLWearableBridge::openItem()
 {
-    performAction(getInventoryModel(),
-                  get_is_item_worn(mUUID) ? "take_off" : "wear");
+    if (get_is_item_worn(mUUID))
+    {
+        performAction(getInventoryModel(), "take_off");
+    }
+    else
+    {
+        performAction(getInventoryModel(), get_open_item_replaces_worn(getItem()) ? "wear" : "wear_add");
+    }
 }
 
 void LLWearableBridge::buildContextMenu(LLMenuGL& menu, U32 flags)
@@ -8614,8 +8619,7 @@ void LLObjectBridgeAction::attachOrDetach()
     }
     else
     {
-        static LLCachedControl<U32> add_attachment_behavior(gSavedSettings, "InventoryAddAttachmentBehavior", 0);
-        LLAppearanceMgr::instance().wearItemOnAvatar(mUUID, true, add_attachment_behavior() == 1); // Don't replace if adding.
+        LLAppearanceMgr::instance().wearItemOnAvatar(mUUID, true, get_open_item_replaces_worn(getItem()));
     }
 }
 
@@ -8686,7 +8690,7 @@ void LLWearableBridgeAction::wearOnAvatar()
         }
         else
         {
-            LLAppearanceMgr::instance().wearItemOnAvatar(item->getUUID(), true, true);
+            LLAppearanceMgr::instance().wearItemOnAvatar(item->getUUID(), true, get_open_item_replaces_worn(item));
         }
     }
 }

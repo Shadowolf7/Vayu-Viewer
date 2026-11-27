@@ -27,6 +27,7 @@
 
 #include "llmodel.h"
 #include "almeshsimplifier.h"
+#include "hbxxh.h"
 #include "llmath.h"
 #include "llsdserialize.h"
 #include "llsdutil.h"
@@ -36,9 +37,11 @@
 
 #include <algorithm>
 #include <cstring>
+#include <initializer_list>
 #include <iterator>
 #include <sstream>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -209,23 +212,28 @@ namespace
         decomp.mBaseHull = { LLVector3(-0.5f, -0.5f, -0.5f), LLVector3(0.5f, -0.5f, -0.5f), LLVector3(0.f, 0.5f, -0.5f),
                              LLVector3(0.f, 0.f, 0.5f) };
 
-        auto write = [&](LLModel::EBlockPacking packing)
+        auto write = [&](LLModel::EBlockPacking packing, ALMeshFacePack::Weights weights = ALMeshFacePack::Weights::KEEP)
         {
             std::ostringstream ostr;
             WrittenAsset asset;
             asset.header = LLModel::writeModel(ostr, nullptr, model, model, model, model, decomp, true, false, false, LLModel::WRITE_BINARY,
-                                               false, 0, packing);
+                                               false, 0, packing, weights);
             asset.stream = ostr.str();
             asset.header_bytes = binaryOf(asset.header).size();
             return asset;
         };
         const WrittenAsset plain = write(LLModel::PACK_PLAIN);
         const WrittenAsset small = write(LLModel::PACK_SMALL);
-        const WrittenAsset snapped = write(LLModel::PACK_SMALL_SNAPPED);
+        const WrittenAsset snapped_12 = write(LLModel::PACK_SMALL_NORMALS_12);
+        const WrittenAsset snapped_10 = write(LLModel::PACK_SMALL_NORMALS_10);
+        const WrittenAsset rounded = write(LLModel::PACK_SMALL, ALMeshFacePack::Weights::ROUND_8_BITS);
+
+        // Packed plain, the weights are written as they are.
+        CHECK(write(LLModel::PACK_PLAIN, ALMeshFacePack::Weights::ROUND_8_BITS).stream == plain.stream);
 
         const char* const lods[] = { "lowest_lod", "low_lod", "medium_lod", "high_lod" };
         const char* const blocks[] = { "skin", "physics_convex", "lowest_lod", "low_lod", "medium_lod", "high_lod" };
-        for (const WrittenAsset* asset : { &plain, &small, &snapped })
+        for (const WrittenAsset* asset : { &plain, &small, &snapped_12, &snapped_10, &rounded })
         {
             // The blocks lie one after another from the header to the end.
             std::vector<std::pair<S64, S64>> spans;
@@ -249,7 +257,8 @@ namespace
         // Each block is what its own zip makes of its value. The skin and
         // the hull hold the same value every way; a LOD packed small holds
         // the plain LOD's faces repacked, and one packed small and snapped
-        // holds them repacked with their normals snapped.
+        // holds them repacked with their normals snapped to that grid, and
+        // one packed small with its weights rounded holds them repacked so.
         for (const char* name : blocks)
         {
             CAPTURE(name);
@@ -258,10 +267,14 @@ namespace
             REQUIRE(LLUZipHelper::unzip_llsd(plain_value, (const U8*)plain_block.data(), (S32)plain_block.size()) == LLUZipHelper::ZR_OK);
             CHECK(zip_llsd(plain_value) == plain_block);
             const bool lod = std::any_of(std::begin(lods), std::end(lods), [&](const char* l) { return std::strcmp(l, name) == 0; });
-            for (const auto& [asset, normals] :
-                 { std::pair{ &small, ALMeshFacePack::Normals::KEEP }, std::pair{ &snapped, ALMeshFacePack::Normals::SNAP_12_BITS } })
+            using Normals = ALMeshFacePack::Normals;
+            using Weights = ALMeshFacePack::Weights;
+            for (const auto& [asset, normals, weights] : { std::tuple{ &small, Normals::KEEP, Weights::KEEP },
+                                                           std::tuple{ &snapped_12, Normals::SNAP_12_BITS, Weights::KEEP },
+                                                           std::tuple{ &snapped_10, Normals::SNAP_10_BITS, Weights::KEEP },
+                                                           std::tuple{ &rounded, Normals::KEEP, Weights::ROUND_8_BITS } })
             {
-                CAPTURE(normals == ALMeshFacePack::Normals::SNAP_12_BITS);
+                CAPTURE((int)normals, (int)weights);
                 const std::string packed_block = asset->block(name);
                 LLSD packed_value;
                 REQUIRE(LLUZipHelper::unzip_llsd(packed_value, (const U8*)packed_block.data(), (S32)packed_block.size()) ==
@@ -272,7 +285,7 @@ namespace
                 {
                     for (LLSD::array_iterator face = expected.beginArray(); face != expected.endArray(); ++face)
                     {
-                        CHECK(ALMeshFacePack::repack(*face, normals));
+                        CHECK(ALMeshFacePack::repack(*face, normals, weights));
                     }
                 }
                 CHECK(binaryOf(packed_value) == binaryOf(expected));
@@ -311,5 +324,113 @@ namespace
         CHECK(plain_drawn.size() == (size_t)(model->getVolumeFace(0).mNumIndices / 3));
         CHECK(drawnTriangles(small_back->getVolumeFace(0)) == plain_drawn);
         CHECK(small_back->mSkinWeights.size() == plain_back->mSkinWeights.size());
+    }
+
+    // A skin block of two joints, each matrix its sixteen elements row by
+    // row: an inverse bind matrix and a joint position override for each
+    // joint, and the bind shape matrix.
+    LLSD twoJointSkin()
+    {
+        auto matrix = [](std::initializer_list<F64> elements)
+        {
+            LLSD out = LLSD::emptyArray();
+            for (F64 element : elements)
+            {
+                out.append(element);
+            }
+            return out;
+        };
+        LLSD skin;
+        skin["joint_names"] = llsd::array("mPelvis", "mTorso");
+        skin["inverse_bind_matrix"] = llsd::array(matrix({ 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0.33333, 0, -1.0625, 1 }),
+                                                  matrix({ 0, 1, 0, 0, -1, 0, 0, 0, 0, 0, 1, 0, 0.125, 0, -1.5, 1 }));
+        skin["bind_shape_matrix"] = matrix({ 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0.25, 1 });
+        skin["alt_inverse_bind_matrix"] = llsd::array(matrix({ 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, -1.125, 1 }),
+                                                      matrix({ 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, -1.625, 1 }));
+        skin["pelvis_offset"] = 0.0625;
+        skin["lock_scale_if_joint_position"] = true;
+        return skin;
+    }
+
+    bool sameMatrices(const LLMeshSkinInfo::matrix_list_t& a, const LLMeshSkinInfo::matrix_list_t& b)
+    {
+        return std::equal(a.begin(), a.end(), b.begin(), b.end(),
+                          [](const LLMatrix4a& x, const LLMatrix4a& y) { return std::memcmp(&x, &y, sizeof(LLMatrix4a)) == 0; });
+    }
+
+    TEST_CASE("llmodel: a skin without joints hashes nothing", "[llmodel]")
+    {
+        // The skin writeModel writes for a model its loader found no joints
+        // in: the bind shape matrix alone.
+        LLSD jointless;
+        jointless["bind_shape_matrix"] = twoJointSkin()["bind_shape_matrix"];
+        const LLMeshSkinInfo none(jointless);
+        CHECK(none.mJointNames.empty());
+        CHECK(none.mInvBindMatrix.empty());
+        CHECK(none.mHash == HBXXH64::digest(std::string()));
+
+        // Joint names and inverse bind matrices that disagree in number are
+        // dropped together, which leaves the same.
+        LLSD mismatched = twoJointSkin();
+        mismatched["inverse_bind_matrix"].erase(1);
+        const LLMeshSkinInfo dropped(mismatched);
+        CHECK(dropped.mJointNames.empty());
+        CHECK(dropped.mInvBindMatrix.empty());
+        CHECK(dropped.mHash == none.mHash);
+    }
+
+    TEST_CASE("llmodel: a skin read back from an asset keeps its joints and its hash", "[llmodel]")
+    {
+        LLSD skin = twoJointSkin();
+        LLPointer<LLModel> model = riggedSphere(8, 4);
+        model->mSkinInfo.fromLLSD(skin);
+        const LLMeshSkinInfo& written = model->mSkinInfo;
+
+        // Render batches are keyed by the hash of the joint names, their
+        // numbers and the inverse bind matrices to four decimal places.
+        CHECK(written.mHash == 0x973f7b5efcbd0155ULL);
+
+        std::ostringstream ostr;
+        LLModel::writeModel(ostr, nullptr, model, model, model, model, LLModel::Decomposition(), true, true, true);
+        LLPointer<LLModel> back = new LLModel(meshParams(), (F32)LLModel::LOD_HIGH);
+        std::istringstream is(ostr.str());
+        REQUIRE(back->loadModel(is));
+        const LLMeshSkinInfo& read = back->mSkinInfo;
+        CHECK(read.mJointNames == written.mJointNames);
+        CHECK(sameMatrices(read.mInvBindMatrix, written.mInvBindMatrix));
+        CHECK(sameMatrices(read.mAlternateBindMatrix, written.mAlternateBindMatrix));
+        CHECK(sameMatrices({ read.mBindShapeMatrix }, { written.mBindShapeMatrix }));
+        CHECK(read.mPelvisOffset == written.mPelvisOffset);
+        CHECK(read.mLockScaleIfJointPosition);
+        CHECK(read.mHash == written.mHash);
+    }
+
+    TEST_CASE("llmodel: an slm keeps the box its model was normalized from", "[llmodel]")
+    {
+        // The uploader's pivot finds the file's origin within the model's box
+        // from these two, so a model read back from an .slm needs them too.
+        LLPointer<LLModel> model = riggedSphere(8, 4);
+        model->mNormalizedScale.set(2.5f, 0.75f, 4.f);
+        model->mNormalizedTranslation.set(0.5f, -0.125f, 2.f);
+
+        auto load = [&model](bool as_slm)
+        {
+            std::ostringstream ostr;
+            LLModel::writeModel(ostr, nullptr, model, model, model, model, LLModel::Decomposition(), false, false, false,
+                                LLModel::WRITE_BINARY, as_slm);
+            LLPointer<LLModel> back = new LLModel(meshParams(), (F32)LLModel::LOD_HIGH);
+            std::istringstream is(ostr.str());
+            REQUIRE(back->loadModel(is));
+            return back;
+        };
+
+        LLPointer<LLModel> slm = load(true);
+        CHECK(slm->mNormalizedScale == model->mNormalizedScale);
+        CHECK(slm->mNormalizedTranslation == model->mNormalizedTranslation);
+
+        // An asset written for an upload carries neither.
+        LLPointer<LLModel> asset = load(false);
+        CHECK(asset->mNormalizedScale == LLVector3(1.f, 1.f, 1.f));
+        CHECK(asset->mNormalizedTranslation == LLVector3::zero);
     }
 }

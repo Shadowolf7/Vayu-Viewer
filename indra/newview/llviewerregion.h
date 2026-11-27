@@ -46,6 +46,7 @@
 #include "llreflectionmap.h"
 #include "llpointer.h"
 #include "algltfoverridestate.h"
+#include "alregionretirement.h"
 
 // Surface id's
 #define LAND  1
@@ -148,9 +149,12 @@ public:
 
     bool isAlive(); // can become false if circuit disconnects
 
-    // Left behind by a teleport and being removed (ALRegionRetirement): its simulator creates no new objects here.
-    bool isRetiring() const { return mRetiring; }
-    void setRetiring(bool retiring) { mRetiring = retiring; }
+    // Left behind by a teleport, its objects killed (ALRegionRetirement): its simulator creates no new objects here,
+    // and what it sends of them is dropped and noted among the objects lost.
+    bool isRetiring() const                     { return mRetiring; }
+    void setRetiring(bool retiring)             { mRetiring = retiring; }
+    // What it lost while retiring, which a revival asks of its simulator again.
+    ALRetiredObjects& retiredObjects()          { return mRetiredObjects; }
 
     void setWaterHeight(F32 water_level);
     F32 getWaterHeight() const;
@@ -494,8 +498,9 @@ private:
     LLViewerObject* addNewObject(LLVOCacheEntry* entry);
     void killObject(LLVOCacheEntry* entry, std::vector<LLDrawable*>& delete_list); //adds entry into list if it is safe to move into cache
     void removeFromVOCacheTree(LLVOCacheEntry* entry);
-    // Physically delete the cache entry. One deleted for rendering, its object made from the region's update, keeps
-    // the object's glTF overrides; one deleted because its object is gone takes them.
+    // Takes the entry, and the children waiting on it, out of everything made or drawn, invalid until the region
+    // confirms it or sends its object again; one killed for rendering, its object made from the region's update, is made
+    // first. The objects' glTF overrides stay with their entries.
     void killCacheEntry(LLVOCacheEntry* entry, bool for_rendering = false);
     void killInvisibleObjects(F32 max_time);
     void createVisibleObjects();
@@ -654,7 +659,8 @@ public:
     bool                                    mGLTFOverridesDirty;
     ALGLTFOverrideCounts                    mGLTFOverrideCounts;
     bool    mAlive;                 // can become false if circuit disconnects
-    bool                                    mRetiring = false;
+    bool    mRetiring = false;
+    ALRetiredObjects mRetiredObjects;
     bool    mSimulatorFeaturesReceived;
     bool    mReleaseNotesRequested;
     bool    mDead;  //if true, this region is in the process of deleting.
