@@ -27,7 +27,6 @@
 #include "linden_common.h"
 
 #include "llimageworker.h"
-#include "llimagedxt.h"
 #include "vayuimageblockcompressor.h"
 #include "threadpool.h"
 
@@ -41,7 +40,6 @@ public:
                  bool                                             allow_compression,
                  const LLPointer<LLImageDecodeThread::Responder>& responder,
                  U32                                              request_id,
-                 const LLUUID&                                    id,
                  EVayuTextureJob                                  job);
     virtual ~ImageRequest();
 
@@ -57,7 +55,6 @@ private:
     U32 mRequestId;
     bool mNeedsAux;
     bool mAllowCompression;
-    LLUUID mID; // for the BC disk cache; may be null if the caller didn't pass one
     EVayuTextureJob mTextureJob;
     // output
     LLPointer<LLImageRaw> mDecodedImageRaw;
@@ -101,7 +98,6 @@ LLImageDecodeThread::handle_t LLImageDecodeThread::decodeImage(
     bool needs_aux,
     bool allow_compression,
     const LLPointer<LLImageDecodeThread::Responder>& responder,
-    const LLUUID& id,
     EVayuTextureJob job)
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
@@ -112,8 +108,7 @@ LLImageDecodeThread::handle_t LLImageDecodeThread::decodeImage(
 
     // Instantiate the ImageRequest right in the lambda, why not?
     bool posted = mThreadPool->getQueue().post(
-        [req = ImageRequest(image, discard, needs_aux, allow_compression, responder, decode_id, id, job)]
-        () mutable
+        [req = ImageRequest(image, discard, needs_aux, allow_compression, responder, decode_id, job)]() mutable
         {
             auto done = req.processRequest();
             req.finishRequest(done);
@@ -144,7 +139,6 @@ ImageRequest::ImageRequest(const LLPointer<LLImageFormatted>& image,
                            bool allow_compression,
                            const LLPointer<LLImageDecodeThread::Responder>& responder,
                            U32 request_id,
-                           const LLUUID& id,
                            EVayuTextureJob job)
     : mFormattedImage(image),
       mDiscardLevel(discard),
@@ -154,7 +148,6 @@ ImageRequest::ImageRequest(const LLPointer<LLImageFormatted>& image,
       mDecodedAux(false),
       mResponder(responder),
       mRequestId(request_id),
-      mID(id),
       mTextureJob(job)
 {
 }

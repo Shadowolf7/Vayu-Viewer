@@ -185,6 +185,17 @@ public:
     static constexpr U8 kFormatBC5 = 4;
     static constexpr U8 kFormatBC7 = 5;
 
+    static constexpr U8 kRoleColor  = 0;
+    static constexpr U8 kRoleNormal = 1;
+    static constexpr U8 kRoleAny    = 0xFF;
+
+    enum class EBCColorSpace : U8
+    {
+        Any = 0,
+        Linear,
+        SRGB
+    };
+
     static std::string formatExtension(U8 format);
 
     std::filesystem::path getTextureFileName(const LLUUID& id, const std::string& ext = ".texture");
@@ -192,11 +203,11 @@ public:
                                       S32                     discard_level,
                                       VayuBCCacheEntryHeader& header,
                                       std::vector<U8>&        buffer,
-                                      const std::string&      ext             = "",
-                                      U8                      expected_format = 0);
-    bool                  readBCEntryHeader(const LLUUID& id, U8 format, VayuBCCacheEntryHeader& header);
+                                      const std::string&      ext                  = "",
+                                      U8                      expected_format      = 0,
+                                      EBCColorSpace           expected_color_space = EBCColorSpace::Any,
+                                      U8                      expected_role        = kRoleAny);
     bool writeBCEntry(const LLUUID& id, S32 discard_level, const VayuBCCacheEntryHeader& header, const U8* data, size_t datasize);
-    S64                   removeSiblingBCFiles(const LLUUID& id);
     static size_t         calcSubBufferBytes(U8 format, U32 width, U32 height, S32 num_mips, S32 diff);
 
 protected:
@@ -205,6 +216,9 @@ protected:
     void                  addCompleted(Responder* responder, bool success);
 
 private:
+    // Requires mHeaderMutex
+    S64     removeSiblingBCFiles(const LLUUID& id);
+    void    purgeOrphanedBCEntries();
     void    setDirNames(ELLPath location);
     void    readHeaderCache();
     void    clearCorruptedCache();

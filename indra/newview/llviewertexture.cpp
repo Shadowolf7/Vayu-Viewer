@@ -1632,7 +1632,7 @@ bool LLViewerFetchedTexture::preCreateTexture(S32 usename/*= 0*/)
     {
         LL_ERRS() << "LLViewerTexture trying to create texture with no Raw Image" << LL_ENDL;
     }
-    if (mRawImage->isBufferInvalid())
+    if (mRawImage->isBufferInvalid() && !mRawImage->hasBlockCompressionResult())
     {
         LL_WARNS() << "Can't create a texture: invalid image data" << LL_ENDL;
         destroyRawImage();
@@ -1848,7 +1848,10 @@ void LLViewerFetchedTexture::scheduleCreateTexture()
                         //verify data is unmodified
                         llassert(data == mRawImage->getData());
                         llassert(mRawImage->getDataSize() == size);
-                        llassert(memcmp(data, data_copy, size) == 0);
+                        if (size > 0)
+                        {
+                            llassert(memcmp(data, data_copy, size) == 0);
+                        }
 #else
                     [this, category = getCategory()]()
                     {
@@ -1860,7 +1863,10 @@ void LLViewerFetchedTexture::scheduleCreateTexture()
                         //verify data is unmodified
                         llassert(data == mRawImage->getData());
                         llassert(mRawImage->getDataSize() == size);
-                        llassert(memcmp(data, data_copy, size) == 0);
+                        if (size > 0)
+                        {
+                            llassert(memcmp(data, data_copy, size) == 0);
+                        }
 #endif
                     },
                     // callback to be run on main thread
@@ -1870,7 +1876,10 @@ void LLViewerFetchedTexture::scheduleCreateTexture()
                         mGLTexturep->mActiveThread = LLThread::currentID();
                         llassert(data == mRawImage->getData());
                         llassert(mRawImage->getDataSize() == size);
-                        llassert(memcmp(data, data_copy, size) == 0);
+                        if (size > 0)
+                        {
+                            llassert(memcmp(data, data_copy, size) == 0);
+                        }
                         delete[] data_copy;
 #else
                         [this, gl_image]()
@@ -2118,7 +2127,7 @@ bool LLViewerFetchedTexture::processFetchResults(S32& desired_discard, S32 curre
         LL_PROFILE_ZONE_NAMED_CATEGORY_TEXTURE("vftuf - has raw image");
         mIsFetched = true;
         mRawDiscardLevel = fetch_discard;
-        if ((mRawImage->getDataSize() > 0 && mRawDiscardLevel >= 0) &&
+        if (((mRawImage->getDataSize() > 0 || mRawImage->hasBlockCompressionResult()) && mRawDiscardLevel >= 0) &&
             (current_discard < 0 || mRawDiscardLevel < current_discard))
         {
             LL_PROFILE_ZONE_NAMED_CATEGORY_TEXTURE("vftuf - data good");
@@ -2525,10 +2534,12 @@ bool LLViewerFetchedTexture::updateFetch()
         S32 fetch_request_response = -1;
         S32 worker_discard = -1;
         // Single source of truth for block-compression eligibility:
-        // Requires global compression enabled, GL texture support, and an eligible category.
+        // Requires global compression enabled, GL texture support, no explicit GL format,
+        // an eligible category, and no need for raw CPU pixels or aux channel.
         // Once decided, allow_compression is passed to LLTextureFetch and trusted downstream.
-        const bool allow_compression =
-            LLImageGL::sCompressTextures && mGLTexturep->getAllowCompression() && LLImageGL::categoryAllowsCompression(getCategory());
+        const bool allow_compression = LLImageGL::sCompressTextures && mGLTexturep->getAllowCompression() &&
+                                       !mGLTexturep->getHasExplicitFormat() && LLImageGL::categoryAllowsCompression(getCategory()) &&
+                                       !needsToSaveRawImage() && !needsAux();
         LLTextureFetch::FetchStatus status;
         fetch_request_response = LLAppViewer::getTextureFetch()->createRequest(mFTType, mUrl, getID(), getTargetHost(), decode_priority,
             w, h, c, desired_discard, needsAux(), mCanUseHTTP, allow_compression, status, mTextureJob);
@@ -3196,7 +3207,8 @@ void LLViewerFetchedTexture::destroyRawImage()
 void LLViewerFetchedTexture::saveRawImage()
 {
     LL_PROFILE_ZONE_SCOPED_CATEGORY_TEXTURE;
-    if(mRawImage.isNull() || mRawImage == mSavedRawImage || (mSavedRawDiscardLevel >= 0 && mSavedRawDiscardLevel <= mRawDiscardLevel))
+    if (mRawImage.isNull() || mRawImage->isBufferInvalid() || mRawImage == mSavedRawImage ||
+        (mSavedRawDiscardLevel >= 0 && mSavedRawDiscardLevel <= mRawDiscardLevel))
     {
         return;
     }

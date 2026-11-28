@@ -5292,8 +5292,11 @@ bool LLAppViewer::initCache()
     // Allocate the remaining percent which is not allocated to the disk cache
     const S64 texture_cache_size = S64(cache_total_size * texture_cache_percent / 100);
 
-    // Remove cache directories left by the retired BC cache implementations
-    LLTextureCache::purgeLegacyBCDirs(LL_PATH_CACHE);
+    if (!read_only)
+    {
+        // Remove cache directories left by the retired BC cache implementations
+        LLTextureCache::purgeLegacyBCDirs(LL_PATH_CACHE);
+    }
 
     LLAppViewer::getTextureCache()->initCache(LL_PATH_CACHE, texture_cache_size, texture_cache_mismatch);
 

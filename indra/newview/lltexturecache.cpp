@@ -119,6 +119,7 @@ public:
         mImageFormat(IMG_CODEC_J2C),
         mImageLocal(false),
         mBCOOnly(bc_only),
+        mBCWriteSuccess(false),
         mResponder(responder),
         mFileHandle(LLLFSThread::nullHandle()),
         mBytesToRead(0),
@@ -169,6 +170,7 @@ protected:
     // Set when only the block compressed payload is stored, with no JPEG2000
     // header record or body behind it.
     bool                                 mBCOOnly;
+    bool                                 mBCWriteSuccess;
     LLPointer<LLTextureCache::Responder> mResponder;
     LLLFSThread::handle_t                mFileHandle;
     S32                                  mBytesToRead;
@@ -709,14 +711,17 @@ bool LLTextureCacheRemoteWorker::doWrite()
         }
     }
 
-    if (mRawImage && mRawImage->hasBlockCompressionResult())
+    if ((mBCOOnly || mDataSize > 0) && mRawImage && mRawImage->hasBlockCompressionResult())
     {
         auto comp_res = mRawImage->getBlockCompressionResult();
+        const EVayuTextureJob  job      = mRawImage->getTextureJob();
         VayuBCCacheEntryHeader cache_header;
         cache_header.mFormat           = (U8)comp_res->mFormat;
         cache_header.mPreset           = (U8)comp_res->mPreset;
         cache_header.mIsMask           = comp_res->mIsMask ? 1 : 0;
-        cache_header.mRole             = 0;
+        cache_header.mRole             = (job == EVayuTextureJob::PBRNormal || job == EVayuTextureJob::LegacyMaterialNormal)
+                                             ? LLTextureCache::kRoleNormal
+                                             : LLTextureCache::kRoleColor;
         cache_header.mDiscardLevel     = (U8)std::clamp(mRawDiscardLevel, 0, 255);
         cache_header.mMipLevels        = comp_res->mMipLevels;
         cache_header.mWidth            = comp_res->mWidth;
@@ -725,7 +730,7 @@ bool LLTextureCacheRemoteWorker::doWrite()
         cache_header.mGLInternalFormat = comp_res->mGLInternalFormat;
         cache_header.mGLPrimaryFormat  = comp_res->mGLPrimaryFormat;
 
-        mCache->writeBCEntry(mID, mRawDiscardLevel, cache_header, comp_res->mBuffer.data(), comp_res->mBuffer.size());
+        mBCWriteSuccess = mCache->writeBCEntry(mID, mRawDiscardLevel, cache_header, comp_res->mBuffer.data(), comp_res->mBuffer.size());
     }
 
     mRawImage = NULL;
@@ -785,7 +790,7 @@ void LLTextureCacheWorker::finishWork(S32 param, bool completed)
             mWriteData = NULL; // we never owned data
             mDataSize  = 0;
         }
-        mCache->addCompleted(mResponder, mBCOOnly ? completed : success);
+        mCache->addCompleted(mResponder, mBCOOnly ? (completed && mBCWriteSuccess) : success);
     }
 }
 
@@ -972,7 +977,8 @@ bool LLTextureCache::writeBCEntry(const LLUUID& id, S32 discard_level, const Vay
             in.read(reinterpret_cast<char*>(&existing_fh), sizeof(existing_fh));
             if (in.good() && existing_fh.mMagic == kBCMagic && existing_fh.mVersion == kBCFormatVersion)
             {
-                if (existing_fh.mMeta.mDiscardLevel <= local_header.mDiscardLevel)
+                if (existing_fh.mMeta.mDiscardLevel <= local_header.mDiscardLevel &&
+                    existing_fh.mMeta.mGLInternalFormat == local_header.mGLInternalFormat && existing_fh.mMeta.mRole == local_header.mRole)
                 {
                     return true;
                 }
@@ -1066,12 +1072,20 @@ size_t LLTextureCache::calcSubBufferBytes(U8 format, U32 width, U32 height, S32 
     return total_bytes;
 }
 
+static bool isSRGBBCInternalFormat(U32 gl_internal_format)
+{
+    return gl_internal_format == GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT1_EXT || gl_internal_format == GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT ||
+           gl_internal_format == GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM;
+}
+
 bool LLTextureCache::readBCEntry(const LLUUID&           id,
                                  S32                     discard_level,
                                  VayuBCCacheEntryHeader& header,
                                  std::vector<U8>&        buffer,
                                  const std::string&      ext,
-                                 U8                      expected_format)
+                                 U8                      expected_format,
+                                 EBCColorSpace           expected_color_space,
+                                 U8                      expected_role)
 {
     std::vector<std::string> candidates;
     if (expected_format != 0)
@@ -1087,7 +1101,6 @@ bool LLTextureCache::readBCEntry(const LLUUID&           id,
         candidates.push_back(".bc1");
         candidates.push_back(".bc7");
         candidates.push_back(".bc3");
-        candidates.push_back(".bc5");
     }
 
     for (const auto& candidate : candidates)
@@ -1109,7 +1122,31 @@ bool LLTextureCache::readBCEntry(const LLUUID&           id,
         if (!in.good() || fh.mMagic != kBCMagic || fh.mVersion != kBCFormatVersion)
         {
             in.close();
-            LLFile::remove(path);
+            if (!mReadOnly)
+            {
+                const S64 old_size = LLFile::size(path);
+                LLFile::remove(path);
+                if (old_size > 0)
+                {
+                    LLMutexLock lock(&mHeaderMutex);
+                    auto        iter = mBCSizeMap.find(id);
+                    if (iter != mBCSizeMap.end())
+                    {
+                        const S64 tracked  = static_cast<S64>(iter->second);
+                        const S64 deducted = std::min<S64>(tracked, old_size);
+                        mTexturesSizeTotal -= deducted;
+                        const S64 remaining = tracked - deducted;
+                        if (remaining > 0)
+                        {
+                            iter->second = static_cast<S32>(remaining);
+                        }
+                        else
+                        {
+                            mBCSizeMap.erase(iter);
+                        }
+                    }
+                }
+            }
             continue;
         }
 
@@ -1119,6 +1156,19 @@ bool LLTextureCache::readBCEntry(const LLUUID&           id,
                                   : (candidate == ".bc7") ? kFormatBC7
                                                           : 0;
         if (implied_format != 0 && fh.mMeta.mFormat != implied_format)
+        {
+            continue;
+        }
+
+        if (expected_color_space == EBCColorSpace::Linear && isSRGBBCInternalFormat(fh.mMeta.mGLInternalFormat))
+        {
+            continue;
+        }
+        if (expected_color_space == EBCColorSpace::SRGB && !isSRGBBCInternalFormat(fh.mMeta.mGLInternalFormat))
+        {
+            continue;
+        }
+        if (expected_role != kRoleAny && fh.mMeta.mRole != expected_role)
         {
             continue;
         }
@@ -1167,37 +1217,6 @@ bool LLTextureCache::readBCEntry(const LLUUID&           id,
     }
 
     return false;
-}
-
-bool LLTextureCache::readBCEntryHeader(const LLUUID& id, U8 format, VayuBCCacheEntryHeader& header)
-{
-    const std::string     ext  = formatExtension(format);
-    std::filesystem::path path = getTextureFileName(id, ext);
-    if (!LLFile::isfile(path))
-    {
-        return false;
-    }
-
-    llifstream in(path, std::ios::binary);
-    if (!in.good())
-    {
-        return false;
-    }
-
-    VayuBCCacheFileHeader fh;
-    in.read(reinterpret_cast<char*>(&fh), sizeof(fh));
-    if (!in.good() || fh.mMagic != kBCMagic || fh.mVersion != kBCFormatVersion)
-    {
-        return false;
-    }
-
-    if (fh.mMeta.mFormat != format)
-    {
-        return false;
-    }
-
-    header = fh.mMeta;
-    return true;
 }
 
 // debug
@@ -2046,6 +2065,25 @@ void LLTextureCache::purgeAllTextures(bool purge_directories)
     LL_INFOS() << "The entire texture cache is cleared." << LL_ENDL;
 }
 
+void LLTextureCache::purgeOrphanedBCEntries()
+{
+    std::vector<LLUUID> orphans;
+    {
+        LLMutexLock lock(&mHeaderIDMapMutex);
+        for (const auto& kv : mBCSizeMap)
+        {
+            if (mHeaderIDMap.find(kv.first) == mHeaderIDMap.end())
+            {
+                orphans.push_back(kv.first);
+            }
+        }
+    }
+    for (const auto& id : orphans)
+    {
+        mTexturesSizeTotal -= removeSiblingBCFiles(id);
+    }
+}
+
 void LLTextureCache::purgeTexturesLazy(F32 time_limit_sec)
 {
     if (mReadOnly)
@@ -2066,17 +2104,18 @@ void LLTextureCache::purgeTexturesLazy(F32 time_limit_sec)
         // Read the entries list and form list of textures to purge
         std::vector<Entry> entries;
         U32                num_entries = openAndReadEntries(entries);
+        purgeOrphanedBCEntries();
         if (!num_entries)
         {
             return; // nothing to purge
         }
 
-        // Use mTexturesSizeMap to collect UUIDs of textures with bodies
+        // Use mTexturesSizeMap and mBCSizeMap to collect UUIDs of textures with bodies or BC payloads
         typedef std::set<std::pair<U32, S32>> time_idx_set_t;
         std::set<std::pair<U32, S32>>         time_idx_set;
         for (size_map_t::iterator iter1 = mTexturesSizeMap.begin(); iter1 != mTexturesSizeMap.end(); ++iter1)
         {
-            if (iter1->second > 0)
+            if (iter1->second > 0 || mBCSizeMap.find(iter1->first) != mBCSizeMap.end())
             {
                 LLMutexLock        lock(&mHeaderIDMapMutex);
                 id_map_t::iterator iter2 = mHeaderIDMap.find(iter1->first);
@@ -2160,17 +2199,18 @@ void LLTextureCache::purgeTextures(bool validate)
     // Read the entries list
     std::vector<Entry> entries;
     U32                num_entries = openAndReadEntries(entries);
+    purgeOrphanedBCEntries();
     if (!num_entries)
     {
         return; // nothing to purge
     }
 
-    // Use mTexturesSizeMap to collect UUIDs of textures with bodies
+    // Use mTexturesSizeMap and mBCSizeMap to collect UUIDs of textures with bodies or BC payloads
     typedef std::set<std::pair<U32, S32>> time_idx_set_t;
     std::set<std::pair<U32, S32>>         time_idx_set;
     for (size_map_t::iterator iter1 = mTexturesSizeMap.begin(); iter1 != mTexturesSizeMap.end(); ++iter1)
     {
-        if (iter1->second > 0)
+        if (iter1->second > 0 || mBCSizeMap.find(iter1->first) != mBCSizeMap.end())
         {
             LLMutexLock        lock(&mHeaderIDMapMutex);
             id_map_t::iterator iter2 = mHeaderIDMap.find(iter1->first);
@@ -2214,7 +2254,7 @@ void LLTextureCache::purgeTextures(bool validate)
         {
             // make sure file exists and is the correct size
             U32 uuididx = entries[idx].mID.mData[0];
-            if (uuididx == validate_idx)
+            if (uuididx == validate_idx && entries[idx].mBodySize > 0)
             {
                 std::filesystem::path filename = getTextureFileName(entries[idx].mID);
                 LL_DEBUGS("TextureCache") << "Validating: " << filename << "Size: " << entries[idx].mBodySize << LL_ENDL;
@@ -2744,6 +2784,10 @@ bool LLTextureCache::removeFromCache(const LLUUID& id)
         {
             writeEntryToHeaderImmediately(idx, entry);
             ret = true;
+        }
+        else
+        {
+            mTexturesSizeTotal -= removeSiblingBCFiles(id);
         }
 
         unlockHeaders();

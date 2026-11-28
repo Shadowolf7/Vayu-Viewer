@@ -260,7 +260,7 @@ namespace
         // Insert something in the queue
         bool done = false;
         LLImageDecodeThread::handle_t decodeHandle =
-            mThread->decodeImage(NULL, 0, false, true, new responder_test(&done), LLUUID::null, EVayuTextureJob::Unknown);
+            mThread->decodeImage(NULL, 0, false, true, new responder_test(&done), EVayuTextureJob::Unknown);
         // Verifies we get back a valid handle
         UNSCOPED_INFO("LLImageDecodeThread:  threaded decodeImage(), returned handle is null");
         CHECK(decodeHandle != 0);
@@ -288,18 +288,15 @@ namespace
         UNSCOPED_INFO("LLImageDecodeThread: constructor succeeded");
         REQUIRE(mThread != NULL);
 
-        LLUUID test_id;
-        test_id.generate();
-
         LLPointer<LLImageFormattedMock> mock_image = new LLImageFormattedMock(16, 16, 4);
         bool done = false;
         bool success = false;
         LLPointer<LLImageRaw> decoded_raw;
 
-        // Discard level 2, allow compression = true, pass test_id.
+        // Discard level 2, allow compression = true.
         // Explicitly claim Albedo: an Unknown job must never compress.
-        LLImageDecodeThread::handle_t handle = mThread->decodeImage(
-            mock_image, 2, false, true, new responder_test(&done, &success, &decoded_raw), test_id, EVayuTextureJob::Albedo);
+        LLImageDecodeThread::handle_t handle =
+            mThread->decodeImage(mock_image, 2, false, true, new responder_test(&done, &success, &decoded_raw), EVayuTextureJob::Albedo);
         UNSCOPED_INFO("Valid handle for coarse decode");
         CHECK(handle != 0);
 

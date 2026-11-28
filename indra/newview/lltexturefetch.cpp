@@ -460,9 +460,8 @@ public:
     };
 
 protected:
-    LLTextureFetchWorker(LLTextureFetch* fetcher, FTType f_type,
-                         const std::string& url, const LLUUID& id, const LLHost& host,
-                         F32 priority, S32 discard, S32 size);
+    LLTextureFetchWorker(LLTextureFetch* fetcher, FTType f_type, const std::string& url, const LLUUID& id, const LLHost& host, F32 priority,
+                         S32 discard, S32 size, bool needs_aux, bool can_use_http, bool allow_compression, EVayuTextureJob job);
 
 private:
 
@@ -910,8 +909,11 @@ LLTextureFetchWorker::LLTextureFetchWorker(LLTextureFetch*    fetcher,
                                            const LLHost&      host,     // Simulator host
                                            F32                priority, // Priority
                                            S32                discard,  // Desired discard
-                                           S32                size)     // Desired size
-    :
+                                           S32                size,     // Desired size
+                                           bool               needs_aux,
+                                           bool               can_use_http,
+                                           bool               allow_compression,
+                                           EVayuTextureJob    job) :
     LLWorkerClass(fetcher, "TextureFetch"),
     LLCore::HttpHandler(),
     mState(INIT),
@@ -947,16 +949,16 @@ LLTextureFetchWorker::LLTextureFetchWorker(LLTextureFetch*    fetcher,
     mDecodesInFlight(0),
     mDecoded(false),
     mWritten(false),
-    mNeedsAux(false),
-    mAllowCompression(false),
-    mTextureJob(EVayuTextureJob::Unknown),
+    mNeedsAux(needs_aux),
+    mAllowCompression(allow_compression),
+    mTextureJob(job),
     mHaveAllData(false),
     mFetchFailed(false),
     mInLocalCache(false),
     mInCache(false),
-    mCanUseHTTP(true),
+    mCanUseHTTP(can_use_http),
     mRetryAttempt(0),
-    mActiveCount(0),
+    mActiveCount(1),
     mWorkMutex(),
     mImageCodec(IMG_CODEC_INVALID),
     mMetricsStartTime(0),
@@ -1243,6 +1245,7 @@ bool LLTextureFetchWorker::doWork(S32 param)
         mSentRequest = UNSENT;
         mDecoded  = false;
         mWritten  = false;
+        mBCEntryAdequate   = true;
         if (mHttpBufferArray)
         {
             mHttpBufferArray->release();
@@ -1289,34 +1292,63 @@ bool LLTextureFetchWorker::doWork(S32 param)
 
             add(LLTextureFetch::sCacheAttempt, 1.0);
 
-            if (mAllowCompression)
+            if (mAllowCompression && !mNeedsAux && (mUrl.empty() || mFTType == FTT_SERVER_BAKE) && mFetcher->canLoadFromCache())
             {
                 VayuBCCacheEntryHeader cache_header;
                 std::vector<U8>        bc_buffer;
                 bool                   cache_hit = false;
+                bool                   probed    = true;
 
-                if (mTextureJob == EVayuTextureJob::PBRNormal)
+                switch (mTextureJob)
                 {
-                    cache_hit = mFetcher->mTextureCache->readBCEntry(mID, mDesiredDiscard, cache_header, bc_buffer, ".bc5",
-                                                                     LLTextureCache::kFormatBC5);
-                }
-                else if (mTextureJob == EVayuTextureJob::LegacyMaterialNormal || mTextureJob == EVayuTextureJob::LegacySpecular)
-                {
-                    cache_hit = mFetcher->mTextureCache->readBCEntry(mID, mDesiredDiscard, cache_header, bc_buffer, ".bc7",
-                                                                     LLTextureCache::kFormatBC7) ||
-                                mFetcher->mTextureCache->readBCEntry(mID, mDesiredDiscard, cache_header, bc_buffer, ".bc3",
-                                                                     LLTextureCache::kFormatBC3);
-                }
-                else
-                {
-                    cache_hit = mFetcher->mTextureCache->readBCEntry(mID, mDesiredDiscard, cache_header, bc_buffer);
+                    case EVayuTextureJob::Unknown:
+                        probed = false;
+                        break;
+                    case EVayuTextureJob::PBRNormal:
+                        cache_hit = mFetcher->mTextureCache->readBCEntry(mID, mDesiredDiscard, cache_header, bc_buffer, ".bc5",
+                                                                         LLTextureCache::kFormatBC5, LLTextureCache::EBCColorSpace::Linear,
+                                                                         LLTextureCache::kRoleNormal);
+                        break;
+                    case EVayuTextureJob::LegacyMaterialNormal:
+                        cache_hit = mFetcher->mTextureCache->readBCEntry(mID, mDesiredDiscard, cache_header, bc_buffer, ".bc7",
+                                                                         LLTextureCache::kFormatBC7, LLTextureCache::EBCColorSpace::Linear,
+                                                                         LLTextureCache::kRoleNormal) ||
+                                    mFetcher->mTextureCache->readBCEntry(mID, mDesiredDiscard, cache_header, bc_buffer, ".bc3",
+                                                                         LLTextureCache::kFormatBC3, LLTextureCache::EBCColorSpace::Linear,
+                                                                         LLTextureCache::kRoleNormal);
+                        break;
+                    case EVayuTextureJob::MetallicRoughness:
+                        cache_hit = mFetcher->mTextureCache->readBCEntry(mID, mDesiredDiscard, cache_header, bc_buffer, ".bc7",
+                                                                         LLTextureCache::kFormatBC7, LLTextureCache::EBCColorSpace::Linear,
+                                                                         LLTextureCache::kRoleColor) ||
+                                    mFetcher->mTextureCache->readBCEntry(mID, mDesiredDiscard, cache_header, bc_buffer, ".bc3",
+                                                                         LLTextureCache::kFormatBC3, LLTextureCache::EBCColorSpace::Linear,
+                                                                         LLTextureCache::kRoleColor);
+                        break;
+                    case EVayuTextureJob::LegacySpecular:
+                        cache_hit = mFetcher->mTextureCache->readBCEntry(mID, mDesiredDiscard, cache_header, bc_buffer, ".bc7",
+                                                                         LLTextureCache::kFormatBC7, LLTextureCache::EBCColorSpace::SRGB,
+                                                                         LLTextureCache::kRoleColor) ||
+                                    mFetcher->mTextureCache->readBCEntry(mID, mDesiredDiscard, cache_header, bc_buffer, ".bc3",
+                                                                         LLTextureCache::kFormatBC3, LLTextureCache::EBCColorSpace::SRGB,
+                                                                         LLTextureCache::kRoleColor);
+                        break;
+                    default:
+                        cache_hit = mFetcher->mTextureCache->readBCEntry(mID, mDesiredDiscard, cache_header, bc_buffer, "", 0,
+                                                                         LLTextureCache::EBCColorSpace::SRGB, LLTextureCache::kRoleColor);
+                        break;
                 }
 
-                mBCEntryAdequate = cache_hit;
+                if (probed)
+                {
+                    mBCEntryAdequate = cache_hit;
+                }
 
                 if (cache_hit)
                 {
-                    LLPointer<LLImageRaw> raw      = new LLImageRaw(cache_header.mWidth, cache_header.mHeight, cache_header.mComponents);
+                    LLPointer<LLImageRaw> raw = new LLImageRaw();
+                    raw->setSize(cache_header.mWidth, cache_header.mHeight, cache_header.mComponents);
+                    raw->setTextureJob(mTextureJob);
                     auto                  comp_res = std::make_shared<VayuBlockCompressionResult>();
                     comp_res->mFormat              = (EVayuBlockCompressionFormat)cache_header.mFormat;
                     comp_res->mPreset              = (EVayuBlockCompressionPreset)cache_header.mPreset;
@@ -1334,6 +1366,8 @@ bool LLTextureFetchWorker::doWork(S32 param)
                     mDecodedDiscard = cache_header.mDiscardLevel;
                     mLoaded         = true;
                     mDecoded        = true;
+                    add(LLTextureFetch::sCacheHit, 1.0);
+                    record(LLTextureFetch::sCacheHitRate, LLUnits::Ratio::fromValue(1));
                     setState(DECODE_IMAGE_UPDATE);
                     return doWork(param);
                 }
@@ -1767,30 +1801,38 @@ bool LLTextureFetchWorker::doWork(S32 param)
                 }
                 else if (http_forbidden == mGetStatus)
                 {
-                    LL_INFOS_ONCE(LOG_TXT) << "Texture server forbidden (403): " << mUrl << LL_ENDL;
-                    if (mCanUseHTTP && !mUrl.empty() && cur_size <= 0)
+                    if (mFTType != FTT_MAP_TILE)
                     {
-                        LLViewerRegion* region = getRegion();
-                        if (!region || mLastRegionId != region->getRegionID() || mRetryAttempt == 0)
+                        LL_INFOS_ONCE(LOG_TXT) << "Texture server forbidden (403): " << mUrl << LL_ENDL;
+                        if (mCanUseHTTP && !mUrl.empty() && cur_size <= 0)
                         {
-                            if (mFTType != FTT_MAP_TILE)
+                            if (mFTType == FTT_SERVER_BAKE)
                             {
-                                LL_INFOS(LOG_TXT) << "Texture capability expired or forbidden (403), retrying: " << mUrl
-                                                  << " mRetryAttempt " << mRetryAttempt << LL_ENDL;
+                                if (mRetryAttempt == 0)
+                                {
+                                    LL_INFOS(LOG_TXT) << "Server bake forbidden (403), retrying once: " << mUrl << LL_ENDL;
+                                    releaseHttpSemaphore();
+                                    ++mRetryAttempt;
+                                    setState(INIT);
+                                    return false;
+                                }
                             }
-                            // Release HTTP semaphore so we do not hold a global slot while waiting in INIT
-                            releaseHttpSemaphore();
-
-                            // Preserve URL for URL-backed types (server bakes and map tiles).
-                            // Only clear capability-backed default textures to force re-resolving the cap URL.
-                            if (mFTType != FTT_SERVER_BAKE && mFTType != FTT_MAP_TILE)
+                            else
                             {
-                                mUrl.clear();
+                                LLViewerRegion* region = getRegion();
+                                if (mRetryAttempt < 3 && (mRetryAttempt == 0 || (region && mLastRegionId != region->getRegionID())))
+                                {
+                                    LL_INFOS(LOG_TXT) << "Texture capability expired or forbidden (403), retrying: " << mUrl
+                                                      << " mRetryAttempt " << mRetryAttempt << LL_ENDL;
+                                    // Release HTTP semaphore so we do not hold a global slot while waiting in INIT
+                                    releaseHttpSemaphore();
+                                    mUrl.clear();
+                                    ++mRetryAttempt;
+                                    mLastRegionId.setNull();
+                                    setState(INIT);
+                                    return false;
+                                }
                             }
-                            ++mRetryAttempt;
-                            mLastRegionId.setNull();
-                            setState(INIT);
-                            return false;
                         }
                     }
                 }
@@ -1799,11 +1841,10 @@ bool LLTextureFetchWorker::doWork(S32 param)
                     // Allowed, we'll accept whatever data we have as complete.
                     mHaveAllData = true;
                 }
-                else if (mFTType != FTT_MAP_TILE || http_forbidden != mGetStatus)
+                else
                 {
-                    // Map tiles that do not exist come back 403 from the CDN;
-                    // that is the expected answer for open water, not a failure.
-                    // Anything else a tile fetch gets back is still news.
+                    // Map tiles that do not exist come back 403 from the CDN (handled silently above);
+                    // anything else a tile or texture fetch gets back is still news.
                     LL_INFOS(LOG_TXT) << "HTTP GET failed for: " << mUrl
                                       << " Status: " << mGetStatus.toTerseString()
                                       << " Reason: '" << mGetReason << "'"
@@ -2041,7 +2082,6 @@ bool LLTextureFetchWorker::doWork(S32 param)
                                                                        mNeedsAux,
                                                                        mAllowCompression,
                                                                        new DecodeResponder(mFetcher, mID, this),
-                                                                       mID,
                                                                        mTextureJob);
         if (mDecodeHandle == 0)
         {
@@ -2101,7 +2141,8 @@ bool LLTextureFetchWorker::doWork(S32 param)
                                                << " layers, all data " << mHaveAllData << ")" << LL_ENDL;
                     }
                 }
-                if (mWriteToCacheState == NOT_WRITE && !mBCEntryAdequate && mRawImage->hasBlockCompressionResult())
+                if (mInCache && !mInLocalCache && mWriteToCacheState == NOT_WRITE && !mBCEntryAdequate &&
+                    mRawImage->hasBlockCompressionResult())
                 {
                     // The image was served from the JPEG2000 cache, so no write is queued,
                     // but this compressed result is new, or finer than the one on disk.
@@ -2900,13 +2941,15 @@ S32 LLTextureFetch::createRequest(FTType f_type, const std::string& url, const L
         worker->lockWorkMutex();                                        // +Mw
         desired_size = worker->calcDesiredSize(desired_discard, desired_size);
         if (worker->mState == LLTextureFetchWorker::DONE && worker->mDesiredSize == llmax(desired_size, TEXTURE_CACHE_ENTRY_SIZE) && worker->mDesiredDiscard == desired_discard) {
-            if (job == worker->mTextureJob)
+            const bool needs_raw_pixels = !allow_compression && worker->mRawImage.notNull() && worker->mRawImage->isBufferInvalid();
+            const bool missing_aux      = needs_aux && !worker->mNeedsAux;
+            if (job == worker->mTextureJob && !needs_raw_pixels && !missing_aux)
             {
                 worker->unlockWorkMutex();                                  // -Mw
 
                 return CREATE_REQUEST_ERROR_TRANSITION; // similar request has finished, failed or is in a transitional state
             }
-            // Role changed (e.g. was fetched under a different role, now requested under this one): re-init to fetch/encode under requested role.
+            // Role or raw/aux requirements changed (e.g. BC-only cache hit cannot satisfy a raw-pixel request): re-init.
             worker->setState(LLTextureFetchWorker::INIT);
         }
         worker->mActiveCount++;
@@ -2934,17 +2977,13 @@ S32 LLTextureFetch::createRequest(FTType f_type, const std::string& url, const L
     }
     else
     {
-        worker = new LLTextureFetchWorker(this, f_type, url, id, host, priority, desired_discard, desired_size);
+        worker = new LLTextureFetchWorker(this, f_type, url, id, host, priority, desired_discard, desired_size, needs_aux, can_use_http,
+                                          allow_compression, job);
         lockQueue();                                                    // +Mfq
         mRequestMap[id] = worker;
         unlockQueue();                                                  // -Mfq
 
         worker->lockWorkMutex();                                        // +Mw
-        worker->mActiveCount++;
-        worker->mNeedsAux = needs_aux;
-        worker->mAllowCompression = allow_compression;
-        worker->mTextureJob = job;
-        worker->setCanUseHTTP(can_use_http);
         worker->getStatus(status);
         worker->unlockWorkMutex();                                      // -Mw
     }

@@ -2235,7 +2235,7 @@ bool LLImageGL::createGLTexture(S32 discard_level, const LLImageRaw* imageraw, S
     llassert(gGLManager.mInited);
     stop_glerror();
 
-    if (!imageraw || imageraw->isBufferInvalid())
+    if (!imageraw || (imageraw->isBufferInvalid() && !imageraw->hasBlockCompressionResult()))
     {
         LL_WARNS() << "Trying to create a texture from invalid image data" << LL_ENDL;
         mGLTextureCreated = false;
@@ -2318,7 +2318,14 @@ bool LLImageGL::createGLTexture(S32 discard_level, const LLImageRaw* imageraw, S
         setStagedIsMask(comp->mIsMask);
         if (mNeedsAlphaAndPickMask && imageraw->getComponents() == 4)
         {
-            updatePickMask(raw_w, raw_h, rawdata);
+            if (rawdata)
+            {
+                updatePickMask(raw_w, raw_h, rawdata);
+            }
+            else
+            {
+                setPickMask(nullptr, 0, 0);
+            }
         }
         const LLImageGL::UploadFormat upload(comp->mGLPrimaryFormat, comp->mGLInternalFormat);
         const U8*                     comp_data = comp->mBuffer.data() + comp->getLargestMipOffset();

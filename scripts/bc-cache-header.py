@@ -7,15 +7,15 @@ texture compressed, at what size, and in what GL format" without running the vie
 The on-screen texture console cannot: it shows a clamped virtual size and the
 post-discard size, which cannot be combined back into the source size.
 
-Layout mirrors FileHeader in indra/llimage/vayubctexturecache.cpp:
+Layout mirrors VayuBCCacheFileHeader in indra/newview/lltexturecache.h:
 
     U32  magic          0x31434256 "VBC1"
     U32  version
     -- VayuBCCacheEntryHeader --
-    U8   format         EVayuBlockCompressionFormat (BC1=1 BC3=2 BC4=3 BC5=4 BC7=5)
+    U8   format         EVayuBlockCompressionFormat (BC1=1 BC3=2 BC5=4 BC7=5)
     U8   preset
     U8   is_mask
-    U8   role           0 = colour, 1 = normal
+    U8   role           0 = color, 1 = normal
     U8   discard_level  level the entry was encoded at
     S32  mip_levels
     U32  width
@@ -38,7 +38,7 @@ import sys
 MAGIC = 0x31434256
 HEADER = "<II5Bxxx i II i II Q"
 HEADER_SIZE = struct.calcsize(HEADER)
-FORMATS = {1: "BC1", 2: "BC3", 3: "BC4", 4: "BC5", 5: "BC7"}
+FORMATS = {1: "BC1", 2: "BC3", 4: "BC5", 5: "BC7"}
 ROLES = {0: "color", 1: "normal"}
 
 
@@ -47,19 +47,17 @@ def cache_root():
 
 
 def entries(root):
-    """Yield (uuid, extension, path) for every entry under the cache root."""
+    """Yield (uuid, extension, path) for every BC entry under texturecache/."""
     cachedir = os.path.join(root, "texturecache")
     if not os.path.isdir(cachedir):
-        cachedir = os.path.join(root, "bccache")
-    if not os.path.isdir(cachedir):
-        sys.exit("no texturecache or bccache directory under %s" % root)
+        sys.exit("no texturecache directory under %s" % root)
     for shard in sorted(os.listdir(cachedir)):
         shard_dir = os.path.join(cachedir, shard)
         if not os.path.isdir(shard_dir):
             continue
         for name in sorted(os.listdir(shard_dir)):
             stem, _, ext = name.partition(".")
-            if ext in ("bc1", "bc3", "bc4", "bc5", "bc7"):
+            if ext in ("bc1", "bc3", "bc5", "bc7"):
                 yield stem, ext, os.path.join(shard_dir, name)
 
 
