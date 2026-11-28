@@ -233,7 +233,9 @@ private:
     void    writeEntriesHeader();
     S32     openAndReadEntry(const LLUUID& id, Entry& entry, bool create);
     bool    updateEntry(S32& idx, Entry& entry, S32 new_image_size, S32 new_body_size);
+    bool    needsTimeStampUpdate() const;
     void    updateEntryTimeStamp(S32 idx, Entry& entry);
+    void    touchEntryTimeStamp(const LLUUID& id);
     U32     openAndReadEntries(std::vector<Entry>& entries);
     void    writeEntriesAndClose(const std::vector<Entry>& entries);
     void    readEntryFromHeaderImmediately(S32& idx, Entry& entry);

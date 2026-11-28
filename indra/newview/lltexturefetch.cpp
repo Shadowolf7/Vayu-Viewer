@@ -1305,9 +1305,10 @@ bool LLTextureFetchWorker::doWork(S32 param)
                         probed = false;
                         break;
                     case EVayuTextureJob::PBRNormal:
+                        // .bc5 is exclusive to PBRNormal, so pre-role-tagging entries (mRole == 0) remain valid without collision risk.
                         cache_hit = mFetcher->mTextureCache->readBCEntry(mID, mDesiredDiscard, cache_header, bc_buffer, ".bc5",
                                                                          LLTextureCache::kFormatBC5, LLTextureCache::EBCColorSpace::Linear,
-                                                                         LLTextureCache::kRoleNormal);
+                                                                         LLTextureCache::kRoleAny);
                         break;
                     case EVayuTextureJob::LegacyMaterialNormal:
                         cache_hit = mFetcher->mTextureCache->readBCEntry(mID, mDesiredDiscard, cache_header, bc_buffer, ".bc7",

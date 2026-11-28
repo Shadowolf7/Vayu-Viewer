@@ -1182,7 +1182,9 @@ bool LLTextureCache::readBCEntry(const LLUUID&           id,
                 buffer.clear();
                 continue;
             }
+            in.close();
             header = fh.mMeta;
+            touchEntryTimeStamp(id);
             return true;
         }
         else if (fh.mMeta.mDiscardLevel < discard_level)
@@ -1207,11 +1209,13 @@ bool LLTextureCache::readBCEntry(const LLUUID&           id,
                 continue;
             }
 
+            in.close();
             header         = fh.mMeta;
             header.mWidth  = std::max(1u, header.mWidth >> diff);
             header.mHeight = std::max(1u, header.mHeight >> diff);
             header.mMipLevels -= diff;
             header.mDiscardLevel = static_cast<U8>(discard_level);
+            touchEntryTimeStamp(id);
             return true;
         }
     }
@@ -1659,14 +1663,21 @@ void LLTextureCache::readEntryFromHeaderImmediately(S32& idx, Entry& entry)
 }
 
 // mHeaderMutex is locked before calling this.
+bool LLTextureCache::needsTimeStampUpdate() const
+{
+    const U32 max_entries_without_stamp = static_cast<U32>(LLTextureCache::sCacheMaxEntries * 0.75f);
+    const S64 max_bytes_without_stamp   = (LLTextureCache::sCacheMaxTexturesSize * 3) / 4;
+    return mHeaderEntriesInfo.mEntries >= max_entries_without_stamp ||
+           (sCacheMaxTexturesSize > 0 && mTexturesSizeTotal >= max_bytes_without_stamp);
+}
+
+// mHeaderMutex is locked before calling this.
 // update an existing entry time stamp, delay writing.
 void LLTextureCache::updateEntryTimeStamp(S32 idx, Entry& entry)
 {
-    static const U32 MAX_ENTRIES_WITHOUT_TIME_STAMP = (U32)(LLTextureCache::sCacheMaxEntries * 0.75f);
-
-    if (mHeaderEntriesInfo.mEntries < MAX_ENTRIES_WITHOUT_TIME_STAMP)
+    if (!needsTimeStampUpdate())
     {
-        return; // there are enough empty entry index space, no need to stamp time.
+        return; // cache is well below both entry and byte limits, no need to stamp time.
     }
 
     if (idx >= 0)
@@ -1676,6 +1687,25 @@ void LLTextureCache::updateEntryTimeStamp(S32 idx, Entry& entry)
             entry.mTime           = (U32)time(NULL);
             mUpdatedEntryMap[idx] = entry;
         }
+    }
+}
+
+void LLTextureCache::touchEntryTimeStamp(const LLUUID& id)
+{
+    if (mReadOnly)
+    {
+        return;
+    }
+    LLMutexLock lock(&mHeaderMutex);
+    if (!needsTimeStampUpdate())
+    {
+        return;
+    }
+    Entry entry;
+    S32   idx = openAndReadEntry(id, entry, false);
+    if (idx >= 0)
+    {
+        updateEntryTimeStamp(idx, entry);
     }
 }
 
