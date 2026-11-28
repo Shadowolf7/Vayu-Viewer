@@ -91,20 +91,6 @@ public:
     // using a 16-bin quantized histogram and 2x2 box-filter downsampling.
     static bool analyzeAlphaMask(const U8* data_in, U32 w, U32 h, S8 alpha_offset, S8 alpha_stride);
 
-    // Resolves the concrete block-compression format encode() would pick for this exact
-    // pixel data, including the alpha scan and the macOS BC7->BC3 demotion. Shares one
-    // implementation with encode(), so the two cannot disagree.
-    //
-    // The caller MUST pass the same src_data/width/height/components/job that it will hand
-    // to encode(). This is not a cheap job-lookup: for 4-channel colour it runs the same
-    // full-image alpha scan encode() does, because the answer genuinely depends on the
-    // pixels (opaque -> BC1, transparent -> BC7).
-    //
-    // Returns Auto when the input would be refused by encode() (unresolved role, <3
-    // channels); callers must treat that as "unknown, probe the legacy candidate list".
-    static EVayuBlockCompressionFormat resolveFormat(const U8* src_data, U32 width, U32 height, S32 components, EVayuTextureJob job,
-                                                     EVayuBlockCompressionFormat format);
-
     // Compress raw pixel buffer into a mipped block-compressed payload.
     // Always encodes the full chain down to 1x1: every level is derived from the same
     // decode, so the pyramid stays internally consistent.

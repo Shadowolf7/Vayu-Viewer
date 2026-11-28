@@ -696,13 +696,7 @@ static uint8_t scan_min_alpha_4ch(const uint8_t* src_data, size_t total_px)
 
 namespace
 {
-// Single source of truth for "which BC format, colour space and mask policy does this
-// texture encode to". encode() and the public resolveFormat() both go through here, so the
-// cache-key probe the worker performs before encoding can never drift from what encode()
-// actually picks. An earlier version of resolveFormat() duplicated this decision and
-// guessed BC7 for every 4-channel image while encode() scans alpha and picks BC1 when the
-// image is opaque -- which made the cache probe miss and silently disabled cache reuse
-// for the most common texture class.
+// Single source of truth for which BC format, colour space and mask policy a texture encodes to.
 struct VayuEncodeTargets
 {
     EVayuBlockCompressionFormat mFormat = EVayuBlockCompressionFormat::Auto;
@@ -877,19 +871,6 @@ bool resolve_encode_targets(const U8* src_data, U32 width, U32 height, S32 compo
     return true;
 }
 } // namespace
-
-EVayuBlockCompressionFormat VayuImageBlockCompressor::resolveFormat(const U8* src_data, U32 width, U32 height, S32 components,
-                                                                    EVayuTextureJob job, EVayuBlockCompressionFormat format)
-{
-    VayuEncodeTargets targets;
-    if (!resolve_encode_targets(src_data, width, height, components, format, job, targets))
-    {
-        // Refused input: report Auto so the caller falls back to the legacy candidate
-        // probe rather than committing to a format the encoder will not use.
-        return EVayuBlockCompressionFormat::Auto;
-    }
-    return targets.mFormat;
-}
 
 bool VayuImageBlockCompressor::encode(const U8* src_data, U32 width, U32 height, S32 components, VayuBlockCompressionResult& result,
                                       EVayuBlockCompressionFormat format, EVayuTextureJob job)

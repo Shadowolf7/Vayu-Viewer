@@ -1726,17 +1726,6 @@
       <key>Value</key>
       <boolean>0</boolean>
     </map>
-    <key>CachePurgeTimeSliced</key>
-    <map>
-      <key>Comment</key>
-      <string>Purge the texture cache in several 0.1s max time slices, instead of in a monolithic second(s)-lasting way.</string>
-      <key>Persist</key>
-      <integer>1</integer>
-      <key>Type</key>
-      <string>Boolean</string>
-      <key>Value</key>
-      <boolean>1</boolean>
-    </map>
     <key>CacheValidateCounter</key>
     <map>
       <key>Comment</key>
